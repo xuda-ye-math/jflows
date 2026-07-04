@@ -53,10 +53,10 @@ jflows
 │   └── parity_check_*.py    # jax side — transplants weights and asserts
 ├── smoke              # standalone jflows-only tests (test_*, user-run)
 │   └── test_*.py            # flows, potentials, circular conditions, losses, …
-└── examples                 # the runnable README showcases, ported to jflows
-    ├── 2D_forward_KL.py / 2D_reverse_KL.py / 2D_RealNVP_latent_interpolation.py
-    ├── 2D_two_moon_CNF.py / 3D_periodic.py / 4D_Boltzmann_generator.py
-    └── multi_well_compare.py
+└── example                  # runnable examples — X-regularization conventions
+    └── 2D_single.py         #   (the newer reference; zflows' tests/ are legacy):
+                             #   parameters block, fresh source batch per step
+                             #   (no epochs), final ESS on a fresh N_VALID batch
 ```
 
 Not mirrored: `.archive/`, `.venv/`, `zflows.egg-info/`, `Dockerfile`,
@@ -214,13 +214,15 @@ Dependency order is bottom-up, same as the zflows internal dependency graph:
   rejuvenation at the target). suppress_warnings dropped (§3.3).
   Gate: deterministic pieces (weights, ESS, lbfgs on a quadratic) exact-parity;
   stochastic pieces validated statistically (§5).
-- **Phase 7 — `examples/` + docs.** Port the seven README showcases (2D/3D/4D
-  examples + multi_well_compare) into `examples/`; run every script on the jax
-  env GPU, producing the same figures/CSVs (new files under jflows, zflows
-  outputs untouched). Write README.md + TREE.md. (The `smoke/` `test_*`
-  suite is built incrementally with each phase, not here.) Gate: every script
-  runs END-to-END; metrics (final losses, ESS, acceptance rates) in the same
-  range as the zflows counterparts recorded in zflows/tests/*.md.
+- **Phase 7 — `example/` + docs.** Runnable examples following the
+  X-regularization conventions (the newer reference — zflows' tests/ are
+  legacy): parameters block, no epoch / training-set notion (fresh source
+  batch per step), AIS-supplied forward KL data, final ESS on a fresh
+  N_VALID batch. Built incrementally under user direction (first:
+  2D_single.py — reverse_KL_F vs forward_KL_G, single stage). Write
+  README.md + TREE.md at the end. (The `smoke/` `test_*` suite is built
+  incrementally with each phase, not here.) Gate: every script runs
+  END-to-END on the jax env GPU with a live status log and reported ESS.
 
 ---
 
@@ -246,7 +248,7 @@ Two frameworks, two envs — parity runs through saved `.npz` fixtures:
    via the tracked background mechanism.
 6. Official invocation: jflows-side tests run from the repo root as
    `~/.envs/jax/bin/python -m smoke.<test_name>` /
-   `-m parity_check.<check_name>` (and later `python -m examples.<name>`),
+   `-m parity_check.<check_name>` / `-m example.<name>`,
    mirroring zflows' `python -m tests.<name>` convention — they always
    exercise the local source tree, never an installed copy. They use the
    default JAX backend (GPU when available; `JAX_PLATFORMS=cpu` forces CPU)

@@ -7,7 +7,7 @@ mixing kinds), on random inputs:
     1. construct the flow and F = flow.t();
     2. inverse round-trips: F.inv(F(x)) ≈ x and F(F.inv(y)) ≈ y;
     3. log-det: F.call_and_ladj(x)[1] vs per-sample slogdet(jacfwd(F));
-    4. autograd: eqx.filter_grad of a reverse-KL-shaped loss under
+    4. autograd: eqx.filter_grad of a reverse KL loss under
        eqx.filter_jit — all gradient leaves finite, at least one nonzero;
     5. zeros() ⇒ identity map with ladj ≡ 0.
 
@@ -75,7 +75,7 @@ def exercise(name: str, flow, x, tol: float) -> None:
     xb, ladj_inv = F.inv.call_and_ladj(y)
     check("inv ladj == -ladj", ladj_inv, -ladj, tol=max(tol, 1e-9))
 
-    # 4. autograd through a reverse-KL-shaped loss, jitted
+    # 4. autograd through a reverse KL loss, jitted
     @eqx.filter_jit
     @eqx.filter_grad
     def loss_grad(f, x):
