@@ -405,11 +405,11 @@ class OTFlow(Flow):
     one `lax.scan` trace).
 
     The forward map and `log|det J|` follow the standard `(y, ladj)` contract,
-    so an `OTFlow` is a drop-in `Flow` for `reverse_KL_F` and the SMC utilities.
+    so an `OTFlow` is a drop-in `Flow` for `reverse_KL` and the SMC utilities.
     The two extra optimal-transport diagnostics — the transport cost
     `∫½|∇Φ|² dt` and the HJB residual `∫|½|∇Φ|² - ∂_tΦ| dt` — are exposed
     through `jflows.loss.OT_loss`, which integrates all four channels in one
-    pass; plain `reverse_KL_F` simply drops them.
+    pass; plain `reverse_KL` simply drops them.
 
     Arguments:
         key: PRNG key for Φ's initialisation.

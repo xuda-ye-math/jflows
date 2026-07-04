@@ -30,16 +30,16 @@ jflows
 │   ├── flow.py              # Flow, NSF, NCSF, CNF, OTFlow, RealNVP, ComposedTransform
 │   ├── potential.py         # Potential, potential_from, Nlog_Uniform, Nlog_Gaussian,
 │   │                        #   Nlog_Gaussian_Mixture, linear_combination (potential algebra)
-│   ├── loss.py              # reverse/forward_KL_{F,G}, OT_loss — per-sample returns, shape (N,)
+│   ├── loss.py              # reverse_KL, forward_KL (type='F'/'G'), OT_loss — per-sample returns, shape (N,)
 │   ├── utils
 │   │   ├── __init__.py      # re-exports the flat jflows.utils namespace
-│   │   ├── metrics.py       # importance_weights_{F,G} (+log), compute_ESS (+log),
+│   │   ├── metrics.py       # importance_weights (+log, type='F'/'G'), compute_ESS (+log),
 │   │   │                    #   coverage (k-NN, Naeem et al. 2020), resample  [CESS dropped]
 │   │   ├── optimization.py  # lbfgs (+ LBFGS_State / lbfgs_init / lbfgs_step);
 │   │   │                    #   adamw (+ AdamW_State / adamw_init / adamw_step; no zflows counterpart)
 │   │   ├── rejuvenation.py  # langevin, stochastic_heun, hamiltonian_monte_carlo
 │   │   │                    #   (+ *_step kernels, leapfrog; aliases rejuvenation, hmc)
-│   │   └── annealing.py     # sequential_monte_carlo, annealed_importance_sampling_{F,G}
+│   │   └── annealing.py     # sequential_monte_carlo, annealed_importance_sampling (type='F'/'G')
 │   │                        #   (key-first, taming pass-through; AIS rejuvenates at the target)
 │   └── core
 │       ├── __init__.py
@@ -95,7 +95,7 @@ Not mirrored: `.archive/`, `.venv/`, `zflows.egg-info/`, `Dockerfile`,
 1. **Explicit PRNG keys.** No global seed in JAX. Every random entry point gains a
    `key: jax.Array` argument: flow constructors (weight init, `randmask` permutations),
    `Potential.samples`, `resample`, `langevin`, `hamiltonian_monte_carlo`,
-   `stochastic_heun`, `sequential_monte_carlo`, `annealed_importance_sampling_{F,G}`.
+   `stochastic_heun`, `sequential_monte_carlo`, `annealed_importance_sampling`.
    Convention: `key` is the first positional argument (equinox style).
 2. **Per-sample losses.** Every function in `loss.py` returns the per-sample loss
    vector, shape `(N,)` aligned with the batch — no internal reduction; callers
@@ -142,7 +142,12 @@ Not mirrored: `.archive/`, `.venv/`, `zflows.egg-info/`, `Dockerfile`,
     potential language: each is the energy `U = -log p` of its density, always
     paired with `exp(-U)`. The `device` constructor argument is dropped (JAX
     places arrays), and `Potential.grad` needs no enabling step.
-13. **Potential algebra** (user-requested redesign). Potentials form a vector
+13. **Combined F/G interface** (user-requested). `reverse_KL` / `forward_KL` /
+    `importance_weights{,_log}` / `annealed_importance_sampling` take the flow
+    as `transform` plus `type: str` ('F' = forward map source -> target,
+    'G' = inverse map target -> source) instead of paired `_F`/`_G` functions;
+    aliases `smc` and `ais`.
+14. **Potential algebra** (user-requested redesign). Potentials form a vector
     space over instances: `linear_combination(potentials, coeffs)` and the
     arithmetic operators on `Potential` (`c*U`, `U+V`, `U-V`, `-U`, `U/c`,
     `sum([...])`) build FLAT combinations — nested combinations are absorbed,
@@ -207,10 +212,10 @@ Dependency order is bottom-up, same as the zflows internal dependency graph:
   per-sample loss vector, shape (N,). Gate: batch-mean of the jflows vector equals
   the zflows scalar loss on transplanted weights + fixed input batches.
 - **Phase 6 — `utils/` package.** Step 6a: `metrics.py` (compute_ESS (+log),
-  importance_weights_{F,G} (+log), coverage, resample; CESS dropped).
+  importance_weights (+log, type='F'/'G'), coverage, resample; CESS dropped).
   Step 6b/6c: `optimization.py` + `rejuvenation.py` with the two-level
   interface (§3.14). Step 6d: `annealing.py` (sequential_monte_carlo +
-  annealed_importance_sampling_{F,G}; key-first, taming pass-through, AIS
+  annealed_importance_sampling (type='F'/'G'); key-first, taming pass-through, AIS
   rejuvenation at the target). suppress_warnings dropped (§3.3).
   Gate: deterministic pieces (weights, ESS, lbfgs on a quadratic) exact-parity;
   stochastic pieces validated statistically (§5).
@@ -219,7 +224,7 @@ Dependency order is bottom-up, same as the zflows internal dependency graph:
   legacy): parameters block, no epoch / training-set notion (fresh source
   batch per step), AIS-supplied forward KL data, final ESS on a fresh
   N_VALID batch. Built incrementally under user direction (first:
-  2D_single.py — reverse_KL_F vs forward_KL_G, single stage). Write
+  2D_single.ipynb — reverse KL vs forward KL, single stage). Write
   README.md + TREE.md at the end. (The `smoke/` `test_*` suite is built
   incrementally with each phase, not here.) Gate: every script runs
   END-to-END on the jax env GPU with a live status log and reported ESS.

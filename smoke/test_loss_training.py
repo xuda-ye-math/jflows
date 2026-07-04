@@ -2,7 +2,7 @@
 root as `~/.envs/jax/bin/python -m smoke_tests.test_loss_training`.
 
 Trains four flow architectures on the SAME 2D three-mode Gaussian-mixture
-target with the per-sample `reverse_KL_F` loss (mean-reduced at the call
+target with the per-sample `reverse_KL` loss (type='F') (mean-reduced at the call
 site), and saves the four loss curves to smoke_tests/test_loss_training.png:
 
     NSF      — spline flow on a box, uniform source
@@ -33,7 +33,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
 from jflows.flow import CNF, NSF, OTFlow, RealNVP  # noqa: E402
-from jflows.loss import reverse_KL_F  # noqa: E402
+from jflows.loss import reverse_KL  # noqa: E402
 from jflows.potential import Nlog_Gaussian_Mixture  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -77,7 +77,7 @@ def sample_normal(key):
 
 
 def train(name: str, flow, sample_fn, seed: int) -> np.ndarray:
-    """Adam on mean(reverse_KL_F); returns the batch-mean loss curve."""
+    """Adam on mean(reverse_KL); returns the batch-mean loss curve."""
     params, static = eqx.partition(flow, eqx.is_inexact_array)
     m = jax.tree.map(jnp.zeros_like, params)
     v = jax.tree.map(jnp.zeros_like, params)
@@ -86,7 +86,7 @@ def train(name: str, flow, sample_fn, seed: int) -> np.ndarray:
     def step(params, m, v, t, key):
         def loss_fn(p):
             f = eqx.combine(p, static)
-            return reverse_KL_F(sample_fn(key), TARGET, f.t()).mean()
+            return reverse_KL(sample_fn(key), TARGET, f.t(), type="F").mean()
 
         loss, g = jax.value_and_grad(loss_fn)(params)
         m = jax.tree.map(lambda m, g: 0.9 * m + 0.1 * g, m, g)
@@ -149,7 +149,7 @@ def main() -> None:
         ax.plot(np.arange(1, STEPS + 1), c, lw=1.6, color=f"C{i}", label=name)
     ax.set_xlabel("training step")
     ax.set_ylabel("batch-mean reverse KL (+ const)")
-    ax.set_title("reverse_KL_F training across flow architectures — 2D 3-mode Gaussian mixture")
+    ax.set_title("reverse KL training across flow architectures — 2D 3-mode Gaussian mixture")
     ax.legend(frameon=False)
     ax.grid(alpha=0.25, lw=0.5)
     fig.savefig(PNG, dpi=150)

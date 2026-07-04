@@ -11,7 +11,7 @@ For compute_ESS / compute_ESS_log / importance_weights_* / resample:
     3. importance weights: identity flow gives the analytic energy
        difference (and log_w == 0, ESS == 1 when target == source);
        F/G duality; linear == max-shifted exp of log; chunk-invariance;
-       aliases; end-to-end feed into compute_ESS_log;
+       type dispatch; end-to-end feed into compute_ESS_log;
     4. coverage (k-NN, Naeem et al. 2020): perfect / far / half-collapsed
        candidates against a two-cluster reference, k-monotonicity,
        exact agreement with a brute-force reimplementation, jit;
@@ -44,11 +44,7 @@ from jflows.utils import (  # noqa: E402
     compute_ESS_log,
     coverage,
     importance_weights,
-    importance_weights_F,
-    importance_weights_G,
     importance_weights_log,
-    importance_weights_log_F,
-    importance_weights_log_G,
     resample,
 )
 
@@ -122,24 +118,27 @@ def main() -> None:
 
     Fz = nsf.zeros().t()  # identity flow
     check("identity flow: log_w == source - target",
-          importance_weights_log_F(xw, source, target, Fz),
+          importance_weights_log(xw, source, target, Fz, type="F"),
           source(xw) - target(xw), tol=1e-12)
-    lw_same = importance_weights_log_F(xw, source, source, Fz)
+    lw_same = importance_weights_log(xw, source, source, Fz, type="F")
     check("target == source: log_w == 0", lw_same, jnp.zeros(xw.shape[0]), tol=1e-12)
     check("target == source: ESS == 1", compute_ESS_log(lw_same), jnp.asarray(1.0), tol=1e-12)
 
     F = nsf.t()
-    lw = importance_weights_log_F(xw, source, target, F)
-    # _G takes the INVERSE map G = F^-1, so the duality pairs F with F.inv
-    check("F/G duality (log)", importance_weights_log_G(xw, source, target, F.inv), lw, tol=1e-11)
-    check("linear == max-shifted exp", importance_weights_F(xw, source, target, F),
+    lw = importance_weights_log(xw, source, target, F, type="F")
+    # type='G' takes the INVERSE map G = F^-1, so the duality pairs F with F.inv
+    check("F/G duality (log)", importance_weights_log(xw, source, target, F.inv, type="G"), lw, tol=1e-11)
+    check("linear == max-shifted exp", importance_weights(xw, source, target, F, type="F"),
           jnp.exp(lw - lw.max()), tol=1e-14)
-    check("G linear twin", importance_weights_G(xw, source, target, F.inv),
+    check("G linear twin", importance_weights(xw, source, target, F.inv, type="G"),
           jnp.exp(lw - lw.max()), tol=1e-11)
-    check("chunk invariance", importance_weights_log_F(xw, source, target, F, chunk=3),
+    check("chunk invariance", importance_weights_log(xw, source, target, F, type="F", chunk=3),
           lw, tol=1e-12)
-    check_true("aliases", importance_weights is importance_weights_F
-               and importance_weights_log is importance_weights_log_F)
+    try:
+        importance_weights_log(xw, source, target, F, type="Z")
+        check_true("invalid type raises", False)
+    except ValueError:
+        check_true("invalid type raises", True)
     ess_flow = compute_ESS_log(lw)
     check_true("end-to-end ESS in (0, 1]",
                bool((ess_flow > 0) & (ess_flow <= 1.0)), f"ESS = {float(ess_flow):.4f}")

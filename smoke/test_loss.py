@@ -1,16 +1,16 @@
 """Standalone loss smoke test (jflows only, no zflows fixtures) —
 run from the repo root as `~/.envs/jax/bin/python -m smoke.test_loss`.
 
-For reverse/forward_KL_{F,G} and OT_loss:
+For reverse_KL / forward_KL (type='F'/'G') and OT_loss:
 
     1. per-sample contract: every loss returns shape [N], and permuting
        the batch permutes the loss vector;
-    2. identity flow (zeros()): reverse_KL_F == target(x) and
-       forward_KL_F == source(y) exactly, per sample;
-    3. F/G duality: reverse_KL_G(x, ., F.inv) == reverse_KL_F(x, ., F)
-       and forward_KL_G(y, ., F.inv) == forward_KL_F(y, ., F);
-    4. no bare aliases: the module exposes only the explicit _F/_G names;
-    5. OT_loss with alpha_C = alpha_R = 0 recovers reverse_KL_F;
+    2. identity flow (zeros()): reverse_KL == target(x) and
+       forward_KL == source(y) exactly, per sample (type='F');
+    3. F/G duality: reverse_KL(x, ., F.inv, 'G') == reverse_KL(x, ., F, 'F')
+       and likewise for forward_KL;
+    4. type dispatch: an invalid `type` raises ValueError;
+    5. OT_loss with alpha_C = alpha_R = 0 recovers reverse_KL (type='F');
     6. autograd: filter_grad of the batch-mean is finite and nonzero.
 
 Float64, on the default JAX backend (GPU when available; set
@@ -33,13 +33,7 @@ import jax.numpy as jnp  # noqa: E402
 import numpy as np  # noqa: E402
 
 from jflows.flow import NSF, OTFlow  # noqa: E402
-from jflows.loss import (  # noqa: E402
-    OT_loss,
-    forward_KL_F,
-    forward_KL_G,
-    reverse_KL_F,
-    reverse_KL_G,
-)
+from jflows.loss import OT_loss, forward_KL, reverse_KL  # noqa: E402
 from jflows.potential import Nlog_Gaussian  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -90,46 +84,48 @@ def main() -> None:
     log("per-sample contract")
     F = nsf.t()
     losses = {
-        "reverse_KL_F": reverse_KL_F(x, target, F),
-        "reverse_KL_G": reverse_KL_G(x, target, F),
-        "forward_KL_F": forward_KL_F(y, target, F),
-        "forward_KL_G": forward_KL_G(y, target, F),
+        "reverse_KL (F)": reverse_KL(x, target, F, type="F"),
+        "reverse_KL (G)": reverse_KL(x, target, F, type="G"),
+        "forward_KL (F)": forward_KL(y, target, F, type="F"),
+        "forward_KL (G)": forward_KL(y, target, F, type="G"),
     }
     for name, vec in losses.items():
         check_true(f"{name} shape", vec.shape == (N,), f"{vec.shape}")
     perm = jax.random.permutation(jax.random.key(2), N)
-    check("permutation equivariance", reverse_KL_F(x[perm], target, F),
-          losses["reverse_KL_F"][perm], tol=1e-12)
+    check("permutation equivariance", reverse_KL(x[perm], target, F, type="F"),
+          losses["reverse_KL (F)"][perm], tol=1e-12)
 
     log("identity flow (zeros)")
     Fz = nsf.zeros().t()
-    check("reverse_KL_F == target(x)", reverse_KL_F(x, target, Fz), target(x), tol=1e-12)
-    check("forward_KL_F == source(y)", forward_KL_F(y, target, Fz), target(y), tol=1e-12)
+    check("reverse_KL == target(x)", reverse_KL(x, target, Fz, type="F"), target(x), tol=1e-12)
+    check("forward_KL == source(y)", forward_KL(y, target, Fz, type="F"), target(y), tol=1e-12)
 
     log("F/G duality and aliases")
-    check("reverse_KL_G(., F.inv) == reverse_KL_F(., F)",
-          reverse_KL_G(x, target, F.inv), losses["reverse_KL_F"], tol=1e-11)
-    check("forward_KL_G(., F.inv) == forward_KL_F(., F)",
-          forward_KL_G(y, target, F.inv), losses["forward_KL_F"], tol=1e-11)
-    import jflows.loss as loss_module
-    check_true("no bare aliases exported",
-               not hasattr(loss_module, "reverse_KL") and not hasattr(loss_module, "forward_KL"))
+    check("reverse_KL type G duality",
+          reverse_KL(x, target, F.inv, type="G"), losses["reverse_KL (F)"], tol=1e-11)
+    check("forward_KL type G duality",
+          forward_KL(y, target, F.inv, type="G"), losses["forward_KL (F)"], tol=1e-11)
+    try:
+        reverse_KL(x, target, F, type="X")
+        check_true("invalid type raises", False)
+    except ValueError:
+        check_true("invalid type raises", True)
 
     log("OT_loss")
     otf = OTFlow(jax.random.key(3), dimension=3, hidden=16, layer=3, rank=4, nt=8)
     xo = jax.random.normal(jax.random.key(4), (8, 3))
     lot = OT_loss(xo, target, otf, alpha_C=0.7, alpha_R=0.4)
     check_true("shape", lot.shape == (8,), f"{lot.shape}")
-    check("alpha_C = alpha_R = 0 recovers reverse_KL_F",
+    check("alpha_C = alpha_R = 0 recovers reverse_KL",
           OT_loss(xo, target, otf, alpha_C=0.0, alpha_R=0.0),
-          reverse_KL_F(xo, target, otf.t()), tol=1e-9)
+          reverse_KL(xo, target, otf.t(), type="F"), tol=1e-9)
 
     log("autograd through the batch-mean")
 
     @eqx.filter_jit
     @eqx.filter_grad
     def gmean(flow, x):
-        return reverse_KL_F(x, target, flow.t()).mean()
+        return reverse_KL(x, target, flow.t(), type="F").mean()
 
     grads = gmean(nsf, x)
     leaves = [g for g in jax.tree_util.tree_leaves(grads) if eqx.is_inexact_array(g)]

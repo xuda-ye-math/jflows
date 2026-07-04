@@ -8,7 +8,7 @@ Public surface (built up phase by phase, see PLAN.md):
     jflows.potential : Potential, potential_from, Nlog_Uniform, Nlog_Gaussian,
                        Nlog_Gaussian_Mixture, linear_combination (+ the operator
                        algebra c*U, U+V, U-V, -U, U/c, sum([...]))
-    jflows.loss      : reverse_KL_{F,G}, forward_KL_{F,G}, OT_loss
+    jflows.loss      : reverse_KL, forward_KL (type='F'/'G'), OT_loss
     jflows.utils     : metrics / optimization / rejuvenation / annealing
 
 Internals (`jflows.core.*`) follow zflows' layout, with the deliberate

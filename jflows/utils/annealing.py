@@ -28,10 +28,8 @@ from .rejuvenation import langevin
 
 
 __all__ = [
-    "ais_F",
-    "ais_G",
-    "annealed_importance_sampling_F",
-    "annealed_importance_sampling_G",
+    "ais",
+    "annealed_importance_sampling",
     "sequential_monte_carlo",
     "smc",
 ]
@@ -76,8 +74,8 @@ def sequential_monte_carlo(
          drift when `taming > 0`.
     After the final rung the particles approximate exp(-target).
 
-    Contrast with `annealed_importance_sampling_F` / `_G`, which use a
-    trained flow as the proposal and rejuvenate only in the final target
+    Contrast with `annealed_importance_sampling`, which uses a
+    trained flow as the proposal and rejuvenates only in the final target
     `mu_1`: here there is no flow, the bridge is built directly in
     potential space, and Langevin runs on each intermediate `u_k`.
 
@@ -132,12 +130,13 @@ def sequential_monte_carlo(
 # AIS — flow-proposal SMC along the geometric path to the target
 # ──────────────────────────────────────────────────────────────────────
 
-def annealed_importance_sampling_F(
+def annealed_importance_sampling(
     key: Array,
     samples: Array,
     source: Potential,
     target: Potential,
-    F: ComposedTransform,
+    transform: ComposedTransform,
+    type: str,
     ladder: int = 1,
     step: float = 1e-3,
     iters: int = 100,
@@ -146,16 +145,15 @@ def annealed_importance_sampling_F(
 ) -> Array:
     """
     Annealed importance sampling (an SMC sampler) that uses a trained flow
-    `F` as the proposal. The source `mu_0 ~ exp(-source)` and target
-    `mu_1 ~ exp(-target)` live in the same space, and `F` has been trained
-    so that the pushforward `F_# mu_0 ~~ mu_1`. The input `samples` are
-    drawn from `mu_0`; the routine returns samples from `mu_1`.
+    as the proposal. The source `mu_0 ~ exp(-source)` and target
+    `mu_1 ~ exp(-target)` live in the same space, and the flow has been
+    trained so that the pushforward `F_# mu_0 ~~ mu_1`. The input `samples`
+    are drawn from `mu_0`; the routine returns samples from `mu_1`.
 
-    `F` is the **forward** map (source -> target); `F(x)` pushes a source
-    sample forward and `F.inv(y)` recovers its latent pre-image. The twin
-    `annealed_importance_sampling_G` is identical but takes the **inverse**
-    map `G = F^{-1}` (target -> source) instead (same convention as
-    `reverse_KL_F` / `reverse_KL_G`).
+    The flow is supplied either as the forward map F (type='F',
+    source -> target) or as the inverse map G = F^{-1} (type='G',
+    target -> source), the same `type` convention as `reverse_KL` /
+    `forward_KL` / `importance_weights`.
 
     Annealing follows the geometric path between the flow proposal and the
     target,
@@ -166,7 +164,9 @@ def annealed_importance_sampling_F(
     for y with pre-image x = F^{-1}(y),
         log w(y) = -target(y) + source(x) + log|det J_F(x)|
     (cf. `importance_weights_log`), and the incremental weight along the
-    geometric path is exactly its 1/M-th.
+    geometric path is exactly its 1/M-th. With type='G' the same
+    quantities are computed through G: x = G(y) and
+    log|det J_F(x)| = -log|det J_G(y)|.
 
     Steps:
       (0) y <- F(samples)                # push source samples to pi_0 = F_# mu_0
@@ -186,32 +186,38 @@ def annealed_importance_sampling_F(
     path, the `mu_1` kernel introduces no essential deviation.
 
     Input:
-        key:     PRNG key (rung k uses fold_in(key, k), split into the
-                 resampling and rejuvenation keys)
-        samples: Array [N, d]      particles drawn from mu_0 (source space)
-        source:  Potential         source potential U_0 = -log mu_0
-        target:  Potential         target potential U_1 = -log mu_1
-        F:       ComposedTransform trained forward flow map (e.g. flow.t())
-        ladder:  int               number of annealing rungs M (>= 1). M=1 is
-                                   a single reweight + resample + Langevin hop
-                                   from the flow proposal to the target.
-        step:    float             Langevin (ULA) step size, shared across rungs
-        iters:   int               Langevin steps per rung
-        taming:  float             if > 0, tamed Langevin drift on the target
-                                   (see `langevin`)
-        chunk:   int               split along dim 0 into this many chunks for
-                                   the pushforward / inverse / weight passes
-                                   and inside each Langevin call, to bound
-                                   peak memory (statistically equivalent to
-                                   chunk=1)
+        key:       PRNG key (rung k uses fold_in(key, k), split into the
+                   resampling and rejuvenation keys)
+        samples:   Array [N, d]      particles drawn from mu_0 (source space)
+        source:    Potential         source potential U_0 = -log mu_0
+        target:    Potential         target potential U_1 = -log mu_1
+        transform: ComposedTransform trained flow map (e.g. flow.t())
+        type:      str               'F' if `transform` is the forward map
+                                     source -> target; 'G' if it is the
+                                     inverse map target -> source
+        ladder:    int               number of annealing rungs M (>= 1). M=1 is
+                                     a single reweight + resample + Langevin hop
+                                     from the flow proposal to the target.
+        step:      float             Langevin (ULA) step size, shared across rungs
+        iters:     int               Langevin steps per rung
+        taming:    float             if > 0, tamed Langevin drift on the target
+                                     (see `langevin`)
+        chunk:     int               split along dim 0 into this many chunks for
+                                     the pushforward / inverse / weight passes
+                                     and inside each Langevin call, to bound
+                                     peak memory (statistically equivalent to
+                                     chunk=1)
     Output:
         samples: Array [N, d]      particles in mu_1 (target space),
                                    approximating exp(-target)
     """
+    if type not in ("F", "G"):
+        raise ValueError(f"annealed_importance_sampling: type must be 'F' or 'G', got {type!r}")
     M = ladder
     # (0) push the source samples through F to obtain pi_0 = F_# mu_0.
+    push = transform if type == "F" else transform.inv
     y = jnp.concatenate(
-        [F(xc) for xc in jnp.array_split(samples, chunk, axis=0)], axis=0
+        [push(xc) for xc in jnp.array_split(samples, chunk, axis=0)], axis=0
     )
     for k in range(1, M + 1):
         # (1) incremental weights w(y) ** (1/M): refresh each particle's
@@ -219,8 +225,12 @@ def annealed_importance_sampling_F(
         #     importance_weights_log rule, scaled by 1/M for one rung.
         parts = []
         for yc in jnp.array_split(y, chunk, axis=0):
-            xc = F.inv(yc)                 # x = F^{-1}(y)
-            _, ladj = F.call_and_ladj(xc)  # ladj = log|det J_F(x)|
+            if type == "F":
+                xc = transform.inv(yc)                 # x = F^{-1}(y)
+                _, ladj = transform.call_and_ladj(xc)  # log|det J_F(x)|
+            else:
+                xc, ladj_G = transform.call_and_ladj(yc)  # x = G(y), log|det J_G(y)|
+                ladj = -ladj_G                            # log|det J_F(x)|
             parts.append((-target(yc) + source(xc) + ladj) / M)
         log_w = jnp.concatenate(parts, axis=0)
         w = jnp.exp(log_w - log_w.max())  # self-normalised, in [0, 1]
@@ -231,57 +241,6 @@ def annealed_importance_sampling_F(
     return y
 
 
-def annealed_importance_sampling_G(
-    key: Array,
-    samples: Array,
-    source: Potential,
-    target: Potential,
-    G: ComposedTransform,
-    ladder: int = 1,
-    step: float = 1e-3,
-    iters: int = 100,
-    taming: float = 0,
-    chunk: int = 1,
-) -> Array:
-    """
-    Inverse-map twin of `annealed_importance_sampling_F`: identical
-    flow-proposal SMC, but the flow is supplied as the **inverse** map
-    `G = F^{-1}` (target -> source) rather than the forward `F`
-    (source -> target). The proposal is still `F_# mu_0 = (G^{-1})_# mu_0`.
-    Input `samples` are drawn from `mu_0`; the routine returns samples
-    from `mu_1`.
-
-    The only difference from the `_F` variant is which direction of the
-    flow each call uses (same convention as `reverse_KL_F` / `reverse_KL_G`):
-        F(x)   <-> G.inv(x)   (push a source sample forward to mu_1)
-        F.inv(y) <-> G(y)     (recover the latent pre-image), with
-        log|det J_F(x)| = -log|det J_G(y)|.
-
-    Input: as `annealed_importance_sampling_F`, but `G: ComposedTransform`
-    is the inverse flow map target -> source (G = F^{-1}, e.g. flow.t()).
-    Output:
-        samples: Array [N, d]   particles in mu_1 (target space).
-    """
-    M = ladder
-    # (0) push the source samples through F = G^{-1} to obtain pi_0.
-    y = jnp.concatenate(
-        [G.inv(xc) for xc in jnp.array_split(samples, chunk, axis=0)], axis=0
-    )
-    for k in range(1, M + 1):
-        parts = []
-        for yc in jnp.array_split(y, chunk, axis=0):
-            xc, ladj_G = G.call_and_ladj(yc)  # x = G(y), log|det J_G(y)|
-            parts.append((-target(yc) + source(xc) - ladj_G) / M)
-        log_w = jnp.concatenate(parts, axis=0)
-        w = jnp.exp(log_w - log_w.max())  # self-normalised, in [0, 1]
-        key_r, key_l = jax.random.split(jax.random.fold_in(key, k))
-        y = resample(key_r, y, w)
-        y = langevin(key_l, y, target, step=step, iters=iters, taming=taming, chunk=chunk)
-    return y
-
-
-# aliases: the standard short names (F / G stay capitalized — they name
-# the transform type, as in reverse_KL_F / importance_weights_G)
+# aliases: the standard short names
 smc = sequential_monte_carlo
-ais_F = annealed_importance_sampling_F
-ais_G = annealed_importance_sampling_G
+ais = annealed_importance_sampling

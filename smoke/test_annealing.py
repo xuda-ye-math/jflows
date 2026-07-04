@@ -1,7 +1,7 @@
 """Standalone annealing smoke test (jflows only) — run from the repo
 root as `~/.envs/jax/bin/python -m smoke.test_annealing`.
 
-For sequential_monte_carlo / annealed_importance_sampling_{F,G}:
+For sequential_monte_carlo / annealed_importance_sampling (type='F'/'G'):
 
     1. SMC transports a wide Gaussian onto a two-mode mixture: moments
        and mode proportions match the analytic target within Monte-Carlo
@@ -14,7 +14,7 @@ For sequential_monte_carlo / annealed_importance_sampling_{F,G}:
        the same target;
     4. AIS with the identity flow (RealNVP.zeros()) reduces to a
        geometric source->target ladder and reproduces the target
-       moments; the _F/_G twins agree given G = F.inv;
+       moments; the 'F'/'G' types agree given G = F.inv;
     5. reproducibility from the key.
 
 Float64, on the default JAX backend (GPU when available; set
@@ -38,10 +38,8 @@ import numpy as np  # noqa: E402
 from jflows.flow import RealNVP  # noqa: E402
 from jflows.potential import Nlog_Gaussian, Nlog_Gaussian_Mixture  # noqa: E402
 from jflows.utils import (  # noqa: E402
-    ais_F,
-    ais_G,
-    annealed_importance_sampling_F,
-    annealed_importance_sampling_G,
+    ais,
+    annealed_importance_sampling,
     compute_ESS_log,
     langevin,
     resample,
@@ -140,11 +138,11 @@ def main() -> None:
     # ── 4. AIS with the identity flow ──
     log("annealed_importance_sampling (identity flow, ladder=6)")
     F = RealNVP(jax.random.key(5), dimension=2, transforms=2).zeros().t()
-    y = annealed_importance_sampling_F(jax.random.key(6), x0, SOURCE, TARGET, F,
-                                       ladder=6, step=0.02, iters=80)
-    check_target_match("AIS_F moments & mode proportions", y)
-    y_g = annealed_importance_sampling_G(jax.random.key(6), x0, SOURCE, TARGET, F.inv,
-                                         ladder=6, step=0.02, iters=80)
+    y = annealed_importance_sampling(jax.random.key(6), x0, SOURCE, TARGET, F, type="F",
+                                     ladder=6, step=0.02, iters=80)
+    check_target_match("AIS (type=F) moments & mode proportions", y)
+    y_g = annealed_importance_sampling(jax.random.key(6), x0, SOURCE, TARGET, F.inv, type="G",
+                                     ladder=6, step=0.02, iters=80)
     check("F/G duality (same key)", y_g, y, tol=1e-10)
 
     # weights feed the standard diagnostics
@@ -154,8 +152,7 @@ def main() -> None:
 
     log("aliases")
     check_true("smc is sequential_monte_carlo", smc is sequential_monte_carlo)
-    check_true("ais_F / ais_G", ais_F is annealed_importance_sampling_F
-               and ais_G is annealed_importance_sampling_G)
+    check_true("ais is annealed_importance_sampling", ais is annealed_importance_sampling)
 
     # ── 5. reproducibility ──
     log("reproducibility")

@@ -3,8 +3,9 @@
 Split across four modules (PLAN.md §3.4), re-exported here so
 `jflows.utils.<fn>` call sites read the same as in zflows:
 
-    metrics      : importance_weights_{F,G} (+log, + aliases),
-                   compute_ESS, compute_ESS_log, coverage, resample
+    metrics      : importance_weights (+log; the type argument names the
+                   transform type 'F'/'G'), compute_ESS, compute_ESS_log,
+                   coverage, resample
     optimization : lbfgs (alias optimization), adamw + the low-level
                    LBFGS_State / lbfgs_init / lbfgs_step and
                    AdamW_State / adamw_init / adamw_step kernels
@@ -12,14 +13,13 @@ Split across four modules (PLAN.md §3.4), re-exported here so
                    hamiltonian_monte_carlo (alias hmc) + the low-level
                    *_step kernels and the leapfrog integrator
     annealing    : sequential_monte_carlo (alias smc),
-                   annealed_importance_sampling_{F,G} (aliases ais_F, ais_G)
+                   annealed_importance_sampling (alias ais; same 'F'/'G'
+                   type argument)
 """
 
 from .annealing import (
-    ais_F,
-    ais_G,
-    annealed_importance_sampling_F,
-    annealed_importance_sampling_G,
+    ais,
+    annealed_importance_sampling,
     sequential_monte_carlo,
     smc,
 )
@@ -28,11 +28,7 @@ from .metrics import (
     compute_ESS_log,
     coverage,
     importance_weights,
-    importance_weights_F,
-    importance_weights_G,
     importance_weights_log,
-    importance_weights_log_F,
-    importance_weights_log_G,
     resample,
 )
 from .optimization import (
@@ -64,10 +60,8 @@ __all__ = [
     "adamw",
     "adamw_init",
     "adamw_step",
-    "ais_F",
-    "ais_G",
-    "annealed_importance_sampling_F",
-    "annealed_importance_sampling_G",
+    "ais",
+    "annealed_importance_sampling",
     "compute_ESS",
     "compute_ESS_log",
     "coverage",
@@ -75,11 +69,7 @@ __all__ = [
     "hmc",
     "hmc_step",
     "importance_weights",
-    "importance_weights_F",
-    "importance_weights_G",
     "importance_weights_log",
-    "importance_weights_log_F",
-    "importance_weights_log_G",
     "langevin",
     "langevin_step",
     "lbfgs",
