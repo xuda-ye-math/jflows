@@ -32,14 +32,15 @@ jflows
 │   │                        #   Nlog_Gaussian_Mixture, linear_combination (potential algebra)
 │   ├── loss.py              # reverse/forward_KL_{F,G}, OT_loss — per-sample returns, shape (N,)
 │   ├── utils
-│   │   ├── __init__.py      # re-exports the flat jflows.utils namespace; suppress_warnings
+│   │   ├── __init__.py      # re-exports the flat jflows.utils namespace
 │   │   ├── metrics.py       # importance_weights_{F,G} (+log), compute_ESS (+log),
 │   │   │                    #   coverage (k-NN, Naeem et al. 2020), resample  [CESS dropped]
 │   │   ├── optimization.py  # lbfgs (+ LBFGS_State / lbfgs_init / lbfgs_step);
 │   │   │                    #   adamw (+ AdamW_State / adamw_init / adamw_step; no zflows counterpart)
 │   │   ├── rejuvenation.py  # langevin, stochastic_heun, hamiltonian_monte_carlo
 │   │   │                    #   (+ *_step kernels, leapfrog; aliases rejuvenation, hmc)
-│   │   └── annealing.py     # sequential_monte_carlo, AIS_{F,G}      (pending)
+│   │   └── annealing.py     # sequential_monte_carlo, annealed_importance_sampling_{F,G}
+│   │                        #   (key-first, taming pass-through; AIS rejuvenates at the target)
 │   └── core
 │       ├── __init__.py
 │       ├── transforms.py    # Transform hierarchy (ComposedTransform, RQS, coupling, …)
@@ -78,7 +79,7 @@ Not mirrored: `.archive/`, `.venv/`, `zflows.egg-info/`, `Dockerfile`,
 | FFJORD trace estimator (`autograd.grad`)   | `jax.jvp` / `jax.vjp` inside the ODE drift                 |
 | OT-Flow `trHess`                           | direct port — closed-form trace, plain `jnp` math          |
 | `torch.compile` machinery: `loss_compile{,_beta}`, `check_compile_available`, `set_cache_size_limit` | **dropped** — obsolete under JAX; `jax.jit` is applied directly where needed |
-| `suppress_warnings`                        | kept as a small helper in `utils/__init__.py`              |
+| `suppress_warnings`                        | **dropped** — the torch.compile noise it muted doesn't exist under JAX |
 | `Potential.grad` via autograd              | `jax.grad` of the summed potential (or `vmap(grad)`)       |
 | `enable_grad` / `enable_eval` / `enable_for_ladj` / `enable_inv_ladj` (torch.compile fast-path setup) | **dropped** — `grad`/`eval`/`call_and_ladj` are jit-compiled by default |
 | in-place MCMC loops (langevin, HMC, SMC, AIS) | `jax.lax.scan` / `fori_loop` over functional state, jitted end-to-end |
@@ -100,9 +101,10 @@ Not mirrored: `.archive/`, `.venv/`, `zflows.egg-info/`, `Dockerfile`,
    vector, shape `(N,)` aligned with the batch — no internal reduction; callers
    take `.mean()` themselves.
 3. **No compile machinery.** `loss_compile{,_beta}`, `check_compile_available`,
-   `set_cache_size_limit`, and the `enable_grad`/`enable_eval`/`enable_for_ladj`/
-   `enable_inv_ladj` fast-path setters do not exist in jflows — `jax.jit` covers
-   compilation.
+   `set_cache_size_limit`, `suppress_warnings`, and the `enable_grad`/
+   `enable_eval`/`enable_for_ladj`/`enable_inv_ladj` fast-path setters do not
+   exist in jflows — `jax.jit` covers compilation, and the warning noise the
+   torch stack produced has no JAX counterpart.
 4. **`utils` is a package.** `jflows.utils` splits into `metrics.py` /
    `optimization.py` / `rejuvenation.py` / `annealing.py`;
    `utils/__init__.py` re-exports the flat namespace so
@@ -207,8 +209,9 @@ Dependency order is bottom-up, same as the zflows internal dependency graph:
 - **Phase 6 — `utils/` package.** Step 6a: `metrics.py` (compute_ESS (+log),
   importance_weights_{F,G} (+log), coverage, resample; CESS dropped).
   Step 6b/6c: `optimization.py` + `rejuvenation.py` with the two-level
-  interface (§3.15). Pending: `annealing.py` (sequential_monte_carlo,
-  annealed_importance_sampling_{F,G}), suppress_warnings in `__init__.py`.
+  interface (§3.14). Step 6d: `annealing.py` (sequential_monte_carlo +
+  annealed_importance_sampling_{F,G}; key-first, taming pass-through, AIS
+  rejuvenation at the target). suppress_warnings dropped (§3.3).
   Gate: deterministic pieces (weights, ESS, lbfgs on a quadratic) exact-parity;
   stochastic pieces validated statistically (§5).
 - **Phase 7 — `examples/` + docs.** Port the seven README showcases (2D/3D/4D

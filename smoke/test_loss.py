@@ -1,5 +1,5 @@
 """Standalone loss smoke test (jflows only, no zflows fixtures) —
-run from the repo root as `~/.envs/jax/bin/python -m smoke_tests.test_loss`.
+run from the repo root as `~/.envs/jax/bin/python -m smoke.test_loss`.
 
 For reverse/forward_KL_{F,G} and OT_loss:
 
@@ -9,8 +9,8 @@ For reverse/forward_KL_{F,G} and OT_loss:
        forward_KL_F == source(y) exactly, per sample;
     3. F/G duality: reverse_KL_G(x, ., F.inv) == reverse_KL_F(x, ., F)
        and forward_KL_G(y, ., F.inv) == forward_KL_F(y, ., F);
-    4. aliases: reverse_KL is reverse_KL_F, forward_KL is forward_KL_F;
-    5. OT_loss with alpha_C = alpha_R = 0 recovers reverse_KL;
+    4. no bare aliases: the module exposes only the explicit _F/_G names;
+    5. OT_loss with alpha_C = alpha_R = 0 recovers reverse_KL_F;
     6. autograd: filter_grad of the batch-mean is finite and nonzero.
 
 Float64, on the default JAX backend (GPU when available; set
@@ -35,10 +35,8 @@ import numpy as np  # noqa: E402
 from jflows.flow import NSF, OTFlow  # noqa: E402
 from jflows.loss import (  # noqa: E402
     OT_loss,
-    forward_KL,
     forward_KL_F,
     forward_KL_G,
-    reverse_KL,
     reverse_KL_F,
     reverse_KL_G,
 )
@@ -113,17 +111,18 @@ def main() -> None:
           reverse_KL_G(x, target, F.inv), losses["reverse_KL_F"], tol=1e-11)
     check("forward_KL_G(., F.inv) == forward_KL_F(., F)",
           forward_KL_G(y, target, F.inv), losses["forward_KL_F"], tol=1e-11)
-    check_true("reverse_KL is reverse_KL_F", reverse_KL is reverse_KL_F)
-    check_true("forward_KL is forward_KL_F", forward_KL is forward_KL_F)
+    import jflows.loss as loss_module
+    check_true("no bare aliases exported",
+               not hasattr(loss_module, "reverse_KL") and not hasattr(loss_module, "forward_KL"))
 
     log("OT_loss")
     otf = OTFlow(jax.random.key(3), dimension=3, hidden=16, layer=3, rank=4, nt=8)
     xo = jax.random.normal(jax.random.key(4), (8, 3))
     lot = OT_loss(xo, target, otf, alpha_C=0.7, alpha_R=0.4)
     check_true("shape", lot.shape == (8,), f"{lot.shape}")
-    check("alpha_C = alpha_R = 0 recovers reverse_KL",
+    check("alpha_C = alpha_R = 0 recovers reverse_KL_F",
           OT_loss(xo, target, otf, alpha_C=0.0, alpha_R=0.0),
-          reverse_KL(xo, target, otf.t()), tol=1e-9)
+          reverse_KL_F(xo, target, otf.t()), tol=1e-9)
 
     log("autograd through the batch-mean")
 

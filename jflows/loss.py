@@ -7,11 +7,11 @@ first for post-hoc regularisation. There are no temperature arguments
 (every potential is the energy of `exp(-U)`), and no compile wrappers
 (`jax.jit` the training step at the call site).
 
-Public API:
-    reverse_KL_F / reverse_KL  — source samples train F (source -> target)
-    reverse_KL_G               — source samples train G (target -> source)
-    forward_KL_F / forward_KL  — target samples train F
-    forward_KL_G               — target samples train G
+Public API (F / G name the transform type explicitly — no bare aliases):
+    reverse_KL_F  — source samples train F (source -> target)
+    reverse_KL_G  — source samples train G (target -> source)
+    forward_KL_F  — target samples train F
+    forward_KL_G  — target samples train G
     OT_loss                    — reverse KL + optimal-transport regularizers
 """
 
@@ -23,10 +23,8 @@ from .potential import Potential
 
 __all__ = [
     "OT_loss",
-    "forward_KL",
     "forward_KL_F",
     "forward_KL_G",
-    "reverse_KL",
     "reverse_KL_F",
     "reverse_KL_G",
 ]
@@ -52,9 +50,6 @@ def reverse_KL_F(x: Array, target: Potential, F: ComposedTransform) -> Array:
     y, ladj = F.call_and_ladj(x)  # get y = F(x) and log_abs_det_jacobian
     return target(y) - ladj
 
-
-# alias: reverse KL divergence in F, which uses source data
-reverse_KL = reverse_KL_F
 
 
 def reverse_KL_G(x: Array, target: Potential, G: ComposedTransform) -> Array:
@@ -90,9 +85,6 @@ def forward_KL_F(y: Array, source: Potential, F: ComposedTransform) -> Array:
     x, ladj = F.inv.call_and_ladj(y)  # x = F^-1(y), ladj = log|det J_{F^-1}(y)|
     return source(x) - ladj
 
-
-# alias: forward KL divergence in F, which uses target data
-forward_KL = forward_KL_F
 
 
 def forward_KL_G(y: Array, source: Potential, G: ComposedTransform) -> Array:
@@ -130,10 +122,10 @@ def OT_loss(
     in a single pass via `OTFlowTransform.call_full`. Returns the per-sample
     contributions
         target(F(x)) - log|det J_F(x)| + alpha_C * C(x) + alpha_R * R(x),
-    where the first two terms are exactly `reverse_KL` (the energy-based
+    where the first two terms are exactly `reverse_KL_F` (the energy-based
     objective), C(x) = integral_0^1 (1/2)|grad Phi|^2 dt is the transport cost,
     and R(x) = integral_0^1 |(1/2)|grad Phi|^2 - d_t Phi| dt is the HJB residual.
-    Setting alpha_C = alpha_R = 0 recovers `reverse_KL(x, target, otflow.t())`.
+    Setting alpha_C = alpha_R = 0 recovers `reverse_KL_F(x, target, otflow.t())`.
     Input:
         x:       Array [N, d]   samples drawn from the source distribution
         target:  Potential      negative log-density of the target (up to const)

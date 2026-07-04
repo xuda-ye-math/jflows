@@ -11,10 +11,18 @@ Split across four modules (PLAN.md §3.4), re-exported here so
     rejuvenation : langevin (alias rejuvenation), stochastic_heun,
                    hamiltonian_monte_carlo (alias hmc) + the low-level
                    *_step kernels and the leapfrog integrator
-    annealing    : sequential_monte_carlo,
-                   annealed_importance_sampling_{F,G}          (pending)
+    annealing    : sequential_monte_carlo (alias smc),
+                   annealed_importance_sampling_{F,G} (aliases ais_F, ais_G)
 """
 
+from .annealing import (
+    ais_F,
+    ais_G,
+    annealed_importance_sampling_F,
+    annealed_importance_sampling_G,
+    sequential_monte_carlo,
+    smc,
+)
 from .metrics import (
     compute_ESS,
     compute_ESS_log,
@@ -56,6 +64,10 @@ __all__ = [
     "adamw",
     "adamw_init",
     "adamw_step",
+    "ais_F",
+    "ais_G",
+    "annealed_importance_sampling_F",
+    "annealed_importance_sampling_G",
     "compute_ESS",
     "compute_ESS_log",
     "coverage",
@@ -77,6 +89,8 @@ __all__ = [
     "optimization",
     "rejuvenation",
     "resample",
+    "sequential_monte_carlo",
+    "smc",
     "stochastic_heun",
     "stochastic_heun_step",
 ]
