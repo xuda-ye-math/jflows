@@ -7,8 +7,8 @@ For reverse_KL / forward_KL (type='F'/'G') and OT_loss:
        the batch permutes the loss vector;
     2. identity flow (zeros()): reverse_KL == target(x) and
        forward_KL == source(y) exactly, per sample (type='F');
-    3. F/G duality: reverse_KL(x, ., F.inv, 'G') == reverse_KL(x, ., F, 'F')
-       and likewise for forward_KL;
+    3. definition vs the core layer: each type reproduces the manual
+       t() / t().inv computation exactly;
     4. type dispatch: an invalid `type` raises ValueError;
     5. OT_loss with alpha_C = alpha_R = 0 recovers reverse_KL (type='F');
     6. autograd: filter_grad of the batch-mean is finite and nonzero.
@@ -82,31 +82,35 @@ def main() -> None:
     y = jax.random.uniform(ky, (N, 3), minval=-0.95, maxval=0.95) * (b - a) / 2 + (a + b) / 2
 
     log("per-sample contract")
-    F = nsf.t()
     losses = {
-        "reverse_KL (F)": reverse_KL(x, target, F, type="F"),
-        "reverse_KL (G)": reverse_KL(x, target, F, type="G"),
-        "forward_KL (F)": forward_KL(y, target, F, type="F"),
-        "forward_KL (G)": forward_KL(y, target, F, type="G"),
+        "reverse_KL (F)": reverse_KL(x, target, nsf, type="F"),
+        "reverse_KL (G)": reverse_KL(x, target, nsf, type="G"),
+        "forward_KL (F)": forward_KL(y, target, nsf, type="F"),
+        "forward_KL (G)": forward_KL(y, target, nsf, type="G"),
     }
     for name, vec in losses.items():
         check_true(f"{name} shape", vec.shape == (N,), f"{vec.shape}")
     perm = jax.random.permutation(jax.random.key(2), N)
-    check("permutation equivariance", reverse_KL(x[perm], target, F, type="F"),
+    check("permutation equivariance", reverse_KL(x[perm], target, nsf, type="F"),
           losses["reverse_KL (F)"][perm], tol=1e-12)
 
     log("identity flow (zeros)")
-    Fz = nsf.zeros().t()
-    check("reverse_KL == target(x)", reverse_KL(x, target, Fz, type="F"), target(x), tol=1e-12)
-    check("forward_KL == source(y)", forward_KL(y, target, Fz, type="F"), target(y), tol=1e-12)
+    flow_z = nsf.zeros()
+    check("reverse_KL == target(x)", reverse_KL(x, target, flow_z, type="F"), target(x), tol=1e-12)
+    check("forward_KL == source(y)", forward_KL(y, target, flow_z, type="F"), target(y), tol=1e-12)
 
     log("F/G duality and aliases")
-    check("reverse_KL type G duality",
-          reverse_KL(x, target, F.inv, type="G"), losses["reverse_KL (F)"], tol=1e-11)
-    check("forward_KL type G duality",
-          forward_KL(y, target, F.inv, type="G"), losses["forward_KL (F)"], tol=1e-11)
+    T = nsf.t()  # definition vs the core layer
+    y_c, l_c = T.call_and_ladj(x)
+    check("reverse_KL type=F == core", losses["reverse_KL (F)"], target(y_c) - l_c, tol=0)
+    y_g, l_g = T.inv.call_and_ladj(x)
+    check("reverse_KL type=G == core", losses["reverse_KL (G)"], target(y_g) - l_g, tol=0)
+    x_c, l_i = T.inv.call_and_ladj(y)
+    check("forward_KL type=F == core", losses["forward_KL (F)"], target(x_c) - l_i, tol=0)
+    x_g, l_g2 = T.call_and_ladj(y)
+    check("forward_KL type=G == core", losses["forward_KL (G)"], target(x_g) - l_g2, tol=0)
     try:
-        reverse_KL(x, target, F, type="X")
+        reverse_KL(x, target, nsf, type="X")
         check_true("invalid type raises", False)
     except ValueError:
         check_true("invalid type raises", True)
@@ -118,14 +122,14 @@ def main() -> None:
     check_true("shape", lot.shape == (8,), f"{lot.shape}")
     check("alpha_C = alpha_R = 0 recovers reverse_KL",
           OT_loss(xo, target, otf, alpha_C=0.0, alpha_R=0.0),
-          reverse_KL(xo, target, otf.t(), type="F"), tol=1e-9)
+          reverse_KL(xo, target, otf, type="F"), tol=1e-9)
 
     log("autograd through the batch-mean")
 
     @eqx.filter_jit
     @eqx.filter_grad
     def gmean(flow, x):
-        return reverse_KL(x, target, flow.t(), type="F").mean()
+        return reverse_KL(x, target, flow, type="F").mean()
 
     grads = gmean(nsf, x)
     leaves = [g for g in jax.tree_util.tree_leaves(grads) if eqx.is_inexact_array(g)]

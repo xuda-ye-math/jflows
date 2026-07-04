@@ -21,7 +21,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
-from ..flow import ComposedTransform
+from ..flow import Flow
 from ..potential import Potential, linear_combination
 from .metrics import compute_ESS_log, resample
 from .rejuvenation import langevin
@@ -135,7 +135,7 @@ def annealed_importance_sampling(
     samples: Array,
     source: Potential,
     target: Potential,
-    transform: ComposedTransform,
+    flow: Flow,
     type: str,
     ladder: int = 1,
     step: float = 1e-3,
@@ -150,7 +150,7 @@ def annealed_importance_sampling(
     trained so that the pushforward `F_# mu_0 ~~ mu_1`. The input `samples`
     are drawn from `mu_0`; the routine returns samples from `mu_1`.
 
-    The flow is supplied either as the forward map F (type='F',
+    The flow acts either as the forward map F (type='F',
     source -> target) or as the inverse map G = F^{-1} (type='G',
     target -> source), the same `type` convention as `reverse_KL` /
     `forward_KL` / `importance_weights`.
@@ -191,10 +191,9 @@ def annealed_importance_sampling(
         samples:   Array [N, d]      particles drawn from mu_0 (source space)
         source:    Potential         source potential U_0 = -log mu_0
         target:    Potential         target potential U_1 = -log mu_1
-        transform: ComposedTransform trained flow map (e.g. flow.t())
-        type:      str               'F' if `transform` is the forward map
-                                     source -> target; 'G' if it is the
-                                     inverse map target -> source
+        flow:    Flow            the trained normalizing flow
+        type:    str             'F' if the flow maps source -> target;
+                                 'G' if it maps target -> source
         ladder:    int               number of annealing rungs M (>= 1). M=1 is
                                      a single reweight + resample + Langevin hop
                                      from the flow proposal to the target.
@@ -215,7 +214,7 @@ def annealed_importance_sampling(
         raise ValueError(f"annealed_importance_sampling: type must be 'F' or 'G', got {type!r}")
     M = ladder
     # (0) push the source samples through F to obtain pi_0 = F_# mu_0.
-    push = transform if type == "F" else transform.inv
+    push = flow.__call__ if type == "F" else flow.inv
     y = jnp.concatenate(
         [push(xc) for xc in jnp.array_split(samples, chunk, axis=0)], axis=0
     )
@@ -226,11 +225,11 @@ def annealed_importance_sampling(
         parts = []
         for yc in jnp.array_split(y, chunk, axis=0):
             if type == "F":
-                xc = transform.inv(yc)                 # x = F^{-1}(y)
-                _, ladj = transform.call_and_ladj(xc)  # log|det J_F(x)|
+                xc = flow.inv(yc)                 # x = F^{-1}(y)
+                _, ladj = flow.call_and_ladj(xc)  # log|det J_F(x)|
             else:
-                xc, ladj_G = transform.call_and_ladj(yc)  # x = G(y), log|det J_G(y)|
-                ladj = -ladj_G                            # log|det J_F(x)|
+                xc, ladj_G = flow.call_and_ladj(yc)  # x = G(y), log|det J_G(y)|
+                ladj = -ladj_G                       # log|det J_F(x)|
             parts.append((-target(yc) + source(xc) + ladj) / M)
         log_w = jnp.concatenate(parts, axis=0)
         w = jnp.exp(log_w - log_w.max())  # self-normalised, in [0, 1]

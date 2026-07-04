@@ -31,6 +31,7 @@ jflows
 │   ├── potential.py         # Potential, potential_from, Nlog_Uniform, Nlog_Gaussian,
 │   │                        #   Nlog_Gaussian_Mixture, linear_combination (potential algebra)
 │   ├── loss.py              # reverse_KL, forward_KL (type='F'/'G'), OT_loss — per-sample returns, shape (N,)
+│   ├── train.py             # train_reverse_KL — packed single-stage training (no zflows counterpart)
 │   ├── utils
 │   │   ├── __init__.py      # re-exports the flat jflows.utils namespace
 │   │   ├── metrics.py       # importance_weights (+log, type='F'/'G'), compute_ESS (+log),
@@ -146,7 +147,10 @@ Not mirrored: `.archive/`, `.venv/`, `zflows.egg-info/`, `Dockerfile`,
     `importance_weights{,_log}` / `annealed_importance_sampling` take the flow
     as `transform` plus `type: str` ('F' = forward map source -> target,
     'G' = inverse map target -> source) instead of paired `_F`/`_G` functions;
-    aliases `smc` and `ais`.
+    aliases `smc` and `ais`. The high-level functions take the `Flow` itself —
+    the `ComposedTransform` layer stays internal/advanced (`t()`), and `Flow`
+    exposes `__call__` / `call_and_ladj` / `inv` / `inv_and_ladj` as thin
+    delegations to it.
 14. **Potential algebra** (user-requested redesign). Potentials form a vector
     space over instances: `linear_combination(potentials, coeffs)` and the
     arithmetic operators on `Potential` (`c*U`, `U+V`, `U-V`, `-U`, `U/c`,

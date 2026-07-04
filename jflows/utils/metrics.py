@@ -24,7 +24,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
-from ..flow import ComposedTransform
+from ..flow import Flow
 from ..potential import Potential
 
 
@@ -46,7 +46,7 @@ def importance_weights_log(
     samples: Array,
     source: Potential,
     target: Potential,
-    transform: ComposedTransform,
+    flow: Flow,
     type: str,
     chunk: int = 1,
 ) -> Array:
@@ -54,7 +54,7 @@ def importance_weights_log(
     Self-normalized importance-sampling log-weights for the proposal
     `nu = F_# mu_0` against the target `mu_1`, where
         mu_0(x) ~ exp(-source(x)),   mu_1(y) ~ exp(-target(y)).
-    The flow is supplied either as the forward map F (type='F',
+    The flow acts either as the forward map F (type='F',
     source -> target) or as the inverse map G = F^{-1} (type='G',
     target -> source), the same `type` convention as `reverse_KL` /
     `forward_KL`.
@@ -70,14 +70,13 @@ def importance_weights_log(
     log|det J_{G^-1}(x)| = log|det J_F(x)|.
 
     Input:
-        samples:   Array [N, d]      particles drawn from `source`
-        source:    Potential         source (proposal-base) potential U_0
-        target:    Potential         target potential U_1
-        transform: ComposedTransform the flow map (e.g. flow.t())
-        type:      str               'F' if `transform` is the forward map
-                                     source -> target; 'G' if it is the
-                                     inverse map target -> source
-        chunk:     int               split `samples` along dim 0 into this many
+        samples: Array [N, d]   particles drawn from `source`
+        source:  Potential      source (proposal-base) potential U_0
+        target:  Potential      target potential U_1
+        flow:    Flow           the normalizing flow
+        type:    str            'F' if the flow maps source -> target;
+                                'G' if it maps target -> source
+        chunk:   int            split `samples` along dim 0 into this many
                                      chunks and concatenate the per-chunk
                                      log-weights. Reduces peak memory at the cost
                                      of wall time; statistically and numerically
@@ -89,9 +88,9 @@ def importance_weights_log(
                            (after subtracting max).
     """
     if type == "F":
-        push = transform.call_and_ladj          # y = F(x), log|det J_F(x)|
+        push = flow.call_and_ladj   # y = F(x), log|det J_F(x)|
     elif type == "G":
-        push = transform.inv.call_and_ladj      # y = G^-1(x), log|det J_{G^-1}(x)|
+        push = flow.inv_and_ladj    # y = G^-1(x), log|det J_{G^-1}(x)|
     else:
         raise ValueError(f"importance_weights_log: type must be 'F' or 'G', got {type!r}")
     out = []
@@ -105,7 +104,7 @@ def importance_weights(
     samples: Array,
     source: Potential,
     target: Potential,
-    transform: ComposedTransform,
+    flow: Flow,
     type: str,
     chunk: int = 1,
 ) -> Array:
@@ -128,7 +127,7 @@ def importance_weights(
     Output:
         w: Array [N]   unnormalized importance weights in [0, 1].
     """
-    log_w = importance_weights_log(samples, source, target, transform, type, chunk=chunk)
+    log_w = importance_weights_log(samples, source, target, flow, type, chunk=chunk)
     return jnp.exp(log_w - log_w.max())
 
 

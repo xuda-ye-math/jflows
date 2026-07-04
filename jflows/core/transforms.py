@@ -263,10 +263,12 @@ class AdditiveTransform(Transform):
         self.shift = shift
 
     def __call__(self, x: Array) -> Array:
-        return x + self.shift
+        # buffer semantics: the shift (NSF/NCSF box center) is not trainable,
+        # also when the transform itself is the differentiated pytree
+        return x + lax.stop_gradient(self.shift)
 
     def _inverse(self, y: Array) -> Array:
-        return y - self.shift
+        return y - lax.stop_gradient(self.shift)
 
     def log_abs_det_jacobian(self, x: Array, y: Array) -> Array:
         return jnp.zeros_like(x)

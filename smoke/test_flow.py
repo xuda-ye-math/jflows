@@ -64,6 +64,11 @@ def exercise(name: str, flow, x, tol: float) -> None:
     # 1-2. forward / inverse round-trips
     y, ladj = F.call_and_ladj(x)
     check("call == call_and_ladj", F(x), y, tol=1e-12)
+    # Flow high-level methods are thin delegations to t()
+    check("flow.call_and_ladj == t()", flow.call_and_ladj(x)[1], ladj, tol=0)
+    check("flow.inv == t().inv", flow.inv(y), F.inv(y), tol=0)
+    check("flow.inv_and_ladj == t().inv", flow.inv_and_ladj(y)[1],
+          F.inv.call_and_ladj(y)[1], tol=0)
     check("inv(F(x)) == x", F.inv(y), x, tol=tol)
     check("F(inv(y)) == y", F(F.inv(y)), y, tol=tol)
 

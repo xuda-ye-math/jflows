@@ -137,13 +137,13 @@ def main() -> None:
 
     # ── 4. AIS with the identity flow ──
     log("annealed_importance_sampling (identity flow, ladder=6)")
-    F = RealNVP(jax.random.key(5), dimension=2, transforms=2).zeros().t()
-    y = annealed_importance_sampling(jax.random.key(6), x0, SOURCE, TARGET, F, type="F",
+    flow_id = RealNVP(jax.random.key(5), dimension=2, transforms=2).zeros()
+    y = annealed_importance_sampling(jax.random.key(6), x0, SOURCE, TARGET, flow_id, type="F",
                                      ladder=6, step=0.02, iters=80)
     check_target_match("AIS (type=F) moments & mode proportions", y)
-    y_g = annealed_importance_sampling(jax.random.key(6), x0, SOURCE, TARGET, F.inv, type="G",
+    y_g = annealed_importance_sampling(jax.random.key(6), x0, SOURCE, TARGET, flow_id, type="G",
                                      ladder=6, step=0.02, iters=80)
-    check("F/G duality (same key)", y_g, y, tol=1e-10)
+    check("F/G agree for the identity flow (same key)", y_g, y, tol=1e-10)
 
     # weights feed the standard diagnostics
     log_w = (SOURCE(y) - TARGET(y))

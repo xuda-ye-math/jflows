@@ -116,26 +116,29 @@ def main() -> None:
     target = Nlog_Gaussian([0.5, -0.5, 0.0], [0.7, 0.7, 0.7])
     xw = jax.random.uniform(jax.random.key(8), (64, 3), minval=-1.9, maxval=1.9)
 
-    Fz = nsf.zeros().t()  # identity flow
+    flow_z = nsf.zeros()  # identity flow
     check("identity flow: log_w == source - target",
-          importance_weights_log(xw, source, target, Fz, type="F"),
+          importance_weights_log(xw, source, target, flow_z, type="F"),
           source(xw) - target(xw), tol=1e-12)
-    lw_same = importance_weights_log(xw, source, source, Fz, type="F")
+    lw_same = importance_weights_log(xw, source, source, flow_z, type="F")
     check("target == source: log_w == 0", lw_same, jnp.zeros(xw.shape[0]), tol=1e-12)
     check("target == source: ESS == 1", compute_ESS_log(lw_same), jnp.asarray(1.0), tol=1e-12)
 
-    F = nsf.t()
-    lw = importance_weights_log(xw, source, target, F, type="F")
-    # type='G' takes the INVERSE map G = F^-1, so the duality pairs F with F.inv
-    check("F/G duality (log)", importance_weights_log(xw, source, target, F.inv, type="G"), lw, tol=1e-11)
-    check("linear == max-shifted exp", importance_weights(xw, source, target, F, type="F"),
+    lw = importance_weights_log(xw, source, target, nsf, type="F")
+    T = nsf.t()  # definition vs the core layer, both types
+    y_c, l_c = T.call_and_ladj(xw)
+    check("type=F == core", lw, -target(y_c) + source(xw) + l_c, tol=0)
+    lw_g = importance_weights_log(xw, source, target, nsf, type="G")
+    y_g, l_g = T.inv.call_and_ladj(xw)
+    check("type=G == core", lw_g, -target(y_g) + source(xw) + l_g, tol=0)
+    check("linear == max-shifted exp", importance_weights(xw, source, target, nsf, type="F"),
           jnp.exp(lw - lw.max()), tol=1e-14)
-    check("G linear twin", importance_weights(xw, source, target, F.inv, type="G"),
-          jnp.exp(lw - lw.max()), tol=1e-11)
-    check("chunk invariance", importance_weights_log(xw, source, target, F, type="F", chunk=3),
+    check("linear type=G", importance_weights(xw, source, target, nsf, type="G"),
+          jnp.exp(lw_g - lw_g.max()), tol=1e-14)
+    check("chunk invariance", importance_weights_log(xw, source, target, nsf, type="F", chunk=3),
           lw, tol=1e-12)
     try:
-        importance_weights_log(xw, source, target, F, type="Z")
+        importance_weights_log(xw, source, target, nsf, type="Z")
         check_true("invalid type raises", False)
     except ValueError:
         check_true("invalid type raises", True)

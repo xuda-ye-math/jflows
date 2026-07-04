@@ -86,7 +86,7 @@ def train(name: str, flow, sample_fn, seed: int) -> np.ndarray:
     def step(params, m, v, t, key):
         def loss_fn(p):
             f = eqx.combine(p, static)
-            return reverse_KL(sample_fn(key), TARGET, f.t(), type="F").mean()
+            return reverse_KL(sample_fn(key), TARGET, f, type="F").mean()
 
         loss, g = jax.value_and_grad(loss_fn)(params)
         m = jax.tree.map(lambda m, g: 0.9 * m + 0.1 * g, m, g)

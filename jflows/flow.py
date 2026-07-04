@@ -52,25 +52,45 @@ __all__ = ["CNF", "ComposedTransform", "Flow", "NCSF", "NSF", "OTFlow", "RealNVP
 class Flow(eqx.Module):
     """Abstract base class for every normalizing flow in jflows.
 
-    Subclasses are eqx.Modules (immutable pytrees — train them with
-    `eqx.filter_grad` / optax-style updates) and must implement:
+    Subclasses are eqx.Modules (immutable pytrees — train them with the
+    packed drivers in `jflows.train`, or `eqx.filter_grad` / optax-style
+    updates) and must implement:
 
         def t(self) -> ComposedTransform: ...
 
-    Canonical usage:
+    High-level usage goes through the flow itself — the `type` argument
+    of the losses / importance weights / AIS names the direction the
+    flow's transform acts in:
 
-        F = flow.t()                          # ComposedTransform
-        y, ladj = F.call_and_ladj(x)          # forward & log|det J|
-        x_back  = F.inv(y)                    # inverse
+        y       = flow(x)                 # forward map
+        y, ladj = flow.call_and_ladj(x)   # forward map & log|det J|
+        x       = flow.inv(y)             # inverse map
+        x, ladj = flow.inv_and_ladj(y)    # inverse map & its log|det J|
 
-    `flow.t()` is the only supported access path. Building the transform
-    inside a jit-traced function is free; a transform captured outside
-    reflects the parameters of the flow it was built from (rebuild via
-    `flow.t()` after a parameter update).
+    `t()` is the advanced composition layer: it returns the underlying
+    `ComposedTransform` for chaining transforms, custom pipelines, and
+    the core machinery. Building it inside a jit-traced function is
+    free, and the four methods above are thin delegations to it.
     """
 
     @abstractmethod
     def t(self) -> ComposedTransform: ...
+
+    def __call__(self, x: Array) -> Array:
+        """Forward map y (the transform's native direction)."""
+        return self.t()(x)
+
+    def call_and_ladj(self, x: Array) -> tuple[Array, Array]:
+        """Forward map and its log|det J|: (y, ladj)."""
+        return self.t().call_and_ladj(x)
+
+    def inv(self, y: Array) -> Array:
+        """Inverse map x (pre-image of y)."""
+        return self.t().inv(y)
+
+    def inv_and_ladj(self, y: Array) -> tuple[Array, Array]:
+        """Inverse map and its log|det J|: (x, ladj)."""
+        return self.t().inv.call_and_ladj(y)
 
 
 def _make_orders(key: Array, d: int, transforms: int, randmask: bool) -> list[np.ndarray]:
