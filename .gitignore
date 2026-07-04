@@ -4,3 +4,4 @@ __pycache__/
 *.log
 *.pth
 *.pt
+parity_check/
