@@ -1,0 +1,630 @@
+[08:53:44] START parity_check_phase2 | jax 0.10.2
+[08:53:44] torch parity: MonotonicRQS (per-coord bound)
+[08:53:45]   y: max|Δ|=6.661e-16 tol=1.0e-12 -> OK
+[08:53:45]   ladj: max|Δ|=2.220e-16 tol=1.0e-12 -> OK
+[08:53:45]   x_back: max|Δ|=2.220e-16 tol=1.0e-12 -> OK
+[08:53:46]   grad ladj wrt x: max|Δ|=7.105e-15 tol=1.0e-10 -> OK
+[08:53:46] torch parity: MonotonicRQS (scalar bound)
+[08:53:46]   y: max|Δ|=1.332e-15 tol=1.0e-12 -> OK
+[08:53:46]   ladj: max|Δ|=1.596e-15 tol=1.0e-12 -> OK
+[08:53:46] torch parity: CircularShift
+[08:53:46]   y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[08:53:46] torch parity: MonotonicAffine
+[08:53:46]   y: max|Δ|=8.882e-16 tol=1.0e-12 -> OK
+[08:53:46]   ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[08:53:46] Identity / Additive (scalar-wise)
+[08:53:46]   identity roundtrip: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[08:53:46]   additive roundtrip: max|Δ|=2.220e-16 tol=1.0e-15 -> OK
+[08:53:46]   additive ladj: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[08:53:46] AutoregressiveTransform (affine meta, strictly-lower conditioner)
+[08:53:46]   AR call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[08:53:46]   AR roundtrip: max|Δ|=2.220e-16 tol=1.0e-10 -> OK
+[08:53:47]   AR ladj vs slogdet: max|Δ|=2.220e-16 tol=1.0e-10 -> OK
+[08:53:47]   AR inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[08:53:47]   AR inv roundtrip: max|Δ|=2.220e-16 tol=1.0e-10 -> OK
+[08:53:47]   AR jacobian lower-triangular: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[08:53:47] CouplingTransform (affine meta)
+[08:53:47]   coupling call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[08:53:47]   coupling roundtrip: max|Δ|=2.220e-16 tol=1.0e-10 -> OK
+[08:53:48]   coupling ladj vs slogdet: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[08:53:48]   coupling inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[08:53:48]   coupling inv roundtrip: max|Δ|=2.220e-16 tol=1.0e-10 -> OK
+[08:53:48] FreeFormJacobianTransform (exact trace)
+[08:53:48]   FFJ call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[08:53:48]   FFJ roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[08:53:48]   FFJ ladj vs slogdet: max|Δ|=3.903e-09 tol=1.0e-06 -> OK
+[08:53:48]   FFJ inv ladj: max|Δ|=2.112e-11 tol=1.0e-06 -> OK
+[08:53:48]   FFJ inv roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[08:53:48] FreeFormJacobianTransform (Hutchinson, batched: finite + unbiased-ish)
+[08:53:48]   hutchinson y == exact y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[08:53:49]   hutchinson ladj mean err 1.200 (stochastic, finite=True)
+[08:53:49] RotationTransform
+[08:53:49]   rotation call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[08:53:49]   rotation roundtrip: max|Δ|=4.441e-16 tol=1.0e-09 -> OK
+[08:53:49]   rotation ladj vs slogdet: max|Δ|=1.110e-16 tol=1.0e-09 -> OK
+[08:53:49]   rotation inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[08:53:49]   rotation inv roundtrip: max|Δ|=4.441e-16 tol=1.0e-09 -> OK
+[08:53:49]   R orthogonal: max|Δ|=8.882e-16 tol=1.0e-10 -> OK
+[08:53:49] LULinearTransform
+[08:53:49]   lu call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[08:53:49]   lu roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[08:53:49]   lu ladj vs slogdet: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[08:53:49]   lu inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[08:53:49]   lu inv roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[08:53:49] ComposedTransform event-dim bookkeeping (Additive ∘ AR ∘ Additive)
+[08:53:49]   composed call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[08:53:49]   composed roundtrip: max|Δ|=1.221e-15 tol=1.0e-10 -> OK
+[08:53:49]   composed ladj vs slogdet: max|Δ|=4.441e-16 tol=1.0e-10 -> OK
+[08:53:49]   composed inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[08:53:49]   composed inv roundtrip: max|Δ|=1.221e-15 tol=1.0e-10 -> OK
+[08:53:49]   composed domain_dim: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[08:53:49] ComposedTransform.inv structure
+[08:53:49]   composed inv roundtrip: max|Δ|=1.221e-15 tol=1.0e-10 -> OK
+[08:53:49] DONE — all Phase 2 checks passed
+[09:10:25] START parity_check_phase2 | jax 0.10.2
+[09:10:25] torch parity: MonotonicRQS (per-coord bound)
+[09:10:26]   y: max|Δ|=6.661e-16 tol=1.0e-12 -> OK
+[09:10:26]   ladj: max|Δ|=2.220e-16 tol=1.0e-12 -> OK
+[09:10:26]   x_back: max|Δ|=2.220e-16 tol=1.0e-12 -> OK
+[09:10:27]   grad ladj wrt x: max|Δ|=7.105e-15 tol=1.0e-10 -> OK
+[09:10:27] torch parity: MonotonicRQS (scalar bound)
+[09:10:27]   y: max|Δ|=1.332e-15 tol=1.0e-12 -> OK
+[09:10:27]   ladj: max|Δ|=1.596e-15 tol=1.0e-12 -> OK
+[09:10:27] torch parity: CircularShift
+[09:10:27]   y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:10:27] torch parity: MonotonicAffine
+[09:10:27]   y: max|Δ|=8.882e-16 tol=1.0e-12 -> OK
+[09:10:27]   ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:10:27] Identity / Additive (scalar-wise)
+[09:10:27]   identity roundtrip: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[09:10:27]   additive roundtrip: max|Δ|=2.220e-16 tol=1.0e-15 -> OK
+[09:10:27]   additive ladj: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[09:10:27] AutoregressiveTransform (affine meta, strictly-lower conditioner)
+[09:10:27]   AR call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:10:27]   AR roundtrip: max|Δ|=2.220e-16 tol=1.0e-10 -> OK
+[09:10:28]   AR ladj vs slogdet: max|Δ|=2.220e-16 tol=1.0e-10 -> OK
+[09:10:28]   AR inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[09:10:28]   AR inv roundtrip: max|Δ|=2.220e-16 tol=1.0e-10 -> OK
+[09:10:28]   AR jacobian lower-triangular: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[09:10:28] CouplingTransform (affine meta)
+[09:10:28]   coupling call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:10:28]   coupling roundtrip: max|Δ|=2.220e-16 tol=1.0e-10 -> OK
+[09:10:29]   coupling ladj vs slogdet: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[09:10:29]   coupling inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[09:10:29]   coupling inv roundtrip: max|Δ|=2.220e-16 tol=1.0e-10 -> OK
+[09:10:29] FreeFormJacobianTransform (exact trace)
+[09:10:29]   FFJ call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:10:29]   FFJ roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[09:10:29]   FFJ ladj vs slogdet: max|Δ|=3.903e-09 tol=1.0e-06 -> OK
+[09:10:29]   FFJ inv ladj: max|Δ|=2.112e-11 tol=1.0e-06 -> OK
+[09:10:29]   FFJ inv roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[09:10:29] FreeFormJacobianTransform (Hutchinson, batched: finite + unbiased-ish)
+[09:10:29]   hutchinson y == exact y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:10:29]   hutchinson ladj mean err 1.200 (stochastic, finite=True)
+[09:10:29] RotationTransform
+[09:10:30]   rotation call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:10:30]   rotation roundtrip: max|Δ|=4.441e-16 tol=1.0e-09 -> OK
+[09:10:30]   rotation ladj vs slogdet: max|Δ|=1.110e-16 tol=1.0e-09 -> OK
+[09:10:30]   rotation inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[09:10:30]   rotation inv roundtrip: max|Δ|=4.441e-16 tol=1.0e-09 -> OK
+[09:10:30]   R orthogonal: max|Δ|=8.882e-16 tol=1.0e-10 -> OK
+[09:10:30] LULinearTransform
+[09:10:30]   lu call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:10:30]   lu roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[09:10:30]   lu ladj vs slogdet: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[09:10:30]   lu inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[09:10:30]   lu inv roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[09:10:30] ComposedTransform event-dim bookkeeping (Additive ∘ AR ∘ Additive)
+[09:10:30]   composed call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:10:30]   composed roundtrip: max|Δ|=1.221e-15 tol=1.0e-10 -> OK
+[09:10:30]   composed ladj vs slogdet: max|Δ|=4.441e-16 tol=1.0e-10 -> OK
+[09:10:30]   composed inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[09:10:30]   composed inv roundtrip: max|Δ|=1.221e-15 tol=1.0e-10 -> OK
+[09:10:30]   composed domain_dim: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[09:10:30] ComposedTransform.inv structure
+[09:10:30]   composed inv roundtrip: max|Δ|=1.221e-15 tol=1.0e-10 -> OK
+[09:10:30] DONE — all Phase 2 checks passed
+[09:25:28] START parity_check_phase2 | jax 0.10.2 (gpu)
+[09:25:28] torch parity: MonotonicRQS (per-coord bound)
+[09:25:29]   y: max|Δ|=2.220e-15 tol=1.0e-12 -> OK
+[09:25:29]   ladj: max|Δ|=1.998e-15 tol=1.0e-12 -> OK
+[09:25:29]   x_back: max|Δ|=8.882e-16 tol=1.0e-12 -> OK
+[09:25:29]   grad ladj wrt x: max|Δ|=3.819e-14 tol=1.0e-10 -> OK
+[09:25:29] torch parity: MonotonicRQS (scalar bound)
+[09:25:29]   y: max|Δ|=8.327e-16 tol=1.0e-12 -> OK
+[09:25:29]   ladj: max|Δ|=1.776e-15 tol=1.0e-12 -> OK
+[09:25:29] torch parity: CircularShift
+[09:25:29]   y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:25:29] torch parity: MonotonicAffine
+[09:25:29]   y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:25:29]   ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:25:29] Identity / Additive (scalar-wise)
+[09:25:29]   identity roundtrip: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[09:25:29]   additive roundtrip: max|Δ|=2.220e-16 tol=1.0e-15 -> OK
+[09:25:29]   additive ladj: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[09:25:29] AutoregressiveTransform (affine meta, strictly-lower conditioner)
+[09:25:30]   AR call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:25:30]   AR roundtrip: max|Δ|=1.110e-16 tol=1.0e-10 -> OK
+[09:25:30]   AR ladj vs slogdet: max|Δ|=1.110e-16 tol=1.0e-10 -> OK
+[09:25:30]   AR inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[09:25:30]   AR inv roundtrip: max|Δ|=1.110e-16 tol=1.0e-10 -> OK
+[09:25:30]   AR jacobian lower-triangular: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[09:25:30] CouplingTransform (affine meta)
+[09:25:31]   coupling call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:25:31]   coupling roundtrip: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[09:25:32]   coupling ladj vs slogdet: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[09:25:32]   coupling inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[09:25:32]   coupling inv roundtrip: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[09:25:32] FreeFormJacobianTransform (exact trace)
+[09:25:32]   FFJ call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:25:32]   FFJ roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[09:25:32]   FFJ ladj vs slogdet: max|Δ|=3.903e-09 tol=1.0e-06 -> OK
+[09:25:32]   FFJ inv ladj: max|Δ|=2.112e-11 tol=1.0e-06 -> OK
+[09:25:32]   FFJ inv roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[09:25:32] FreeFormJacobianTransform (Hutchinson, batched: finite + unbiased-ish)
+[09:25:33]   hutchinson y == exact y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:25:33]   hutchinson ladj mean err 1.200 (stochastic, finite=True)
+[09:25:33] RotationTransform
+[09:25:33]   rotation call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:25:33]   rotation roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[09:25:34]   rotation ladj vs slogdet: max|Δ|=1.665e-16 tol=1.0e-09 -> OK
+[09:25:34]   rotation inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[09:25:34]   rotation inv roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[09:25:34]   R orthogonal: max|Δ|=4.441e-16 tol=1.0e-10 -> OK
+[09:25:34] LULinearTransform
+[09:25:34]   lu call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:25:34]   lu roundtrip: max|Δ|=4.441e-16 tol=1.0e-09 -> OK
+[09:25:34]   lu ladj vs slogdet: max|Δ|=2.220e-16 tol=1.0e-09 -> OK
+[09:25:34]   lu inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[09:25:34]   lu inv roundtrip: max|Δ|=4.441e-16 tol=1.0e-09 -> OK
+[09:25:34] ComposedTransform event-dim bookkeeping (Additive ∘ AR ∘ Additive)
+[09:25:34]   composed call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:25:34]   composed roundtrip: max|Δ|=2.109e-15 tol=1.0e-10 -> OK
+[09:25:34]   composed ladj vs slogdet: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[09:25:34]   composed inv ladj: max|Δ|=4.441e-16 tol=1.0e-10 -> OK
+[09:25:34]   composed inv roundtrip: max|Δ|=2.109e-15 tol=1.0e-10 -> OK
+[09:25:34]   composed domain_dim: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[09:25:34] ComposedTransform.inv structure
+[09:25:34]   composed inv roundtrip: max|Δ|=2.109e-15 tol=1.0e-10 -> OK
+[09:25:34] DONE — all Phase 2 checks passed
+[09:27:49] START parity_check_phase2 | jax 0.10.2 (gpu)
+[09:27:49] torch parity: MonotonicRQS (per-coord bound)
+[09:27:50]   y: max|Δ|=2.220e-15 tol=1.0e-12 -> OK
+[09:27:50]   ladj: max|Δ|=1.998e-15 tol=1.0e-12 -> OK
+[09:27:50]   x_back: max|Δ|=8.882e-16 tol=1.0e-12 -> OK
+[09:27:50]   grad ladj wrt x: max|Δ|=3.819e-14 tol=1.0e-10 -> OK
+[09:27:50] torch parity: MonotonicRQS (scalar bound)
+[09:27:50]   y: max|Δ|=8.327e-16 tol=1.0e-12 -> OK
+[09:27:50]   ladj: max|Δ|=1.776e-15 tol=1.0e-12 -> OK
+[09:27:50] torch parity: CircularShift
+[09:27:51]   y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:27:51] torch parity: MonotonicAffine
+[09:27:51]   y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:27:51]   ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:27:51] Identity / Additive (scalar-wise)
+[09:27:51]   identity roundtrip: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[09:27:51]   additive roundtrip: max|Δ|=2.220e-16 tol=1.0e-15 -> OK
+[09:27:51]   additive ladj: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[09:27:51] AutoregressiveTransform (affine meta, strictly-lower conditioner)
+[09:27:51]   AR call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:27:51]   AR roundtrip: max|Δ|=1.388e-17 tol=1.0e-10 -> OK
+[09:27:52]   AR ladj vs slogdet: max|Δ|=1.110e-16 tol=1.0e-10 -> OK
+[09:27:52]   AR inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[09:27:52]   AR inv roundtrip: max|Δ|=1.388e-17 tol=1.0e-10 -> OK
+[09:27:52]   AR jacobian lower-triangular: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[09:27:52] CouplingTransform (affine meta)
+[09:27:52]   coupling call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:27:52]   coupling roundtrip: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[09:27:53]   coupling ladj vs slogdet: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[09:27:53]   coupling inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[09:27:53]   coupling inv roundtrip: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[09:27:53] FreeFormJacobianTransform (exact trace)
+[09:27:53]   FFJ call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:27:54]   FFJ roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[09:27:54]   FFJ ladj vs slogdet: max|Δ|=3.903e-09 tol=1.0e-06 -> OK
+[09:27:54]   FFJ inv ladj: max|Δ|=2.112e-11 tol=1.0e-06 -> OK
+[09:27:54]   FFJ inv roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[09:27:54] FreeFormJacobianTransform (Hutchinson, batched: finite + unbiased-ish)
+[09:27:54]   hutchinson y == exact y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:27:54]   hutchinson ladj mean err 1.200 (stochastic, finite=True)
+[09:27:54] RotationTransform
+[09:27:55]   rotation call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:27:55]   rotation roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[09:27:55]   rotation ladj vs slogdet: max|Δ|=1.665e-16 tol=1.0e-09 -> OK
+[09:27:55]   rotation inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[09:27:55]   rotation inv roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[09:27:55]   R orthogonal: max|Δ|=4.441e-16 tol=1.0e-10 -> OK
+[09:27:55] LULinearTransform
+[09:27:55]   lu call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:27:55]   lu roundtrip: max|Δ|=3.331e-16 tol=1.0e-09 -> OK
+[09:27:55]   lu ladj vs slogdet: max|Δ|=2.220e-16 tol=1.0e-09 -> OK
+[09:27:55]   lu inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[09:27:55]   lu inv roundtrip: max|Δ|=3.331e-16 tol=1.0e-09 -> OK
+[09:27:55] ComposedTransform event-dim bookkeeping (Additive ∘ AR ∘ Additive)
+[09:27:55]   composed call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:27:55]   composed roundtrip: max|Δ|=1.887e-15 tol=1.0e-10 -> OK
+[09:27:55]   composed ladj vs slogdet: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[09:27:55]   composed inv ladj: max|Δ|=4.441e-16 tol=1.0e-10 -> OK
+[09:27:55]   composed inv roundtrip: max|Δ|=1.887e-15 tol=1.0e-10 -> OK
+[09:27:55]   composed domain_dim: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[09:27:55] ComposedTransform.inv structure
+[09:27:55]   composed inv roundtrip: max|Δ|=1.887e-15 tol=1.0e-10 -> OK
+[09:27:55] DONE — all Phase 2 checks passed
+[10:16:49] START parity_check_phase2 | jax 0.10.2 (gpu)
+[10:16:49] torch parity: MonotonicRQS (per-coord bound)
+[10:16:50]   y: max|Δ|=2.220e-15 tol=1.0e-12 -> OK
+[10:16:50]   ladj: max|Δ|=1.998e-15 tol=1.0e-12 -> OK
+[10:16:50]   x_back: max|Δ|=8.882e-16 tol=1.0e-12 -> OK
+[10:16:50]   grad ladj wrt x: max|Δ|=3.819e-14 tol=1.0e-10 -> OK
+[10:16:50] torch parity: MonotonicRQS (scalar bound)
+[10:16:50]   y: max|Δ|=8.327e-16 tol=1.0e-12 -> OK
+[10:16:50]   ladj: max|Δ|=1.776e-15 tol=1.0e-12 -> OK
+[10:16:50] torch parity: CircularShift
+[10:16:50]   y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[10:16:50] torch parity: MonotonicAffine
+[10:16:50]   y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[10:16:50]   ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[10:16:50] Identity / Additive (scalar-wise)
+[10:16:50]   identity roundtrip: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[10:16:50]   additive roundtrip: max|Δ|=2.220e-16 tol=1.0e-15 -> OK
+[10:16:51]   additive ladj: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[10:16:51] AutoregressiveTransform (affine meta, strictly-lower conditioner)
+[10:16:51]   AR call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[10:16:51]   AR roundtrip: max|Δ|=1.388e-17 tol=1.0e-10 -> OK
+[10:16:51]   AR ladj vs slogdet: max|Δ|=1.110e-16 tol=1.0e-10 -> OK
+[10:16:51]   AR inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[10:16:51]   AR inv roundtrip: max|Δ|=1.388e-17 tol=1.0e-10 -> OK
+[10:16:51]   AR jacobian lower-triangular: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[10:16:51] CouplingTransform (affine meta)
+[10:16:52]   coupling call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[10:16:52]   coupling roundtrip: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[10:16:53]   coupling ladj vs slogdet: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[10:16:53]   coupling inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[10:16:53]   coupling inv roundtrip: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[10:16:53] FreeFormJacobianTransform (exact trace)
+[10:16:53]   FFJ call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[10:16:53]   FFJ roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[10:16:53]   FFJ ladj vs slogdet: max|Δ|=3.903e-09 tol=1.0e-06 -> OK
+[10:16:54]   FFJ inv ladj: max|Δ|=2.112e-11 tol=1.0e-06 -> OK
+[10:16:54]   FFJ inv roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[10:16:54] FreeFormJacobianTransform (Hutchinson, batched: finite + unbiased-ish)
+[10:16:54]   hutchinson y == exact y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[10:16:54]   hutchinson ladj mean err 1.200 (stochastic, finite=True)
+[10:16:54] RotationTransform
+[10:16:54]   rotation call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[10:16:55]   rotation roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[10:16:55]   rotation ladj vs slogdet: max|Δ|=1.665e-16 tol=1.0e-09 -> OK
+[10:16:55]   rotation inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[10:16:55]   rotation inv roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[10:16:55]   R orthogonal: max|Δ|=4.441e-16 tol=1.0e-10 -> OK
+[10:16:55] LULinearTransform
+[10:16:55]   lu call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[10:16:55]   lu roundtrip: max|Δ|=3.331e-16 tol=1.0e-09 -> OK
+[10:16:55]   lu ladj vs slogdet: max|Δ|=2.220e-16 tol=1.0e-09 -> OK
+[10:16:55]   lu inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[10:16:55]   lu inv roundtrip: max|Δ|=3.331e-16 tol=1.0e-09 -> OK
+[10:16:55] ComposedTransform event-dim bookkeeping (Additive ∘ AR ∘ Additive)
+[10:16:55]   composed call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[10:16:55]   composed roundtrip: max|Δ|=1.887e-15 tol=1.0e-10 -> OK
+[10:16:55]   composed ladj vs slogdet: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[10:16:55]   composed inv ladj: max|Δ|=4.441e-16 tol=1.0e-10 -> OK
+[10:16:55]   composed inv roundtrip: max|Δ|=1.887e-15 tol=1.0e-10 -> OK
+[10:16:55]   composed domain_dim: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[10:16:55] ComposedTransform.inv structure
+[10:16:55]   composed inv roundtrip: max|Δ|=1.887e-15 tol=1.0e-10 -> OK
+[10:16:55] DONE — all Phase 2 checks passed
+[12:23:19] START parity_check_phase2 | jax 0.10.2 (gpu)
+[12:23:19] torch parity: MonotonicRQS (per-coord bound)
+[12:23:19]   y: max|Δ|=2.220e-15 tol=1.0e-12 -> OK
+[12:23:19]   ladj: max|Δ|=1.998e-15 tol=1.0e-12 -> OK
+[12:23:19]   x_back: max|Δ|=8.882e-16 tol=1.0e-12 -> OK
+[12:23:20]   grad ladj wrt x: max|Δ|=3.819e-14 tol=1.0e-10 -> OK
+[12:23:20] torch parity: MonotonicRQS (scalar bound)
+[12:23:20]   y: max|Δ|=8.327e-16 tol=1.0e-12 -> OK
+[12:23:20]   ladj: max|Δ|=1.776e-15 tol=1.0e-12 -> OK
+[12:23:20] torch parity: CircularShift
+[12:23:20]   y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:23:20] torch parity: MonotonicAffine
+[12:23:20]   y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:23:20]   ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:23:20] Identity / Additive (scalar-wise)
+[12:23:20]   identity roundtrip: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:23:20]   additive roundtrip: max|Δ|=2.220e-16 tol=1.0e-15 -> OK
+[12:23:20]   additive ladj: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:23:20] AutoregressiveTransform (affine meta, strictly-lower conditioner)
+[12:23:21]   AR call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:23:21]   AR roundtrip: max|Δ|=1.388e-17 tol=1.0e-10 -> OK
+[12:23:21]   AR ladj vs slogdet: max|Δ|=1.110e-16 tol=1.0e-10 -> OK
+[12:23:21]   AR inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[12:23:21]   AR inv roundtrip: max|Δ|=1.388e-17 tol=1.0e-10 -> OK
+[12:23:21]   AR jacobian lower-triangular: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:23:21] CouplingTransform (affine meta)
+[12:23:22]   coupling call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:23:22]   coupling roundtrip: max|Δ|=2.220e-16 tol=1.0e-10 -> OK
+[12:23:22]   coupling ladj vs slogdet: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[12:23:22]   coupling inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[12:23:22]   coupling inv roundtrip: max|Δ|=2.220e-16 tol=1.0e-10 -> OK
+[12:23:22] FreeFormJacobianTransform (exact trace)
+[12:23:23]   FFJ call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:23:23]   FFJ roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[12:23:23]   FFJ ladj vs slogdet: max|Δ|=3.903e-09 tol=1.0e-06 -> OK
+[12:23:23]   FFJ inv ladj: max|Δ|=2.112e-11 tol=1.0e-06 -> OK
+[12:23:23]   FFJ inv roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[12:23:23] FreeFormJacobianTransform (Hutchinson, batched: finite + unbiased-ish)
+[12:23:24]   hutchinson y == exact y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:23:24]   hutchinson ladj mean err 1.200 (stochastic, finite=True)
+[12:23:24] RotationTransform
+[12:23:24]   rotation call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:23:24]   rotation roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[12:23:24]   rotation ladj vs slogdet: max|Δ|=1.665e-16 tol=1.0e-09 -> OK
+[12:23:24]   rotation inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[12:23:24]   rotation inv roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[12:23:24]   R orthogonal: max|Δ|=4.441e-16 tol=1.0e-10 -> OK
+[12:23:24] LULinearTransform
+[12:23:24]   lu call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:23:24]   lu roundtrip: max|Δ|=3.331e-16 tol=1.0e-09 -> OK
+[12:23:25]   lu ladj vs slogdet: max|Δ|=2.220e-16 tol=1.0e-09 -> OK
+[12:23:25]   lu inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[12:23:25]   lu inv roundtrip: max|Δ|=3.331e-16 tol=1.0e-09 -> OK
+[12:23:25] ComposedTransform event-dim bookkeeping (Additive ∘ AR ∘ Additive)
+[12:23:25]   composed call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:23:25]   composed roundtrip: max|Δ|=2.776e-15 tol=1.0e-10 -> OK
+[12:23:25]   composed ladj vs slogdet: max|Δ|=4.441e-16 tol=1.0e-10 -> OK
+[12:23:25]   composed inv ladj: max|Δ|=8.882e-16 tol=1.0e-10 -> OK
+[12:23:25]   composed inv roundtrip: max|Δ|=2.776e-15 tol=1.0e-10 -> OK
+[12:23:25]   composed domain_dim: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:23:25] ComposedTransform.inv structure
+[12:23:25]   composed inv roundtrip: max|Δ|=2.776e-15 tol=1.0e-10 -> OK
+[12:23:25] DONE — all Phase 2 checks passed
+[12:41:12] START parity_check_phase2 | jax 0.10.2 (gpu)
+[12:41:12] torch parity: MonotonicRQS (per-coord bound)
+[12:41:13]   y: max|Δ|=2.220e-15 tol=1.0e-12 -> OK
+[12:41:13]   ladj: max|Δ|=1.998e-15 tol=1.0e-12 -> OK
+[12:41:13]   x_back: max|Δ|=8.882e-16 tol=1.0e-12 -> OK
+[12:41:14]   grad ladj wrt x: max|Δ|=3.819e-14 tol=1.0e-10 -> OK
+[12:41:14] torch parity: MonotonicRQS (scalar bound)
+[12:41:14]   y: max|Δ|=8.327e-16 tol=1.0e-12 -> OK
+[12:41:14]   ladj: max|Δ|=1.776e-15 tol=1.0e-12 -> OK
+[12:41:14] torch parity: CircularShift
+[12:41:14]   y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:41:14] torch parity: MonotonicAffine
+[12:41:14]   y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:41:14]   ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:41:14] Identity / Additive (scalar-wise)
+[12:41:14]   identity roundtrip: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:41:14]   additive roundtrip: max|Δ|=2.220e-16 tol=1.0e-15 -> OK
+[12:41:14]   additive ladj: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:41:14] AutoregressiveTransform (affine meta, strictly-lower conditioner)
+[12:41:15]   AR call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:41:15]   AR roundtrip: max|Δ|=1.388e-17 tol=1.0e-10 -> OK
+[12:41:15]   AR ladj vs slogdet: max|Δ|=1.110e-16 tol=1.0e-10 -> OK
+[12:41:15]   AR inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[12:41:15]   AR inv roundtrip: max|Δ|=1.388e-17 tol=1.0e-10 -> OK
+[12:41:15]   AR jacobian lower-triangular: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:41:15] CouplingTransform (affine meta)
+[12:41:16]   coupling call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:41:16]   coupling roundtrip: max|Δ|=2.220e-16 tol=1.0e-10 -> OK
+[12:41:16]   coupling ladj vs slogdet: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[12:41:16]   coupling inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[12:41:16]   coupling inv roundtrip: max|Δ|=2.220e-16 tol=1.0e-10 -> OK
+[12:41:16] FreeFormJacobianTransform (exact trace)
+[12:41:17]   FFJ call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:41:17]   FFJ roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[12:41:17]   FFJ ladj vs slogdet: max|Δ|=3.903e-09 tol=1.0e-06 -> OK
+[12:41:17]   FFJ inv ladj: max|Δ|=2.112e-11 tol=1.0e-06 -> OK
+[12:41:17]   FFJ inv roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[12:41:17] FreeFormJacobianTransform (Hutchinson, batched: finite + unbiased-ish)
+[12:41:18]   hutchinson y == exact y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:41:18]   hutchinson ladj mean err 1.200 (stochastic, finite=True)
+[12:41:18] RotationTransform
+[12:41:18]   rotation call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:41:18]   rotation roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[12:41:18]   rotation ladj vs slogdet: max|Δ|=1.665e-16 tol=1.0e-09 -> OK
+[12:41:18]   rotation inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[12:41:18]   rotation inv roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[12:41:18]   R orthogonal: max|Δ|=4.441e-16 tol=1.0e-10 -> OK
+[12:41:18] LULinearTransform
+[12:41:18]   lu call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:41:18]   lu roundtrip: max|Δ|=4.441e-16 tol=1.0e-09 -> OK
+[12:41:19]   lu ladj vs slogdet: max|Δ|=2.220e-16 tol=1.0e-09 -> OK
+[12:41:19]   lu inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[12:41:19]   lu inv roundtrip: max|Δ|=4.441e-16 tol=1.0e-09 -> OK
+[12:41:19] ComposedTransform event-dim bookkeeping (Additive ∘ AR ∘ Additive)
+[12:41:19]   composed call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:41:19]   composed roundtrip: max|Δ|=2.776e-15 tol=1.0e-10 -> OK
+[12:41:19]   composed ladj vs slogdet: max|Δ|=4.441e-16 tol=1.0e-10 -> OK
+[12:41:19]   composed inv ladj: max|Δ|=8.882e-16 tol=1.0e-10 -> OK
+[12:41:19]   composed inv roundtrip: max|Δ|=2.776e-15 tol=1.0e-10 -> OK
+[12:41:19]   composed domain_dim: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:41:19] ComposedTransform.inv structure
+[12:41:19]   composed inv roundtrip: max|Δ|=2.776e-15 tol=1.0e-10 -> OK
+[12:41:19] DONE — all Phase 2 checks passed
+[12:43:53] START parity_check_phase2 | jax 0.10.2 (gpu)
+[12:43:53] torch parity: MonotonicRQS (per-coord bound)
+[12:43:54]   y: max|Δ|=2.220e-15 tol=1.0e-12 -> OK
+[12:43:54]   ladj: max|Δ|=1.998e-15 tol=1.0e-12 -> OK
+[12:43:54]   x_back: max|Δ|=8.882e-16 tol=1.0e-12 -> OK
+[12:43:54]   grad ladj wrt x: max|Δ|=3.819e-14 tol=1.0e-10 -> OK
+[12:43:54] torch parity: MonotonicRQS (scalar bound)
+[12:43:54]   y: max|Δ|=8.327e-16 tol=1.0e-12 -> OK
+[12:43:54]   ladj: max|Δ|=1.776e-15 tol=1.0e-12 -> OK
+[12:43:54] torch parity: CircularShift
+[12:43:55]   y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:43:55] torch parity: MonotonicAffine
+[12:43:55]   y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:43:55]   ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:43:55] Identity / Additive (scalar-wise)
+[12:43:55]   identity roundtrip: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:43:55]   additive roundtrip: max|Δ|=2.220e-16 tol=1.0e-15 -> OK
+[12:43:55]   additive ladj: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:43:55] AutoregressiveTransform (affine meta, strictly-lower conditioner)
+[12:43:55]   AR call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:43:55]   AR roundtrip: max|Δ|=1.388e-17 tol=1.0e-10 -> OK
+[12:43:56]   AR ladj vs slogdet: max|Δ|=1.110e-16 tol=1.0e-10 -> OK
+[12:43:56]   AR inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[12:43:56]   AR inv roundtrip: max|Δ|=1.388e-17 tol=1.0e-10 -> OK
+[12:43:56]   AR jacobian lower-triangular: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:43:56] CouplingTransform (affine meta)
+[12:43:56]   coupling call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:43:56]   coupling roundtrip: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[12:43:57]   coupling ladj vs slogdet: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[12:43:57]   coupling inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[12:43:57]   coupling inv roundtrip: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[12:43:57] FreeFormJacobianTransform (exact trace)
+[12:43:58]   FFJ call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:43:58]   FFJ roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[12:43:58]   FFJ ladj vs slogdet: max|Δ|=3.903e-09 tol=1.0e-06 -> OK
+[12:43:58]   FFJ inv ladj: max|Δ|=2.112e-11 tol=1.0e-06 -> OK
+[12:43:58]   FFJ inv roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[12:43:58] FreeFormJacobianTransform (Hutchinson, batched: finite + unbiased-ish)
+[12:43:58]   hutchinson y == exact y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:43:59]   hutchinson ladj mean err 1.200 (stochastic, finite=True)
+[12:43:59] RotationTransform
+[12:43:59]   rotation call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:43:59]   rotation roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[12:43:59]   rotation ladj vs slogdet: max|Δ|=1.665e-16 tol=1.0e-09 -> OK
+[12:43:59]   rotation inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[12:43:59]   rotation inv roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[12:43:59]   R orthogonal: max|Δ|=4.441e-16 tol=1.0e-10 -> OK
+[12:43:59] LULinearTransform
+[12:43:59]   lu call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:43:59]   lu roundtrip: max|Δ|=3.331e-16 tol=1.0e-09 -> OK
+[12:43:59]   lu ladj vs slogdet: max|Δ|=2.220e-16 tol=1.0e-09 -> OK
+[12:43:59]   lu inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[12:43:59]   lu inv roundtrip: max|Δ|=3.331e-16 tol=1.0e-09 -> OK
+[12:43:59] ComposedTransform event-dim bookkeeping (Additive ∘ AR ∘ Additive)
+[12:43:59]   composed call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:43:59]   composed roundtrip: max|Δ|=1.887e-15 tol=1.0e-10 -> OK
+[12:43:59]   composed ladj vs slogdet: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[12:43:59]   composed inv ladj: max|Δ|=4.441e-16 tol=1.0e-10 -> OK
+[12:43:59]   composed inv roundtrip: max|Δ|=1.887e-15 tol=1.0e-10 -> OK
+[12:43:59]   composed domain_dim: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:43:59] ComposedTransform.inv structure
+[12:44:00]   composed inv roundtrip: max|Δ|=1.887e-15 tol=1.0e-10 -> OK
+[12:44:00] DONE — all Phase 2 checks passed
+[15:03:17] START parity_check_phase2 | jax 0.10.2 (gpu)
+[15:03:17] torch parity: MonotonicRQS (per-coord bound)
+[15:03:17]   y: max|Δ|=2.220e-15 tol=1.0e-12 -> OK
+[15:03:17]   ladj: max|Δ|=1.998e-15 tol=1.0e-12 -> OK
+[15:03:17]   x_back: max|Δ|=8.882e-16 tol=1.0e-12 -> OK
+[15:03:18]   grad ladj wrt x: max|Δ|=3.819e-14 tol=1.0e-10 -> OK
+[15:03:18] torch parity: MonotonicRQS (scalar bound)
+[15:03:18]   y: max|Δ|=8.327e-16 tol=1.0e-12 -> OK
+[15:03:18]   ladj: max|Δ|=1.776e-15 tol=1.0e-12 -> OK
+[15:03:18] torch parity: CircularShift
+[15:03:18]   y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:03:18] torch parity: MonotonicAffine
+[15:03:18]   y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:03:18]   ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:03:18] Identity / Additive (scalar-wise)
+[15:03:18]   identity roundtrip: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[15:03:18]   additive roundtrip: max|Δ|=2.220e-16 tol=1.0e-15 -> OK
+[15:03:18]   additive ladj: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[15:03:18] AutoregressiveTransform (affine meta, strictly-lower conditioner)
+[15:03:19]   AR call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:03:19]   AR roundtrip: max|Δ|=1.388e-17 tol=1.0e-10 -> OK
+[15:03:19]   AR ladj vs slogdet: max|Δ|=1.110e-16 tol=1.0e-10 -> OK
+[15:03:19]   AR inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[15:03:19]   AR inv roundtrip: max|Δ|=1.388e-17 tol=1.0e-10 -> OK
+[15:03:19]   AR jacobian lower-triangular: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[15:03:19] CouplingTransform (affine meta)
+[15:03:20]   coupling call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:03:20]   coupling roundtrip: max|Δ|=2.220e-16 tol=1.0e-10 -> OK
+[15:03:21]   coupling ladj vs slogdet: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[15:03:21]   coupling inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[15:03:21]   coupling inv roundtrip: max|Δ|=2.220e-16 tol=1.0e-10 -> OK
+[15:03:21] FreeFormJacobianTransform (exact trace)
+[15:03:21]   FFJ call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:03:21]   FFJ roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[15:03:21]   FFJ ladj vs slogdet: max|Δ|=3.903e-09 tol=1.0e-06 -> OK
+[15:03:21]   FFJ inv ladj: max|Δ|=2.112e-11 tol=1.0e-06 -> OK
+[15:03:21]   FFJ inv roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[15:03:21] FreeFormJacobianTransform (Hutchinson, batched: finite + unbiased-ish)
+[15:03:22]   hutchinson y == exact y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:03:22]   hutchinson ladj mean err 1.200 (stochastic, finite=True)
+[15:03:22] RotationTransform
+[15:03:22]   rotation call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:03:22]   rotation roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[15:03:22]   rotation ladj vs slogdet: max|Δ|=1.665e-16 tol=1.0e-09 -> OK
+[15:03:22]   rotation inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[15:03:22]   rotation inv roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[15:03:22]   R orthogonal: max|Δ|=4.441e-16 tol=1.0e-10 -> OK
+[15:03:22] LULinearTransform
+[15:03:23]   lu call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:03:23]   lu roundtrip: max|Δ|=3.331e-16 tol=1.0e-09 -> OK
+[15:03:23]   lu ladj vs slogdet: max|Δ|=2.220e-16 tol=1.0e-09 -> OK
+[15:03:23]   lu inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[15:03:23]   lu inv roundtrip: max|Δ|=3.331e-16 tol=1.0e-09 -> OK
+[15:03:23] ComposedTransform event-dim bookkeeping (Additive ∘ AR ∘ Additive)
+[15:03:23]   composed call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:03:23]   composed roundtrip: max|Δ|=3.220e-15 tol=1.0e-10 -> OK
+[15:03:23]   composed ladj vs slogdet: max|Δ|=4.441e-16 tol=1.0e-10 -> OK
+[15:03:23]   composed inv ladj: max|Δ|=8.882e-16 tol=1.0e-10 -> OK
+[15:03:23]   composed inv roundtrip: max|Δ|=3.220e-15 tol=1.0e-10 -> OK
+[15:03:23]   composed domain_dim: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[15:03:23] ComposedTransform.inv structure
+[15:03:23]   composed inv roundtrip: max|Δ|=3.220e-15 tol=1.0e-10 -> OK
+[15:03:23] DONE — all Phase 2 checks passed
+[15:08:12] START parity_check_phase2 | jax 0.10.2 (gpu)
+[15:08:12] torch parity: MonotonicRQS (per-coord bound)
+[15:08:13]   y: max|Δ|=2.220e-15 tol=1.0e-12 -> OK
+[15:08:13]   ladj: max|Δ|=1.998e-15 tol=1.0e-12 -> OK
+[15:08:13]   x_back: max|Δ|=8.882e-16 tol=1.0e-12 -> OK
+[15:08:13]   grad ladj wrt x: max|Δ|=3.819e-14 tol=1.0e-10 -> OK
+[15:08:13] torch parity: MonotonicRQS (scalar bound)
+[15:08:13]   y: max|Δ|=8.327e-16 tol=1.0e-12 -> OK
+[15:08:13]   ladj: max|Δ|=1.776e-15 tol=1.0e-12 -> OK
+[15:08:13] torch parity: CircularShift
+[15:08:13]   y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:08:13] torch parity: MonotonicAffine
+[15:08:13]   y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:08:13]   ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:08:13] Identity / Additive (scalar-wise)
+[15:08:13]   identity roundtrip: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[15:08:13]   additive roundtrip: max|Δ|=2.220e-16 tol=1.0e-15 -> OK
+[15:08:13]   additive ladj: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[15:08:13] AutoregressiveTransform (affine meta, strictly-lower conditioner)
+[15:08:14]   AR call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:08:14]   AR roundtrip: max|Δ|=1.388e-17 tol=1.0e-10 -> OK
+[15:08:14]   AR ladj vs slogdet: max|Δ|=1.110e-16 tol=1.0e-10 -> OK
+[15:08:14]   AR inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[15:08:14]   AR inv roundtrip: max|Δ|=1.388e-17 tol=1.0e-10 -> OK
+[15:08:14]   AR jacobian lower-triangular: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[15:08:14] CouplingTransform (affine meta)
+[15:08:15]   coupling call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:08:15]   coupling roundtrip: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[15:08:16]   coupling ladj vs slogdet: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[15:08:16]   coupling inv ladj: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[15:08:16]   coupling inv roundtrip: max|Δ|=0.000e+00 tol=1.0e-10 -> OK
+[15:08:16] FreeFormJacobianTransform (exact trace)
+[15:08:16]   FFJ call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:08:16]   FFJ roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[15:08:16]   FFJ ladj vs slogdet: max|Δ|=3.903e-09 tol=1.0e-06 -> OK
+[15:08:16]   FFJ inv ladj: max|Δ|=2.112e-11 tol=1.0e-06 -> OK
+[15:08:16]   FFJ inv roundtrip: max|Δ|=1.417e-11 tol=1.0e-06 -> OK
+[15:08:16] FreeFormJacobianTransform (Hutchinson, batched: finite + unbiased-ish)
+[15:08:17]   hutchinson y == exact y: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:08:17]   hutchinson ladj mean err 1.200 (stochastic, finite=True)
+[15:08:17] RotationTransform
+[15:08:17]   rotation call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:08:17]   rotation roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[15:08:18]   rotation ladj vs slogdet: max|Δ|=1.665e-16 tol=1.0e-09 -> OK
+[15:08:18]   rotation inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[15:08:18]   rotation inv roundtrip: max|Δ|=5.551e-16 tol=1.0e-09 -> OK
+[15:08:18]   R orthogonal: max|Δ|=4.441e-16 tol=1.0e-10 -> OK
+[15:08:18] LULinearTransform
+[15:08:18]   lu call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:08:18]   lu roundtrip: max|Δ|=4.441e-16 tol=1.0e-09 -> OK
+[15:08:18]   lu ladj vs slogdet: max|Δ|=2.220e-16 tol=1.0e-09 -> OK
+[15:08:18]   lu inv ladj: max|Δ|=0.000e+00 tol=1.0e-09 -> OK
+[15:08:18]   lu inv roundtrip: max|Δ|=4.441e-16 tol=1.0e-09 -> OK
+[15:08:18] ComposedTransform event-dim bookkeeping (Additive ∘ AR ∘ Additive)
+[15:08:18]   composed call==call_and_ladj: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:08:18]   composed roundtrip: max|Δ|=3.220e-15 tol=1.0e-10 -> OK
+[15:08:18]   composed ladj vs slogdet: max|Δ|=4.441e-16 tol=1.0e-10 -> OK
+[15:08:18]   composed inv ladj: max|Δ|=8.882e-16 tol=1.0e-10 -> OK
+[15:08:18]   composed inv roundtrip: max|Δ|=3.220e-15 tol=1.0e-10 -> OK
+[15:08:18]   composed domain_dim: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[15:08:18] ComposedTransform.inv structure
+[15:08:18]   composed inv roundtrip: max|Δ|=3.220e-15 tol=1.0e-10 -> OK
+[15:08:18] DONE — all Phase 2 checks passed

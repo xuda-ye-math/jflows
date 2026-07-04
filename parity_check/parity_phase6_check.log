@@ -1,0 +1,46 @@
+[14:55:57] START parity_check_phase6 | jax 0.10.2 (gpu)
+[14:55:57] compute_ESS / compute_ESS_log
+[14:55:58]   ESS: max|Δ|=1.110e-16 tol=1.0e-14 -> OK
+[14:55:58]   ESS_log: max|Δ|=0.000e+00 tol=1.0e-14 -> OK
+[14:55:58]   ESS(exp(logw)): max|Δ|=8.674e-18 tol=1.0e-14 -> OK
+[14:55:58] DONE — all Phase 6a parity checks passed
+[15:00:26] START parity_check_phase6 | jax 0.10.2 (gpu)
+[15:00:26] compute_ESS / compute_ESS_log
+[15:00:26]   ESS: max|Δ|=1.110e-16 tol=1.0e-14 -> OK
+[15:00:26]   ESS_log: max|Δ|=0.000e+00 tol=1.0e-14 -> OK
+[15:00:26]   ESS(exp(logw)): max|Δ|=8.674e-18 tol=1.0e-14 -> OK
+[15:00:26] importance weights on transplanted NSF
+[15:00:29]   iw_log_F: max|Δ|=1.377e-14 tol=1.0e-09 -> OK
+[15:00:29]   iw_log_G: max|Δ|=1.776e-14 tol=1.0e-09 -> OK
+[15:00:29]   iw_F (linear): max|Δ|=6.328e-15 tol=1.0e-12 -> OK
+[15:00:29] DONE — all Phase 6a parity checks passed
+[15:01:45] START parity_check_phase6 | jax 0.10.2 (gpu)
+[15:01:45] compute_ESS / compute_ESS_log
+[15:01:45]   ESS: max|Δ|=1.110e-16 tol=1.0e-14 -> OK
+[15:01:45]   ESS_log: max|Δ|=0.000e+00 tol=1.0e-14 -> OK
+[15:01:45]   ESS(exp(logw)): max|Δ|=8.674e-18 tol=1.0e-14 -> OK
+[15:01:45] importance weights on transplanted NSF
+[15:01:48]   iw_log_F: max|Δ|=1.377e-14 tol=1.0e-09 -> OK
+[15:01:48]   iw_log_G: max|Δ|=1.776e-14 tol=1.0e-09 -> OK
+[15:01:48]   iw_F (linear): max|Δ|=6.328e-15 tol=1.0e-12 -> OK
+[15:01:48] DONE — all Phase 6a parity checks passed
+[15:03:47] START parity_check_phase6 | jax 0.10.2 (gpu)
+[15:03:47] compute_ESS / compute_ESS_log
+[15:03:48]   ESS: max|Δ|=1.110e-16 tol=1.0e-14 -> OK
+[15:03:48]   ESS_log: max|Δ|=0.000e+00 tol=1.0e-14 -> OK
+[15:03:48]   ESS(exp(logw)): max|Δ|=8.674e-18 tol=1.0e-14 -> OK
+[15:03:48] importance weights on transplanted NSF
+[15:03:50]   iw_log_F: max|Δ|=1.377e-14 tol=1.0e-09 -> OK
+[15:03:51]   iw_log_G: max|Δ|=1.776e-14 tol=1.0e-09 -> OK
+[15:03:51]   iw_F (linear): max|Δ|=6.162e-15 tol=1.0e-12 -> OK
+[15:03:51] DONE — all Phase 6a parity checks passed
+[15:08:42] START parity_check_phase6 | jax 0.10.2 (gpu)
+[15:08:42] compute_ESS / compute_ESS_log
+[15:08:43]   ESS: max|Δ|=1.110e-16 tol=1.0e-14 -> OK
+[15:08:43]   ESS_log: max|Δ|=0.000e+00 tol=1.0e-14 -> OK
+[15:08:43]   ESS(exp(logw)): max|Δ|=8.674e-18 tol=1.0e-14 -> OK
+[15:08:43] importance weights on transplanted NSF
+[15:08:45]   iw_log_F: max|Δ|=1.377e-14 tol=1.0e-09 -> OK
+[15:08:46]   iw_log_G: max|Δ|=1.776e-14 tol=1.0e-09 -> OK
+[15:08:46]   iw_F (linear): max|Δ|=6.328e-15 tol=1.0e-12 -> OK
+[15:08:46] DONE — all Phase 6a parity checks passed

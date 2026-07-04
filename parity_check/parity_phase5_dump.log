@@ -1,0 +1,4 @@
+[12:40:39] START parity_dump_phase5 | torch 2.12.1+cu130 | out=/mnt/projects/jflows/smoke_tests/parity_phase5.npz
+[12:40:39] KL losses on NSF
+[12:40:39] OT_loss on OTFlow
+[12:40:39] DONE — wrote /mnt/projects/jflows/smoke_tests/parity_phase5.npz (41 arrays)

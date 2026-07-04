@@ -1,0 +1,8 @@
+[08:49:30] START parity_dump_phase1 | torch 2.12.1+cu130 | out=/mnt/projects/jflows/smoke_tests/parity_phase1.npz
+[08:49:30] gauss_legendre fixture
+[08:49:30] bisection fixture
+[08:49:30] rk4_fixed fixture
+[08:49:30] Linear (stacked) fixture
+[08:49:30] MLP fixture
+[08:49:30] MaskedMLP fixture
+[08:49:31] DONE — wrote /mnt/projects/jflows/smoke_tests/parity_phase1.npz (40 arrays)

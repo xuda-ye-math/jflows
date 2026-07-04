@@ -1,0 +1,134 @@
+[09:35:17] START parity_check_phase4 | jax 0.10.2 (gpu) | npz=/mnt/projects/jflows/smoke_tests/parity_phase4.npz
+[09:35:17] Nlog_Uniform
+[09:35:17]   U: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:35:17]   grad (constant energy): max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[09:35:17] Nlog_Gaussian
+[09:35:17]   U: max|Δ|=4.910e-07 tol=1.0e-12 -> FAIL
+[09:35:17]   grad: max|Δ|=2.353e-07 tol=1.0e-12 -> FAIL
+[09:35:17] Nlog_Gaussian_Mixture
+[09:35:18]   U: max|Δ|=2.363e-07 tol=1.0e-12 -> FAIL
+[09:35:19]   grad: max|Δ|=5.889e-07 tol=1.0e-12 -> FAIL
+[09:35:19] DONE — 4 FAILURE(S)
+[09:36:16] START parity_check_phase4 | jax 0.10.2 (gpu) | npz=/mnt/projects/jflows/smoke_tests/parity_phase4.npz
+[09:36:16] Nlog_Uniform
+[09:36:16]   U: max|Δ|=0.000e+00 tol=2.0e-05 -> OK
+[09:36:16]   grad (constant energy): max|Δ|=0.000e+00 tol=2.0e-05 -> OK
+[09:36:16] Nlog_Gaussian
+[09:36:17]   U: max|Δ|=9.537e-07 tol=2.0e-05 -> OK
+[09:36:17]   grad: max|Δ|=2.384e-07 tol=2.0e-05 -> OK
+[09:36:17] Nlog_Gaussian_Mixture
+[09:36:17]   U: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[09:36:18]   grad: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[09:36:18] DONE — all Phase 4a parity checks passed
+[09:41:52] START parity_check_phase4 | jax 0.10.2 (gpu) | npz=/mnt/projects/jflows/smoke_tests/parity_phase4.npz
+[09:41:52] Nlog_Uniform
+[09:41:52]   U: max|Δ|=0.000e+00 tol=2.0e-05 -> OK
+[09:41:52]   grad (constant energy): max|Δ|=0.000e+00 tol=2.0e-05 -> OK
+[09:41:52] Nlog_Gaussian
+[09:41:52]   U: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[09:41:52]   grad: max|Δ|=2.384e-07 tol=2.0e-05 -> OK
+[09:41:52] Nlog_Gaussian_Mixture
+[09:41:53]   U: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[09:41:54]   grad: max|Δ|=7.153e-07 tol=2.0e-05 -> OK
+[09:41:54] DONE — all Phase 4a parity checks passed
+[10:17:12] START parity_check_phase4 | jax 0.10.2 (gpu) | npz=/mnt/projects/jflows/smoke_tests/parity_phase4.npz
+[10:17:12] Nlog_Uniform
+[10:17:12]   U: max|Δ|=0.000e+00 tol=2.0e-05 -> OK
+[10:17:12]   grad (constant energy): max|Δ|=0.000e+00 tol=2.0e-05 -> OK
+[10:17:12] Nlog_Gaussian
+[10:17:12]   U: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[10:17:12]   grad: max|Δ|=2.384e-07 tol=2.0e-05 -> OK
+[10:17:12] Nlog_Gaussian_Mixture
+[10:17:13]   U: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[10:17:14]   grad: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[10:17:14] DONE — all Phase 4a parity checks passed
+[12:16:08] START parity_check_phase4 | jax 0.10.2 (gpu) | npz=/mnt/projects/jflows/smoke_tests/parity_phase4.npz
+[12:16:08] Nlog_Uniform
+[12:16:08]   U: max|Δ|=0.000e+00 tol=2.0e-05 -> OK
+[12:16:08]   grad (constant energy): max|Δ|=0.000e+00 tol=2.0e-05 -> OK
+[12:16:08] Nlog_Gaussian
+[12:16:08]   U: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[12:16:09]   grad: max|Δ|=2.384e-07 tol=2.0e-05 -> OK
+[12:16:09] Nlog_Gaussian_Mixture
+[12:16:09]   U: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[12:16:10]   grad: max|Δ|=7.153e-07 tol=2.0e-05 -> OK
+[12:16:10] linear_combination (vs zflows Linear_Combination)
+[12:16:10]   U: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[12:16:10]   grad: max|Δ|=2.384e-07 tol=2.0e-05 -> OK
+[12:16:10]   nested-flattened U: max|Δ|=9.537e-07 tol=2.0e-05 -> OK
+[12:16:10] DONE — all Phase 4 parity checks passed
+[12:23:41] START parity_check_phase4 | jax 0.10.2 (gpu) | npz=/mnt/projects/jflows/smoke_tests/parity_phase4.npz
+[12:23:41] Nlog_Uniform
+[12:23:41]   U: max|Δ|=0.000e+00 tol=2.0e-05 -> OK
+[12:23:41]   grad (constant energy): max|Δ|=0.000e+00 tol=2.0e-05 -> OK
+[12:23:41] Nlog_Gaussian
+[12:23:41]   U: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[12:23:41]   grad: max|Δ|=2.384e-07 tol=2.0e-05 -> OK
+[12:23:41] Nlog_Gaussian_Mixture
+[12:23:42]   U: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[12:23:42]   grad: max|Δ|=7.153e-07 tol=2.0e-05 -> OK
+[12:23:42] linear_combination (vs zflows Linear_Combination)
+[12:23:43]   U: max|Δ|=3.099e-07 tol=2.0e-05 -> OK
+[12:23:43]   grad: max|Δ|=2.384e-07 tol=2.0e-05 -> OK
+[12:23:43]   nested-flattened U: max|Δ|=9.537e-07 tol=2.0e-05 -> OK
+[12:23:43] DONE — all Phase 4 parity checks passed
+[12:41:35] START parity_check_phase4 | jax 0.10.2 (gpu) | npz=/mnt/projects/jflows/smoke_tests/parity_phase4.npz
+[12:41:35] Nlog_Uniform
+[12:41:35]   U: max|Δ|=0.000e+00 tol=2.0e-05 -> OK
+[12:41:35]   grad (constant energy): max|Δ|=0.000e+00 tol=2.0e-05 -> OK
+[12:41:35] Nlog_Gaussian
+[12:41:35]   U: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[12:41:36]   grad: max|Δ|=2.384e-07 tol=2.0e-05 -> OK
+[12:41:36] Nlog_Gaussian_Mixture
+[12:41:36]   U: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[12:41:37]   grad: max|Δ|=7.153e-07 tol=2.0e-05 -> OK
+[12:41:37] linear_combination (vs zflows Linear_Combination)
+[12:41:37]   U: max|Δ|=3.099e-07 tol=2.0e-05 -> OK
+[12:41:37]   grad: max|Δ|=2.384e-07 tol=2.0e-05 -> OK
+[12:41:37]   nested-flattened U: max|Δ|=9.537e-07 tol=2.0e-05 -> OK
+[12:41:37] DONE — all Phase 4 parity checks passed
+[12:44:18] START parity_check_phase4 | jax 0.10.2 (gpu) | npz=/mnt/projects/jflows/parity_check/parity_phase4.npz
+[12:44:18] Nlog_Uniform
+[12:44:18]   U: max|Δ|=0.000e+00 tol=2.0e-05 -> OK
+[12:44:18]   grad (constant energy): max|Δ|=0.000e+00 tol=2.0e-05 -> OK
+[12:44:18] Nlog_Gaussian
+[12:44:18]   U: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[12:44:18]   grad: max|Δ|=2.384e-07 tol=2.0e-05 -> OK
+[12:44:18] Nlog_Gaussian_Mixture
+[12:44:19]   U: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[12:44:19]   grad: max|Δ|=7.153e-07 tol=2.0e-05 -> OK
+[12:44:19] linear_combination (vs zflows Linear_Combination)
+[12:44:19]   U: max|Δ|=3.099e-07 tol=2.0e-05 -> OK
+[12:44:19]   grad: max|Δ|=2.384e-07 tol=2.0e-05 -> OK
+[12:44:19]   nested-flattened U: max|Δ|=9.537e-07 tol=2.0e-05 -> OK
+[12:44:19] DONE — all Phase 4 parity checks passed
+[15:03:40] START parity_check_phase4 | jax 0.10.2 (gpu) | npz=/mnt/projects/jflows/parity_check/parity_phase4.npz
+[15:03:40] Nlog_Uniform
+[15:03:40]   U: max|Δ|=0.000e+00 tol=2.0e-05 -> OK
+[15:03:40]   grad (constant energy): max|Δ|=0.000e+00 tol=2.0e-05 -> OK
+[15:03:40] Nlog_Gaussian
+[15:03:40]   U: max|Δ|=9.537e-07 tol=2.0e-05 -> OK
+[15:03:40]   grad: max|Δ|=2.384e-07 tol=2.0e-05 -> OK
+[15:03:40] Nlog_Gaussian_Mixture
+[15:03:41]   U: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[15:03:41]   grad: max|Δ|=7.153e-07 tol=2.0e-05 -> OK
+[15:03:41] linear_combination (vs zflows Linear_Combination)
+[15:03:42]   U: max|Δ|=9.060e-07 tol=2.0e-05 -> OK
+[15:03:42]   grad: max|Δ|=2.384e-07 tol=2.0e-05 -> OK
+[15:03:42]   nested-flattened U: max|Δ|=9.537e-07 tol=2.0e-05 -> OK
+[15:03:42] DONE — all Phase 4 parity checks passed
+[15:08:35] START parity_check_phase4 | jax 0.10.2 (gpu) | npz=/mnt/projects/jflows/parity_check/parity_phase4.npz
+[15:08:35] Nlog_Uniform
+[15:08:35]   U: max|Δ|=0.000e+00 tol=2.0e-05 -> OK
+[15:08:35]   grad (constant energy): max|Δ|=0.000e+00 tol=2.0e-05 -> OK
+[15:08:35] Nlog_Gaussian
+[15:08:35]   U: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[15:08:35]   grad: max|Δ|=2.384e-07 tol=2.0e-05 -> OK
+[15:08:35] Nlog_Gaussian_Mixture
+[15:08:36]   U: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[15:08:37]   grad: max|Δ|=4.768e-07 tol=2.0e-05 -> OK
+[15:08:37] linear_combination (vs zflows Linear_Combination)
+[15:08:37]   U: max|Δ|=3.099e-07 tol=2.0e-05 -> OK
+[15:08:37]   grad: max|Δ|=2.384e-07 tol=2.0e-05 -> OK
+[15:08:37]   nested-flattened U: max|Δ|=9.537e-07 tol=2.0e-05 -> OK
+[15:08:37] DONE — all Phase 4 parity checks passed

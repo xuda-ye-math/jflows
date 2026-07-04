@@ -1,0 +1,225 @@
+[08:49:31] START parity_check_phase1 | jax 0.10.2 | npz=/mnt/projects/jflows/smoke_tests/parity_phase1.npz
+[08:49:31] gauss_legendre
+[08:49:32]   area: max|Δ|=2.220e-16 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[08:49:32]   grad_a: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[08:49:32]   grad_b: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[08:49:32] bisection
+[08:49:32]   root: max|Δ|=0.000e+00 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[08:49:32]   grad_y: max|Δ|=0.000e+00 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[08:49:32]   grad_alpha: max|Δ|=0.000e+00 tol=1.0e-08 shapes ()/() -> OK
+[08:49:32] rk4_fixed
+[08:49:32]   xT: max|Δ|=4.441e-16 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[08:49:32]   grad_x0: max|Δ|=1.332e-15 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[08:49:32] Linear (stacked)
+[08:49:33]   y: max|Δ|=0.000e+00 tol=1.0e-12 shapes (7, 3, 4)/(7, 3, 4) -> OK
+[08:49:33] MLP
+[08:49:33]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (9, 2)/(9, 2) -> OK
+[08:49:34]   grad_x: max|Δ|=1.388e-17 tol=1.0e-10 shapes (9, 3)/(9, 3) -> OK
+[08:49:34] MaskedMLP
+[08:49:45] START parity_check_phase1 | jax 0.10.2 | npz=/mnt/projects/jflows/smoke_tests/parity_phase1.npz
+[08:49:45] gauss_legendre
+[08:49:46]   area: max|Δ|=2.220e-16 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[08:49:46]   grad_a: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[08:49:46]   grad_b: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[08:49:46] bisection
+[08:49:46]   root: max|Δ|=0.000e+00 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[08:49:46]   grad_y: max|Δ|=0.000e+00 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[08:49:46]   grad_alpha: max|Δ|=0.000e+00 tol=1.0e-08 shapes ()/() -> OK
+[08:49:46] rk4_fixed
+[08:49:46]   xT: max|Δ|=4.441e-16 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[08:49:46]   grad_x0: max|Δ|=1.332e-15 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[08:49:46] Linear (stacked)
+[08:49:47]   y: max|Δ|=0.000e+00 tol=1.0e-12 shapes (7, 3, 4)/(7, 3, 4) -> OK
+[08:49:47] MLP
+[08:49:47]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (9, 2)/(9, 2) -> OK
+[08:49:47]   grad_x: max|Δ|=1.388e-17 tol=1.0e-10 shapes (9, 3)/(9, 3) -> OK
+[08:49:47] MaskedMLP
+[08:49:48]   mask0: max|Δ|=0.000e+00 tol=0.0e+00 shapes (32, 4)/(32, 4) -> OK
+[08:49:48]   mask1: max|Δ|=0.000e+00 tol=0.0e+00 shapes (16, 32)/(16, 32) -> OK
+[08:49:48]   mask2: max|Δ|=0.000e+00 tol=0.0e+00 shapes (12, 16)/(12, 16) -> OK
+[08:49:48]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (6, 12)/(6, 12) -> OK
+[08:49:48] DONE — all Phase 1 parity checks passed
+[09:25:23] START parity_check_phase1 | jax 0.10.2 (gpu) | npz=/mnt/projects/jflows/smoke_tests/parity_phase1.npz
+[09:25:23] gauss_legendre
+[09:25:24]   area: max|Δ|=2.220e-16 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[09:25:24]   grad_a: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[09:25:24]   grad_b: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[09:25:24] bisection
+[09:25:24]   root: max|Δ|=0.000e+00 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[09:25:24]   grad_y: max|Δ|=0.000e+00 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[09:25:24]   grad_alpha: max|Δ|=1.110e-16 tol=1.0e-08 shapes ()/() -> OK
+[09:25:24] rk4_fixed
+[09:25:24]   xT: max|Δ|=3.331e-16 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[09:25:24]   grad_x0: max|Δ|=1.554e-15 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[09:25:24] Linear (stacked)
+[09:25:25]   y: max|Δ|=2.220e-16 tol=1.0e-12 shapes (7, 3, 4)/(7, 3, 4) -> OK
+[09:25:25] MLP
+[09:25:26]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (9, 2)/(9, 2) -> OK
+[09:25:26]   grad_x: max|Δ|=1.041e-17 tol=1.0e-10 shapes (9, 3)/(9, 3) -> OK
+[09:25:26] MaskedMLP
+[09:25:26]   mask0: max|Δ|=0.000e+00 tol=0.0e+00 shapes (32, 4)/(32, 4) -> OK
+[09:25:26]   mask1: max|Δ|=0.000e+00 tol=0.0e+00 shapes (16, 32)/(16, 32) -> OK
+[09:25:26]   mask2: max|Δ|=0.000e+00 tol=0.0e+00 shapes (12, 16)/(12, 16) -> OK
+[09:25:27]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (6, 12)/(6, 12) -> OK
+[09:25:27] DONE — all Phase 1 parity checks passed
+[09:27:45] START parity_check_phase1 | jax 0.10.2 (gpu) | npz=/mnt/projects/jflows/smoke_tests/parity_phase1.npz
+[09:27:45] gauss_legendre
+[09:27:45]   area: max|Δ|=2.220e-16 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[09:27:45]   grad_a: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[09:27:45]   grad_b: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[09:27:45] bisection
+[09:27:46]   root: max|Δ|=0.000e+00 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[09:27:46]   grad_y: max|Δ|=0.000e+00 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[09:27:46]   grad_alpha: max|Δ|=0.000e+00 tol=1.0e-08 shapes ()/() -> OK
+[09:27:46] rk4_fixed
+[09:27:46]   xT: max|Δ|=3.331e-16 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[09:27:46]   grad_x0: max|Δ|=1.554e-15 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[09:27:46] Linear (stacked)
+[09:27:46]   y: max|Δ|=2.220e-16 tol=1.0e-12 shapes (7, 3, 4)/(7, 3, 4) -> OK
+[09:27:46] MLP
+[09:27:47]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (9, 2)/(9, 2) -> OK
+[09:27:48]   grad_x: max|Δ|=1.041e-17 tol=1.0e-10 shapes (9, 3)/(9, 3) -> OK
+[09:27:48] MaskedMLP
+[09:27:48]   mask0: max|Δ|=0.000e+00 tol=0.0e+00 shapes (32, 4)/(32, 4) -> OK
+[09:27:48]   mask1: max|Δ|=0.000e+00 tol=0.0e+00 shapes (16, 32)/(16, 32) -> OK
+[09:27:48]   mask2: max|Δ|=0.000e+00 tol=0.0e+00 shapes (12, 16)/(12, 16) -> OK
+[09:27:48]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (6, 12)/(6, 12) -> OK
+[09:27:48] DONE — all Phase 1 parity checks passed
+[10:16:44] START parity_check_phase1 | jax 0.10.2 (gpu) | npz=/mnt/projects/jflows/smoke_tests/parity_phase1.npz
+[10:16:44] gauss_legendre
+[10:16:45]   area: max|Δ|=2.220e-16 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[10:16:45]   grad_a: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[10:16:45]   grad_b: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[10:16:45] bisection
+[10:16:45]   root: max|Δ|=0.000e+00 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[10:16:45]   grad_y: max|Δ|=0.000e+00 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[10:16:45]   grad_alpha: max|Δ|=1.110e-16 tol=1.0e-08 shapes ()/() -> OK
+[10:16:45] rk4_fixed
+[10:16:45]   xT: max|Δ|=3.331e-16 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[10:16:45]   grad_x0: max|Δ|=1.554e-15 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[10:16:45] Linear (stacked)
+[10:16:46]   y: max|Δ|=2.220e-16 tol=1.0e-12 shapes (7, 3, 4)/(7, 3, 4) -> OK
+[10:16:46] MLP
+[10:16:47]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (9, 2)/(9, 2) -> OK
+[10:16:47]   grad_x: max|Δ|=1.041e-17 tol=1.0e-10 shapes (9, 3)/(9, 3) -> OK
+[10:16:47] MaskedMLP
+[10:16:47]   mask0: max|Δ|=0.000e+00 tol=0.0e+00 shapes (32, 4)/(32, 4) -> OK
+[10:16:47]   mask1: max|Δ|=0.000e+00 tol=0.0e+00 shapes (16, 32)/(16, 32) -> OK
+[10:16:47]   mask2: max|Δ|=0.000e+00 tol=0.0e+00 shapes (12, 16)/(12, 16) -> OK
+[10:16:48]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (6, 12)/(6, 12) -> OK
+[10:16:48] DONE — all Phase 1 parity checks passed
+[12:23:14] START parity_check_phase1 | jax 0.10.2 (gpu) | npz=/mnt/projects/jflows/smoke_tests/parity_phase1.npz
+[12:23:14] gauss_legendre
+[12:23:15]   area: max|Δ|=2.220e-16 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[12:23:15]   grad_a: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[12:23:15]   grad_b: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[12:23:15] bisection
+[12:23:15]   root: max|Δ|=0.000e+00 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[12:23:15]   grad_y: max|Δ|=0.000e+00 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[12:23:15]   grad_alpha: max|Δ|=0.000e+00 tol=1.0e-08 shapes ()/() -> OK
+[12:23:15] rk4_fixed
+[12:23:15]   xT: max|Δ|=3.331e-16 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[12:23:15]   grad_x0: max|Δ|=1.554e-15 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[12:23:15] Linear (stacked)
+[12:23:16]   y: max|Δ|=2.220e-16 tol=1.0e-12 shapes (7, 3, 4)/(7, 3, 4) -> OK
+[12:23:16] MLP
+[12:23:17]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (9, 2)/(9, 2) -> OK
+[12:23:17]   grad_x: max|Δ|=1.041e-17 tol=1.0e-10 shapes (9, 3)/(9, 3) -> OK
+[12:23:17] MaskedMLP
+[12:23:17]   mask0: max|Δ|=0.000e+00 tol=0.0e+00 shapes (32, 4)/(32, 4) -> OK
+[12:23:17]   mask1: max|Δ|=0.000e+00 tol=0.0e+00 shapes (16, 32)/(16, 32) -> OK
+[12:23:17]   mask2: max|Δ|=0.000e+00 tol=0.0e+00 shapes (12, 16)/(12, 16) -> OK
+[12:23:18]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (6, 12)/(6, 12) -> OK
+[12:23:18] DONE — all Phase 1 parity checks passed
+[12:41:08] START parity_check_phase1 | jax 0.10.2 (gpu) | npz=/mnt/projects/jflows/smoke_tests/parity_phase1.npz
+[12:41:08] gauss_legendre
+[12:41:09]   area: max|Δ|=0.000e+00 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[12:41:09]   grad_a: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[12:41:09]   grad_b: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[12:41:09] bisection
+[12:41:09]   root: max|Δ|=0.000e+00 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[12:41:09]   grad_y: max|Δ|=0.000e+00 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[12:41:09]   grad_alpha: max|Δ|=1.110e-16 tol=1.0e-08 shapes ()/() -> OK
+[12:41:09] rk4_fixed
+[12:41:09]   xT: max|Δ|=3.331e-16 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[12:41:09]   grad_x0: max|Δ|=1.554e-15 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[12:41:09] Linear (stacked)
+[12:41:09]   y: max|Δ|=2.220e-16 tol=1.0e-12 shapes (7, 3, 4)/(7, 3, 4) -> OK
+[12:41:09] MLP
+[12:41:10]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (9, 2)/(9, 2) -> OK
+[12:41:11]   grad_x: max|Δ|=1.041e-17 tol=1.0e-10 shapes (9, 3)/(9, 3) -> OK
+[12:41:11] MaskedMLP
+[12:41:11]   mask0: max|Δ|=0.000e+00 tol=0.0e+00 shapes (32, 4)/(32, 4) -> OK
+[12:41:11]   mask1: max|Δ|=0.000e+00 tol=0.0e+00 shapes (16, 32)/(16, 32) -> OK
+[12:41:11]   mask2: max|Δ|=0.000e+00 tol=0.0e+00 shapes (12, 16)/(12, 16) -> OK
+[12:41:12]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (6, 12)/(6, 12) -> OK
+[12:41:12] DONE — all Phase 1 parity checks passed
+[12:43:49] START parity_check_phase1 | jax 0.10.2 (gpu) | npz=/mnt/projects/jflows/parity_check/parity_phase1.npz
+[12:43:49] gauss_legendre
+[12:43:49]   area: max|Δ|=2.220e-16 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[12:43:49]   grad_a: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[12:43:49]   grad_b: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[12:43:49] bisection
+[12:43:50]   root: max|Δ|=0.000e+00 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[12:43:50]   grad_y: max|Δ|=0.000e+00 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[12:43:50]   grad_alpha: max|Δ|=1.110e-16 tol=1.0e-08 shapes ()/() -> OK
+[12:43:50] rk4_fixed
+[12:43:50]   xT: max|Δ|=3.331e-16 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[12:43:50]   grad_x0: max|Δ|=1.554e-15 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[12:43:50] Linear (stacked)
+[12:43:50]   y: max|Δ|=2.220e-16 tol=1.0e-12 shapes (7, 3, 4)/(7, 3, 4) -> OK
+[12:43:50] MLP
+[12:43:51]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (9, 2)/(9, 2) -> OK
+[12:43:52]   grad_x: max|Δ|=1.041e-17 tol=1.0e-10 shapes (9, 3)/(9, 3) -> OK
+[12:43:52] MaskedMLP
+[12:43:52]   mask0: max|Δ|=0.000e+00 tol=0.0e+00 shapes (32, 4)/(32, 4) -> OK
+[12:43:52]   mask1: max|Δ|=0.000e+00 tol=0.0e+00 shapes (16, 32)/(16, 32) -> OK
+[12:43:52]   mask2: max|Δ|=0.000e+00 tol=0.0e+00 shapes (12, 16)/(12, 16) -> OK
+[12:43:52]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (6, 12)/(6, 12) -> OK
+[12:43:52] DONE — all Phase 1 parity checks passed
+[15:03:12] START parity_check_phase1 | jax 0.10.2 (gpu) | npz=/mnt/projects/jflows/parity_check/parity_phase1.npz
+[15:03:12] gauss_legendre
+[15:03:13]   area: max|Δ|=2.220e-16 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[15:03:13]   grad_a: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[15:03:13]   grad_b: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[15:03:13] bisection
+[15:03:13]   root: max|Δ|=0.000e+00 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[15:03:13]   grad_y: max|Δ|=0.000e+00 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[15:03:13]   grad_alpha: max|Δ|=1.110e-16 tol=1.0e-08 shapes ()/() -> OK
+[15:03:13] rk4_fixed
+[15:03:13]   xT: max|Δ|=3.331e-16 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[15:03:13]   grad_x0: max|Δ|=1.554e-15 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[15:03:13] Linear (stacked)
+[15:03:14]   y: max|Δ|=2.220e-16 tol=1.0e-12 shapes (7, 3, 4)/(7, 3, 4) -> OK
+[15:03:14] MLP
+[15:03:14]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (9, 2)/(9, 2) -> OK
+[15:03:15]   grad_x: max|Δ|=1.041e-17 tol=1.0e-10 shapes (9, 3)/(9, 3) -> OK
+[15:03:15] MaskedMLP
+[15:03:15]   mask0: max|Δ|=0.000e+00 tol=0.0e+00 shapes (32, 4)/(32, 4) -> OK
+[15:03:15]   mask1: max|Δ|=0.000e+00 tol=0.0e+00 shapes (16, 32)/(16, 32) -> OK
+[15:03:15]   mask2: max|Δ|=0.000e+00 tol=0.0e+00 shapes (12, 16)/(12, 16) -> OK
+[15:03:16]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (6, 12)/(6, 12) -> OK
+[15:03:16] DONE — all Phase 1 parity checks passed
+[15:08:07] START parity_check_phase1 | jax 0.10.2 (gpu) | npz=/mnt/projects/jflows/parity_check/parity_phase1.npz
+[15:08:07] gauss_legendre
+[15:08:08]   area: max|Δ|=2.220e-16 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[15:08:08]   grad_a: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[15:08:08]   grad_b: max|Δ|=3.553e-15 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[15:08:08] bisection
+[15:08:08]   root: max|Δ|=0.000e+00 tol=1.0e-09 shapes (3,)/(3,) -> OK
+[15:08:08]   grad_y: max|Δ|=0.000e+00 tol=1.0e-08 shapes (3,)/(3,) -> OK
+[15:08:08]   grad_alpha: max|Δ|=1.110e-16 tol=1.0e-08 shapes ()/() -> OK
+[15:08:08] rk4_fixed
+[15:08:08]   xT: max|Δ|=3.331e-16 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[15:08:08]   grad_x0: max|Δ|=1.554e-15 tol=1.0e-12 shapes (4, 3)/(4, 3) -> OK
+[15:08:08] Linear (stacked)
+[15:08:09]   y: max|Δ|=2.220e-16 tol=1.0e-12 shapes (7, 3, 4)/(7, 3, 4) -> OK
+[15:08:09] MLP
+[15:08:10]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (9, 2)/(9, 2) -> OK
+[15:08:10]   grad_x: max|Δ|=1.041e-17 tol=1.0e-10 shapes (9, 3)/(9, 3) -> OK
+[15:08:10] MaskedMLP
+[15:08:10]   mask0: max|Δ|=0.000e+00 tol=0.0e+00 shapes (32, 4)/(32, 4) -> OK
+[15:08:10]   mask1: max|Δ|=0.000e+00 tol=0.0e+00 shapes (16, 32)/(16, 32) -> OK
+[15:08:10]   mask2: max|Δ|=0.000e+00 tol=0.0e+00 shapes (12, 16)/(12, 16) -> OK
+[15:08:11]   y: max|Δ|=5.551e-17 tol=1.0e-12 shapes (6, 12)/(6, 12) -> OK
+[15:08:11] DONE — all Phase 1 parity checks passed

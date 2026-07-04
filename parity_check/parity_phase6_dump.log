@@ -1,0 +1,7 @@
+[14:55:57] START parity_dump_phase6 | torch 2.12.1+cu130 | out=/mnt/projects/jflows/parity_check/parity_phase6.npz
+[14:55:57] ESS fixtures
+[14:55:57] DONE — wrote /mnt/projects/jflows/parity_check/parity_phase6.npz (5 arrays)
+[15:00:25] START parity_dump_phase6 | torch 2.12.1+cu130 | out=/mnt/projects/jflows/parity_check/parity_phase6.npz
+[15:00:25] ESS fixtures
+[15:00:25] importance-weight fixtures (NSF, beta = 1)
+[15:00:25] DONE — wrote /mnt/projects/jflows/parity_check/parity_phase6.npz (34 arrays)

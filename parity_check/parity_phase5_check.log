@@ -1,0 +1,45 @@
+[12:40:39] START parity_check_phase5 | jax 0.10.2 (gpu)
+[12:40:40] KL losses on transplanted NSF
+[12:40:42]   reverse_KL_F: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[12:40:42]   reverse_KL_G: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[12:40:43]   forward_KL_F: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[12:40:43]   forward_KL_G: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[12:40:43] OT_loss on transplanted OTFlow
+[12:40:44]   OT_loss: shape (8,) (want (8,)), |mean-zflows|=0.000e+00 tol=1.0e-09 -> OK
+[12:40:44] DONE — all Phase 5 parity checks passed
+[12:41:38] START parity_check_phase5 | jax 0.10.2 (gpu)
+[12:41:39] KL losses on transplanted NSF
+[12:41:40]   reverse_KL_F: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[12:41:41]   reverse_KL_G: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[12:41:41]   forward_KL_F: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[12:41:41]   forward_KL_G: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[12:41:41] OT_loss on transplanted OTFlow
+[12:41:42]   OT_loss: shape (8,) (want (8,)), |mean-zflows|=0.000e+00 tol=1.0e-09 -> OK
+[12:41:42] DONE — all Phase 5 parity checks passed
+[12:44:20] START parity_check_phase5 | jax 0.10.2 (gpu)
+[12:44:21] KL losses on transplanted NSF
+[12:44:22]   reverse_KL_F: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[12:44:23]   reverse_KL_G: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[12:44:23]   forward_KL_F: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[12:44:23]   forward_KL_G: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[12:44:23] OT_loss on transplanted OTFlow
+[12:44:24]   OT_loss: shape (8,) (want (8,)), |mean-zflows|=0.000e+00 tol=1.0e-09 -> OK
+[12:44:24] DONE — all Phase 5 parity checks passed
+[15:03:42] START parity_check_phase5 | jax 0.10.2 (gpu)
+[15:03:43] KL losses on transplanted NSF
+[15:03:45]   reverse_KL_F: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[15:03:45]   reverse_KL_G: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[15:03:46]   forward_KL_F: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[15:03:46]   forward_KL_G: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[15:03:46] OT_loss on transplanted OTFlow
+[15:03:47]   OT_loss: shape (8,) (want (8,)), |mean-zflows|=0.000e+00 tol=1.0e-09 -> OK
+[15:03:47] DONE — all Phase 5 parity checks passed
+[15:08:37] START parity_check_phase5 | jax 0.10.2 (gpu)
+[15:08:38] KL losses on transplanted NSF
+[15:08:40]   reverse_KL_F: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[15:08:40]   reverse_KL_G: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[15:08:41]   forward_KL_F: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[15:08:41]   forward_KL_G: shape (16,) (want (16,)), |mean-zflows|=8.882e-16 tol=1.0e-09 -> OK
+[15:08:41] OT_loss on transplanted OTFlow
+[15:08:42]   OT_loss: shape (8,) (want (8,)), |mean-zflows|=0.000e+00 tol=1.0e-09 -> OK
+[15:08:42] DONE — all Phase 5 parity checks passed

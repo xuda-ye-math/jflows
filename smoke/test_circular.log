@@ -1,0 +1,240 @@
+[10:15:27] START test_circular | jax 0.10.2 | gpu
+[10:15:27] CircularShiftTransform
+[10:15:28]   identity inside [-B, B): max|Δ|=4.441e-16 tol=1.0e-12 -> OK
+[10:15:28]   wrap of x + 2B: max|Δ|=1.110e-15 tol=1.0e-09 -> OK
+[10:15:28]   wrap of x - 2B: max|Δ|=8.882e-16 tol=1.0e-09 -> OK
+[10:15:28]   ladj == 0: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[10:15:28] MonotonicRQSTransform derivative boundaries
+[10:15:28]   circular: d_0 == d_K exactly: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[10:15:28]   circular: seam slope is learnable (d_0 != 1 generically): d_0 = 1.4472 -> OK
+[10:15:28]   circular: knot-derivative count == K + 1: shape (9,) -> OK
+[10:15:28]   non-circular: d_0 == d_K == 1 (NSF tails unchanged): max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[10:15:28] CircularRQSTransform (fixed parameters)
+[10:15:29]   2B-periodicity: T(x - 2B) == T(x): max|Δ|=2.665e-15 tol=1.0e-09 -> OK
+[10:15:29]   2B-periodicity: T(x + 2B) == T(x): max|Δ|=6.217e-15 tol=1.0e-09 -> OK
+[10:15:29]   maps into [-B, B]: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[10:15:29]   round-trip on the circle: max|Δ|=2.309e-14 tol=1.0e-09 -> OK
+[10:15:41] START test_circular | jax 0.10.2 | gpu
+[10:15:41] CircularShiftTransform
+[10:15:41]   identity inside [-B, B): max|Δ|=4.441e-16 tol=1.0e-12 -> OK
+[10:15:41]   wrap of x + 2B: max|Δ|=1.110e-15 tol=1.0e-09 -> OK
+[10:15:41]   wrap of x - 2B: max|Δ|=8.882e-16 tol=1.0e-09 -> OK
+[10:15:41]   ladj == 0: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[10:15:41] MonotonicRQSTransform derivative boundaries
+[10:15:42]   circular: d_0 == d_K exactly: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[10:15:42]   circular: seam slope is learnable (d_0 != 1 generically): d_0 = 1.4472 -> OK
+[10:15:42]   circular: knot-derivative count == K + 1: shape (9,) -> OK
+[10:15:42]   non-circular: d_0 == d_K == 1 (NSF tails unchanged): max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[10:15:42] CircularRQSTransform (fixed parameters)
+[10:15:43]   2B-periodicity: T(x - 2B) == T(x): max|Δ|=2.665e-15 tol=1.0e-09 -> OK
+[10:15:43]   2B-periodicity: T(x + 2B) == T(x): max|Δ|=6.217e-15 tol=1.0e-09 -> OK
+[10:15:43]   maps into [-B, B]: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[10:15:43]   round-trip on the circle: max|Δ|=2.309e-14 tol=1.0e-09 -> OK
+[10:15:43]   seam continuity (eps=0.01): value gap 2.72e-02, log-slope gap 5.47e-01 -> OK
+[10:15:43]   seam continuity (eps=0.0001): value gap 2.89e-04, log-slope gap 5.99e-03 -> OK
+[10:15:43]   seam continuity (eps=1e-06): value gap 2.89e-06, log-slope gap 6.00e-05 -> OK
+[10:15:43]   seam log-slope == log d_0 (shared, learnable): max|Δ|=1.333e-08 tol=1.0e-06 -> OK
+[10:15:43] NCSF (d=3, randmask=True)
+[10:15:46]   domain preservation: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[10:15:46]   circle round-trip: max|Δ|=3.553e-15 tol=1.0e-09 -> OK
+[10:15:49]   ladj vs slogdet: max|Δ|=2.220e-15 tol=1.0e-09 -> OK
+[10:15:50]   seam density is trainable (ladj(seam) != 0): ladj(seam) = [0. 0.] -> FAIL
+[10:15:50] NCSF pushforward normalisation on the torus (d=2, 400x400 grid)
+[10:15:53]   density integrates to 1: integral = 1.000092 -> OK
+[10:15:53] DONE — 1 FAILURE(S)
+[10:16:23] START test_circular | jax 0.10.2 | gpu
+[10:16:23] CircularShiftTransform
+[10:16:23]   identity inside [-B, B): max|Δ|=4.441e-16 tol=1.0e-12 -> OK
+[10:16:23]   wrap of x + 2B: max|Δ|=1.110e-15 tol=1.0e-09 -> OK
+[10:16:23]   wrap of x - 2B: max|Δ|=8.882e-16 tol=1.0e-09 -> OK
+[10:16:23]   ladj == 0: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[10:16:23] MonotonicRQSTransform derivative boundaries
+[10:16:24]   circular: d_0 == d_K exactly: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[10:16:24]   circular: seam slope is learnable (d_0 != 1 generically): d_0 = 1.4472 -> OK
+[10:16:24]   circular: knot-derivative count == K + 1: shape (9,) -> OK
+[10:16:24]   non-circular: d_0 == d_K == 1 (NSF tails unchanged): max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[10:16:24] CircularRQSTransform (fixed parameters)
+[10:16:24]   2B-periodicity: T(x - 2B) == T(x): max|Δ|=2.665e-15 tol=1.0e-09 -> OK
+[10:16:24]   2B-periodicity: T(x + 2B) == T(x): max|Δ|=6.217e-15 tol=1.0e-09 -> OK
+[10:16:24]   maps into [-B, B]: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[10:16:24]   round-trip on the circle: max|Δ|=2.309e-14 tol=1.0e-09 -> OK
+[10:16:25]   seam continuity (eps=0.01): value gap 2.72e-02, log-slope gap 5.47e-01 -> OK
+[10:16:25]   seam continuity (eps=0.0001): value gap 2.89e-04, log-slope gap 5.99e-03 -> OK
+[10:16:25]   seam continuity (eps=1e-06): value gap 2.89e-06, log-slope gap 6.00e-05 -> OK
+[10:16:25]   seam log-slope == log d_0 (shared, learnable): max|Δ|=1.333e-08 tol=1.0e-06 -> OK
+[10:16:25] NCSF (d=3, randmask=True)
+[10:16:27]   domain preservation: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[10:16:28]   circle round-trip: max|Δ|=3.553e-15 tol=1.0e-09 -> OK
+[10:16:30]   ladj vs slogdet: max|Δ|=2.220e-15 tol=1.0e-09 -> OK
+[10:16:32]   seam density is trainable (lim ladj != 0 at seam): ladj(seam∓eps) = [-0.6731 -0.8737] -> OK
+[10:16:32] NCSF pushforward normalisation on the torus (d=2, 400x400 grid)
+[10:16:35]   density integrates to 1: integral = 1.000092 -> OK
+[10:16:35] DONE — all circular-boundary tests passed
+[10:17:42] START test_circular | jax 0.10.2 | gpu
+[10:17:42] CircularShiftTransform
+[10:17:42]   identity inside [-B, B): max|Δ|=4.441e-16 tol=1.0e-12 -> OK
+[10:17:42]   wrap of x + 2B: max|Δ|=1.110e-15 tol=1.0e-09 -> OK
+[10:17:42]   wrap of x - 2B: max|Δ|=8.882e-16 tol=1.0e-09 -> OK
+[10:17:42]   ladj == 0: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[10:17:42] MonotonicRQSTransform derivative boundaries
+[10:17:43]   circular: d_0 == d_K exactly: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[10:17:43]   circular: seam slope is learnable (d_0 != 1 generically): d_0 = 1.4472 -> OK
+[10:17:43]   circular: knot-derivative count == K + 1: shape (9,) -> OK
+[10:17:43]   non-circular: d_0 == d_K == 1 (NSF tails unchanged): max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[10:17:43] CircularRQSTransform (fixed parameters)
+[10:17:43]   2B-periodicity: T(x - 2B) == T(x): max|Δ|=2.665e-15 tol=1.0e-09 -> OK
+[10:17:43]   2B-periodicity: T(x + 2B) == T(x): max|Δ|=6.217e-15 tol=1.0e-09 -> OK
+[10:17:43]   maps into [-B, B]: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[10:17:43]   round-trip on the circle: max|Δ|=2.309e-14 tol=1.0e-09 -> OK
+[10:17:44]   seam continuity (eps=0.01): value gap 2.72e-02, log-slope gap 5.47e-01 -> OK
+[10:17:44]   seam continuity (eps=0.0001): value gap 2.89e-04, log-slope gap 5.99e-03 -> OK
+[10:17:44]   seam continuity (eps=1e-06): value gap 2.89e-06, log-slope gap 6.00e-05 -> OK
+[10:17:44]   seam log-slope == log d_0 (shared, learnable): max|Δ|=1.333e-08 tol=1.0e-06 -> OK
+[10:17:44] NCSF (d=3, randmask=True)
+[10:17:47]   domain preservation: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[10:17:47]   circle round-trip: max|Δ|=3.553e-15 tol=1.0e-09 -> OK
+[10:17:50]   ladj vs slogdet: max|Δ|=2.220e-15 tol=1.0e-09 -> OK
+[10:17:51]   seam density is trainable (lim ladj != 0 at seam): ladj(seam∓eps) = [-0.6731 -0.8737] -> OK
+[10:17:51] NCSF pushforward normalisation on the torus (d=2, 400x400 grid)
+[10:17:54]   density integrates to 1: integral = 1.000092 -> OK
+[10:17:54] DONE — all circular-boundary tests passed
+[12:03:26] START test_circular | jax 0.10.2 | gpu
+[12:03:26] CircularShiftTransform
+[12:03:26]   identity inside [-B, B): max|Δ|=4.441e-16 tol=1.0e-12 -> OK
+[12:03:26]   wrap of x + 2B: max|Δ|=1.110e-15 tol=1.0e-09 -> OK
+[12:03:26]   wrap of x - 2B: max|Δ|=8.882e-16 tol=1.0e-09 -> OK
+[12:03:26]   ladj == 0: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:03:26] MonotonicRQSTransform derivative boundaries
+[12:03:26]   circular: d_0 == d_K exactly: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:03:26]   circular: seam slope is learnable (d_0 != 1 generically): d_0 = 1.4472 -> OK
+[12:03:26]   circular: knot-derivative count == K + 1: shape (9,) -> OK
+[12:03:27]   non-circular: d_0 == d_K == 1 (NSF tails unchanged): max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:03:27] CircularRQSTransform (fixed parameters)
+[12:03:27]   2B-periodicity: T(x - 2B) == T(x): max|Δ|=2.665e-15 tol=1.0e-09 -> OK
+[12:03:27]   2B-periodicity: T(x + 2B) == T(x): max|Δ|=6.217e-15 tol=1.0e-09 -> OK
+[12:03:27]   maps into [-B, B]: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:03:27]   round-trip on the circle: max|Δ|=2.309e-14 tol=1.0e-09 -> OK
+[12:03:27]   seam continuity (eps=0.01): value gap 2.72e-02, log-slope gap 5.47e-01 -> OK
+[12:03:27]   seam continuity (eps=0.0001): value gap 2.89e-04, log-slope gap 5.99e-03 -> OK
+[12:03:27]   seam continuity (eps=1e-06): value gap 2.89e-06, log-slope gap 6.00e-05 -> OK
+[12:03:27]   seam log-slope == log d_0 (shared, learnable): max|Δ|=1.333e-08 tol=1.0e-06 -> OK
+[12:03:27] NCSF (d=3, randmask=True)
+[12:03:30]   domain preservation: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:03:31]   circle round-trip: max|Δ|=3.553e-15 tol=1.0e-09 -> OK
+[12:03:33]   ladj vs slogdet: max|Δ|=2.220e-15 tol=1.0e-09 -> OK
+[12:03:34]   seam density is trainable (lim ladj != 0 at seam): ladj(seam∓eps) = [-0.6731 -0.8737] -> OK
+[12:03:34] NCSF pushforward normalisation on the torus (d=2, 400x400 grid)
+[12:03:37]   density integrates to 1: integral = 1.000092 -> OK
+[12:03:37] DONE — all circular-boundary tests passed
+[12:24:11] START test_circular | jax 0.10.2 | gpu
+[12:24:11] CircularShiftTransform
+[12:24:11]   identity inside [-B, B): max|Δ|=4.441e-16 tol=1.0e-12 -> OK
+[12:24:11]   wrap of x + 2B: max|Δ|=1.110e-15 tol=1.0e-09 -> OK
+[12:24:11]   wrap of x - 2B: max|Δ|=8.882e-16 tol=1.0e-09 -> OK
+[12:24:11]   ladj == 0: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:24:11] MonotonicRQSTransform derivative boundaries
+[12:24:11]   circular: d_0 == d_K exactly: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:24:12]   circular: seam slope is learnable (d_0 != 1 generically): d_0 = 1.4472 -> OK
+[12:24:12]   circular: knot-derivative count == K + 1: shape (9,) -> OK
+[12:24:12]   non-circular: d_0 == d_K == 1 (NSF tails unchanged): max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:24:12] CircularRQSTransform (fixed parameters)
+[12:24:12]   2B-periodicity: T(x - 2B) == T(x): max|Δ|=2.665e-15 tol=1.0e-09 -> OK
+[12:24:12]   2B-periodicity: T(x + 2B) == T(x): max|Δ|=6.217e-15 tol=1.0e-09 -> OK
+[12:24:12]   maps into [-B, B]: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:24:12]   round-trip on the circle: max|Δ|=2.309e-14 tol=1.0e-09 -> OK
+[12:24:13]   seam continuity (eps=0.01): value gap 2.72e-02, log-slope gap 5.47e-01 -> OK
+[12:24:13]   seam continuity (eps=0.0001): value gap 2.89e-04, log-slope gap 5.99e-03 -> OK
+[12:24:13]   seam continuity (eps=1e-06): value gap 2.89e-06, log-slope gap 6.00e-05 -> OK
+[12:24:13]   seam log-slope == log d_0 (shared, learnable): max|Δ|=1.333e-08 tol=1.0e-06 -> OK
+[12:24:13] NCSF (d=3, randmask=True)
+[12:24:15]   domain preservation: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:24:16]   circle round-trip: max|Δ|=3.553e-15 tol=1.0e-09 -> OK
+[12:24:18]   ladj vs slogdet: max|Δ|=2.220e-15 tol=1.0e-09 -> OK
+[12:24:19]   seam density is trainable (lim ladj != 0 at seam): ladj(seam∓eps) = [-0.6731 -0.8737] -> OK
+[12:24:19] NCSF pushforward normalisation on the torus (d=2, 400x400 grid)
+[12:24:22]   density integrates to 1: integral = 1.000092 -> OK
+[12:24:22] DONE — all circular-boundary tests passed
+[12:42:11] START test_circular | jax 0.10.2 | gpu
+[12:42:11] CircularShiftTransform
+[12:42:11]   identity inside [-B, B): max|Δ|=4.441e-16 tol=1.0e-12 -> OK
+[12:42:11]   wrap of x + 2B: max|Δ|=1.110e-15 tol=1.0e-09 -> OK
+[12:42:11]   wrap of x - 2B: max|Δ|=8.882e-16 tol=1.0e-09 -> OK
+[12:42:11]   ladj == 0: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:42:11] MonotonicRQSTransform derivative boundaries
+[12:42:12]   circular: d_0 == d_K exactly: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:42:12]   circular: seam slope is learnable (d_0 != 1 generically): d_0 = 1.4472 -> OK
+[12:42:12]   circular: knot-derivative count == K + 1: shape (9,) -> OK
+[12:42:12]   non-circular: d_0 == d_K == 1 (NSF tails unchanged): max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[12:42:12] CircularRQSTransform (fixed parameters)
+[12:42:12]   2B-periodicity: T(x - 2B) == T(x): max|Δ|=2.665e-15 tol=1.0e-09 -> OK
+[12:42:12]   2B-periodicity: T(x + 2B) == T(x): max|Δ|=6.217e-15 tol=1.0e-09 -> OK
+[12:42:12]   maps into [-B, B]: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:42:12]   round-trip on the circle: max|Δ|=2.309e-14 tol=1.0e-09 -> OK
+[12:42:13]   seam continuity (eps=0.01): value gap 2.72e-02, log-slope gap 5.47e-01 -> OK
+[12:42:13]   seam continuity (eps=0.0001): value gap 2.89e-04, log-slope gap 5.99e-03 -> OK
+[12:42:13]   seam continuity (eps=1e-06): value gap 2.89e-06, log-slope gap 6.00e-05 -> OK
+[12:42:13]   seam log-slope == log d_0 (shared, learnable): max|Δ|=1.333e-08 tol=1.0e-06 -> OK
+[12:42:13] NCSF (d=3, randmask=True)
+[12:42:15]   domain preservation: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[12:42:16]   circle round-trip: max|Δ|=3.553e-15 tol=1.0e-09 -> OK
+[12:42:18]   ladj vs slogdet: max|Δ|=2.276e-15 tol=1.0e-09 -> OK
+[12:42:20]   seam density is trainable (lim ladj != 0 at seam): ladj(seam∓eps) = [-0.6731 -0.8737] -> OK
+[12:42:20] NCSF pushforward normalisation on the torus (d=2, 400x400 grid)
+[12:42:23]   density integrates to 1: integral = 1.000092 -> OK
+[12:42:23] DONE — all circular-boundary tests passed
+[15:02:38] START test_circular | jax 0.10.2 | gpu
+[15:02:38] CircularShiftTransform
+[15:02:38]   identity inside [-B, B): max|Δ|=4.441e-16 tol=1.0e-12 -> OK
+[15:02:38]   wrap of x + 2B: max|Δ|=1.110e-15 tol=1.0e-09 -> OK
+[15:02:38]   wrap of x - 2B: max|Δ|=8.882e-16 tol=1.0e-09 -> OK
+[15:02:38]   ladj == 0: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[15:02:38] MonotonicRQSTransform derivative boundaries
+[15:02:39]   circular: d_0 == d_K exactly: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[15:02:39]   circular: seam slope is learnable (d_0 != 1 generically): d_0 = 1.4472 -> OK
+[15:02:39]   circular: knot-derivative count == K + 1: shape (9,) -> OK
+[15:02:39]   non-circular: d_0 == d_K == 1 (NSF tails unchanged): max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[15:02:39] CircularRQSTransform (fixed parameters)
+[15:02:39]   2B-periodicity: T(x - 2B) == T(x): max|Δ|=2.665e-15 tol=1.0e-09 -> OK
+[15:02:39]   2B-periodicity: T(x + 2B) == T(x): max|Δ|=6.217e-15 tol=1.0e-09 -> OK
+[15:02:39]   maps into [-B, B]: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:02:40]   round-trip on the circle: max|Δ|=2.309e-14 tol=1.0e-09 -> OK
+[15:02:40]   seam continuity (eps=0.01): value gap 2.72e-02, log-slope gap 5.47e-01 -> OK
+[15:02:40]   seam continuity (eps=0.0001): value gap 2.89e-04, log-slope gap 5.99e-03 -> OK
+[15:02:40]   seam continuity (eps=1e-06): value gap 2.89e-06, log-slope gap 6.00e-05 -> OK
+[15:02:40]   seam log-slope == log d_0 (shared, learnable): max|Δ|=1.333e-08 tol=1.0e-06 -> OK
+[15:02:40] NCSF (d=3, randmask=True)
+[15:02:43]   domain preservation: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:02:43]   circle round-trip: max|Δ|=3.553e-15 tol=1.0e-09 -> OK
+[15:02:46]   ladj vs slogdet: max|Δ|=2.220e-15 tol=1.0e-09 -> OK
+[15:02:47]   seam density is trainable (lim ladj != 0 at seam): ladj(seam∓eps) = [-0.6731 -0.8737] -> OK
+[15:02:47] NCSF pushforward normalisation on the torus (d=2, 400x400 grid)
+[15:02:50]   density integrates to 1: integral = 1.000092 -> OK
+[15:02:50] DONE — all circular-boundary tests passed
+[15:07:15] START test_circular | jax 0.10.2 | gpu
+[15:07:15] CircularShiftTransform
+[15:07:15]   identity inside [-B, B): max|Δ|=4.441e-16 tol=1.0e-12 -> OK
+[15:07:15]   wrap of x + 2B: max|Δ|=1.110e-15 tol=1.0e-09 -> OK
+[15:07:15]   wrap of x - 2B: max|Δ|=8.882e-16 tol=1.0e-09 -> OK
+[15:07:15]   ladj == 0: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[15:07:15] MonotonicRQSTransform derivative boundaries
+[15:07:16]   circular: d_0 == d_K exactly: max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[15:07:16]   circular: seam slope is learnable (d_0 != 1 generically): d_0 = 1.4472 -> OK
+[15:07:16]   circular: knot-derivative count == K + 1: shape (9,) -> OK
+[15:07:16]   non-circular: d_0 == d_K == 1 (NSF tails unchanged): max|Δ|=0.000e+00 tol=0.0e+00 -> OK
+[15:07:16] CircularRQSTransform (fixed parameters)
+[15:07:16]   2B-periodicity: T(x - 2B) == T(x): max|Δ|=2.665e-15 tol=1.0e-09 -> OK
+[15:07:16]   2B-periodicity: T(x + 2B) == T(x): max|Δ|=6.217e-15 tol=1.0e-09 -> OK
+[15:07:16]   maps into [-B, B]: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:07:16]   round-trip on the circle: max|Δ|=2.309e-14 tol=1.0e-09 -> OK
+[15:07:17]   seam continuity (eps=0.01): value gap 2.72e-02, log-slope gap 5.47e-01 -> OK
+[15:07:17]   seam continuity (eps=0.0001): value gap 2.89e-04, log-slope gap 5.99e-03 -> OK
+[15:07:17]   seam continuity (eps=1e-06): value gap 2.89e-06, log-slope gap 6.00e-05 -> OK
+[15:07:17]   seam log-slope == log d_0 (shared, learnable): max|Δ|=1.333e-08 tol=1.0e-06 -> OK
+[15:07:17] NCSF (d=3, randmask=True)
+[15:07:19]   domain preservation: max|Δ|=0.000e+00 tol=1.0e-12 -> OK
+[15:07:20]   circle round-trip: max|Δ|=3.553e-15 tol=1.0e-09 -> OK
+[15:07:22]   ladj vs slogdet: max|Δ|=2.220e-15 tol=1.0e-09 -> OK
+[15:07:24]   seam density is trainable (lim ladj != 0 at seam): ladj(seam∓eps) = [-0.6731 -0.8737] -> OK
+[15:07:24] NCSF pushforward normalisation on the torus (d=2, 400x400 grid)
+[15:07:27]   density integrates to 1: integral = 1.000092 -> OK
+[15:07:27] DONE — all circular-boundary tests passed

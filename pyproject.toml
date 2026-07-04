@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jflows"
+version = "0.1.0"
+description = "JAX normalizing flows for unconditional energy-based sampling and Boltzmann generators."
+readme = "README.md"
+authors = [{ name = "Xuda", email = "abneryepku@gmail.com" }]
+license = { text = "MIT" }
+requires-python = ">=3.11"
+keywords = [
+    "normalizing-flows",
+    "boltzmann-generator",
+    "jax",
+    "equinox",
+    "sampling",
+    "smc",
+    "neural-spline-flows",
+    "ot-flow",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "jax>=0.6.0",
+    "equinox>=0.13.0",
+    "numpy>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/xuda-ye-math/jflows"
+
+[tool.setuptools.packages.find]
+include = ["jflows*"]
