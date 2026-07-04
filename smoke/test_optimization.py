@@ -1,0 +1,165 @@
+"""Standalone optimization smoke test (jflows only) — run from the repo
+root as `~/.envs/jax/bin/python -m smoke.test_optimization`.
+
+For lbfgs / lbfgs_init / lbfgs_step / LBFGS_State (and the adamw
+counterparts, section 7):
+
+    1. quadratic potential: convergence to the mean at near-machine
+       precision in a handful of iterations (armijo on and off);
+    2. Gaussian mixture: particles land on stationary points (gradient
+       norm ~ 0) and the energy decreases monotonically with armijo;
+    3. loop == composition: `lbfgs` equals the manual
+       lbfgs_init + lbfgs_step chain exactly;
+    4. chunk invariance (deterministic algorithm — exact);
+    5. memory=1 still converges on the quadratic;
+    6. jit: lbfgs_step carries LBFGS_State through eqx.filter_jit;
+    7. adamw: quadratic convergence (up to the O(step) residual), loop ==
+       composition, weight_decay pulls the solution toward the origin,
+       chunk invariance.
+
+Float64, on the default JAX backend (GPU when available; set
+JAX_PLATFORMS=cpu to force CPU); GPU memory preallocation is disabled.
+Exits nonzero on any failure.
+"""
+
+import os
+import sys
+import time
+
+os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+
+import equinox as eqx  # noqa: E402
+import jax  # noqa: E402
+
+jax.config.update("jax_enable_x64", True)
+
+import jax.numpy as jnp  # noqa: E402
+import numpy as np  # noqa: E402
+
+from jflows.potential import Nlog_Gaussian, Nlog_Gaussian_Mixture  # noqa: E402
+from jflows.utils import (  # noqa: E402
+    adamw,
+    adamw_init,
+    adamw_step,
+    lbfgs,
+    lbfgs_init,
+    lbfgs_step,
+    optimization,
+)
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+LOG = os.path.join(HERE, "test_optimization.log")
+
+FAILURES = 0
+
+
+def log(msg: str) -> None:
+    line = f"[{time.strftime('%H:%M:%S')}] {msg}"
+    print(line, flush=True)
+    with open(LOG, "a") as fh:
+        fh.write(line + "\n")
+
+
+def check(name: str, got, want, tol: float) -> None:
+    global FAILURES
+    got, want = np.asarray(got), np.asarray(want)
+    err = float(np.max(np.abs(got - want))) if got.size else 0.0
+    ok = got.shape == want.shape and err <= tol
+    log(f"  {name}: max|Δ|={err:.3e} tol={tol:.1e} -> {'OK' if ok else 'FAIL'}")
+    if not ok:
+        FAILURES += 1
+
+
+def check_true(name: str, cond: bool, detail: str = "") -> None:
+    global FAILURES
+    log(f"  {name}: {detail}{' ' if detail else ''}-> {'OK' if cond else 'FAIL'}")
+    if not cond:
+        FAILURES += 1
+
+
+def main() -> None:
+    log(f"START test_optimization | jax {jax.__version__} | {jax.default_backend()}")
+    key = jax.random.key(0)
+    N, d = 64, 3
+
+    # ── 1. quadratic: exact mode is the mean ──
+    log("quadratic convergence")
+    mean = jnp.asarray([1.0, -2.0, 0.5])
+    gau = Nlog_Gaussian(mean, [0.5, 2.0, 1.0])
+    x0 = jax.random.normal(key, (N, d)) * 4.0
+    for armijo in (False, True):
+        xf = lbfgs(x0, gau, step=1.0, iters=25, memory=6, armijo=armijo)
+        check(f"armijo={armijo}: reaches the mean", xf,
+              jnp.broadcast_to(mean, (N, d)), tol=1e-6)
+    check_true("optimization is lbfgs", optimization is lbfgs)
+
+    # ── 2. Gaussian mixture: stationary points, monotone energy (armijo) ──
+    log("Gaussian mixture")
+    gmm = Nlog_Gaussian_Mixture(
+        [0.4, 0.6], [[-2.0, 1.0, 0.0], [2.0, -1.0, 0.5]],
+        [[0.5, 0.3, 0.4], [0.4, 0.6, 0.3]],
+    )
+    x0m = jax.random.normal(jax.random.key(1), (N, d)) * 2.0
+    xf = lbfgs(x0m, gmm, step=0.5, iters=60, memory=6, armijo=False)
+    gnorm = float(jnp.linalg.norm(gmm.grad(xf), axis=-1).max())
+    check_true("stationary points (max |grad| < 1e-5)", gnorm < 1e-5, f"max|grad| = {gnorm:.2e}")
+
+    state = lbfgs_init(x0m, gmm, memory=6)
+    energies = [float(gmm(state.x).mean())]
+    for _ in range(30):
+        state = lbfgs_step(state, gmm, step=1.0, armijo=True)
+        energies.append(float(gmm(state.x).mean()))
+    check_true("armijo: mean energy non-increasing",
+               all(b <= a + 1e-10 for a, b in zip(energies, energies[1:])),
+               f"{energies[0]:.3f} -> {energies[-1]:.3f}")
+
+    # ── 3. loop == manual composition ──
+    log("loop == lbfgs_init + lbfgs_step composition")
+    state = lbfgs_init(x0m, gmm, memory=6)
+    for _ in range(25):
+        state = lbfgs_step(state, gmm, step=0.5, armijo=False)
+    # tol: scanned loop vs eager steps differ only by XLA fusion rounding
+    check("agreement (fusion rounding)", state.x,
+          lbfgs(x0m, gmm, step=0.5, iters=25, memory=6, armijo=False), tol=1e-15)
+
+    # ── 4/5. chunk invariance and memory=1 ──
+    log("chunk invariance / memory=1")
+    check("chunk=4 == chunk=1 (fusion rounding)", lbfgs(x0m, gmm, step=0.5, iters=25, chunk=4),
+          lbfgs(x0m, gmm, step=0.5, iters=25, chunk=1), tol=1e-15)
+    xf1 = lbfgs(x0, gau, step=1.0, iters=80, memory=1)
+    check("memory=1 quadratic convergence", xf1, jnp.broadcast_to(mean, (N, d)), tol=1e-4)
+
+    # ── 6. jit ──
+    log("jit")
+    state = lbfgs_init(x0m, gmm, memory=6)
+    step_jit = eqx.filter_jit(lambda s: lbfgs_step(s, gmm, step=0.5, armijo=False))
+    check("filter_jit(lbfgs_step)", step_jit(state).x,
+          lbfgs_step(state, gmm, step=0.5, armijo=False).x, tol=1e-12)
+
+    # ── 7. adamw ──
+    log("adamw")
+    xf = adamw(x0, gau, step=0.05, iters=1500)
+    check("quadratic convergence (O(step) residual)", xf,
+          jnp.broadcast_to(mean, (N, d)), tol=0.05)
+    state = adamw_init(x0m)
+    for _ in range(20):
+        state = adamw_step(state, gmm, step=0.02)
+    check("loop == composition (fusion rounding)", state.x,
+          adamw(x0m, gmm, step=0.02, iters=20), tol=1e-15)
+    x_wd = adamw(x0, gau, step=0.05, iters=1500, weight_decay=0.2)
+    check_true("weight_decay shrinks toward the origin",
+               bool(jnp.linalg.norm(x_wd.mean(0)) < jnp.linalg.norm(xf.mean(0)) - 0.1),
+               f"|mean| {float(jnp.linalg.norm(x_wd.mean(0))):.3f} < "
+               f"{float(jnp.linalg.norm(xf.mean(0))):.3f}")
+    check("chunk=4 == chunk=1 (fusion rounding)",
+          adamw(x0m, gmm, step=0.02, iters=50, chunk=4),
+          adamw(x0m, gmm, step=0.02, iters=50, chunk=1), tol=1e-15)
+
+    if FAILURES:
+        log(f"DONE — {FAILURES} FAILURE(S)")
+        sys.exit(1)
+    log("DONE — all standalone optimization tests passed")
+
+
+if __name__ == "__main__":
+    main()

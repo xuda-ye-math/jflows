@@ -35,8 +35,10 @@ jflows
 │   │   ├── __init__.py      # re-exports the flat jflows.utils namespace; suppress_warnings
 │   │   ├── metrics.py       # importance_weights_{F,G} (+log), compute_ESS (+log),
 │   │   │                    #   coverage (k-NN, Naeem et al. 2020), resample  [CESS dropped]
-│   │   ├── optimization.py  # lbfgs                                  (pending)
-│   │   ├── rejuvenation.py  # langevin, stochastic_heun, hamiltonian_monte_carlo  (pending)
+│   │   ├── optimization.py  # lbfgs (+ LBFGS_State / lbfgs_init / lbfgs_step);
+│   │   │                    #   adamw (+ AdamW_State / adamw_init / adamw_step; no zflows counterpart)
+│   │   ├── rejuvenation.py  # langevin, stochastic_heun, hamiltonian_monte_carlo
+│   │   │                    #   (+ *_step kernels, leapfrog; aliases rejuvenation, hmc)
 │   │   └── annealing.py     # sequential_monte_carlo, AIS_{F,G}      (pending)
 │   └── core
 │       ├── __init__.py
@@ -147,7 +149,18 @@ Not mirrored: `.archive/`, `.venv/`, `zflows.egg-info/`, `Dockerfile`,
     terms `(U1, U2, U3)` with coefficients `(0.5, 1.0, 0.5)`. There is no
     public `Linear_Combination` class and no `set_coeffs`; coefficients are a
     `(n,)` array leaf and may be traced (bridges built inside jit are fine).
-14. **NCSF circular spline** (user-approved fix; diverges from zflows/zuko).
+14. **Two-level sampler interface** (user-requested). `optimization.py` and
+    `rejuvenation.py` expose both the high-level loops (zflows names and
+    returns: `lbfgs`/`optimization`, `langevin`/`rejuvenation`,
+    `stochastic_heun`, `hamiltonian_monte_carlo`/`hmc`) and the low-level
+    kernels they scan over (`LBFGS_State`/`lbfgs_init`/`lbfgs_step`;
+    `langevin_step`, `stochastic_heun_step`, `hmc_step`, `leapfrog`). Steps
+    return `(x, aux)` with MH diagnostics; every loop is exactly a lax.scan
+    over its public step (loop ≡ manual composition, tested), with keys
+    derived as fold_in(key, chunk_index) then split(chunk_key, iters).
+    Naming convention (outside `core/`, which keeps zuko's names): classes
+    are Alice_Bob style, instances/functions alice_bob.
+15. **NCSF circular spline** (user-approved fix; diverges from zflows/zuko).
     `MonotonicRQSTransform(..., circular=True)` wrap-shares the first
     unconstrained derivative onto the last knot — `d_0 = d_K`, one learnable
     seam slope — and NCSF emits `shapes=[(bins,), (bins,), (bins,)]`. Each
@@ -192,11 +205,10 @@ Dependency order is bottom-up, same as the zflows internal dependency graph:
   per-sample loss vector, shape (N,). Gate: batch-mean of the jflows vector equals
   the zflows scalar loss on transplanted weights + fixed input batches.
 - **Phase 6 — `utils/` package.** Step 6a: `metrics.py` (compute_ESS (+log),
-  importance_weights_{F,G} (+log), resample; CESS dropped). Pending:
-  `optimization.py` (lbfgs),
-  `rejuvenation.py` (langevin, stochastic_heun, hamiltonian_monte_carlo),
-  `annealing.py` (sequential_monte_carlo, annealed_importance_sampling_{F,G}),
-  `__init__.py` (flat re-exports + suppress_warnings).
+  importance_weights_{F,G} (+log), coverage, resample; CESS dropped).
+  Step 6b/6c: `optimization.py` + `rejuvenation.py` with the two-level
+  interface (§3.15). Pending: `annealing.py` (sequential_monte_carlo,
+  annealed_importance_sampling_{F,G}), suppress_warnings in `__init__.py`.
   Gate: deterministic pieces (weights, ESS, lbfgs on a quadratic) exact-parity;
   stochastic pieces validated statistically (§5).
 - **Phase 7 — `examples/` + docs.** Port the seven README showcases (2D/3D/4D

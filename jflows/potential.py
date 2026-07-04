@@ -151,7 +151,7 @@ def potential_from(fn: Callable[[Array], Array]) -> Potential:
 # Compositional — linear combinations of potentials (annealing bridges)
 # ──────────────────────────────────────────────────────────────────────
 
-class _LinearCombination(Potential):
+class _Linear_Combination(Potential):
     """
     Flat linear combination of potentials:
         U(x) = sum_k coeffs[k] * terms[k](x).
@@ -264,7 +264,7 @@ def linear_combination(
     acc: dict[int, list] = {}            # id -> [potential, coefficient]
 
     def absorb(U: Potential, c) -> None:
-        if isinstance(U, _LinearCombination):
+        if isinstance(U, _Linear_Combination):
             for k, child in enumerate(U.terms):
                 absorb(child, c * U.coeffs[k])
         else:
@@ -285,7 +285,7 @@ def linear_combination(
     cs = jnp.stack([jnp.asarray(acc[key][1]) for key in order])
     cs = cs.astype(jnp.result_type(float))
     assert cs.ndim == 1, f"coefficients must be scalars, got coeffs shape {cs.shape}"
-    return _LinearCombination(terms, cs)
+    return _Linear_Combination(terms, cs)
 
 
 # ──────────────────────────────────────────────────────────────────────
