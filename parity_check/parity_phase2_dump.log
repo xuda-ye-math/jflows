@@ -1,6 +1,0 @@
-[08:53:44] START parity_dump_phase2 | torch 2.12.1+cu130 | out=/mnt/projects/jflows/smoke_tests/parity_phase2.npz
-[08:53:44] MonotonicRQS (per-coord bound) fixture
-[08:53:44] MonotonicRQS (scalar bound) fixture
-[08:53:44] CircularShift fixture
-[08:53:44] MonotonicAffine fixture
-[08:53:44] DONE — wrote /mnt/projects/jflows/smoke_tests/parity_phase2.npz (19 arrays)

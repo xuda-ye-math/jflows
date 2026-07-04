@@ -1,8 +1,0 @@
-[09:00:58] START parity_dump_phase3 | torch 2.12.1+cu130 | out=/mnt/projects/jflows/smoke_tests/parity_phase3.npz
-[09:00:58] NSF fixture
-[09:00:58] NCSF fixture
-[09:00:58] RealNVP (lu) fixture
-[09:00:58] RealNVP (rotation) fixture
-[09:00:58] CNF fixture
-[09:00:58] OTFlow fixture
-[09:00:58] DONE — wrote /mnt/projects/jflows/smoke_tests/parity_phase3.npz (159 arrays)
