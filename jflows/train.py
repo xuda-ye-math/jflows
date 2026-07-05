@@ -24,6 +24,15 @@ Public API:
                        rejuvenation, with adaptive t selection (bg_param)
     Monitor          — live training-status reporter (loss + batch ESS
                        every `every` steps, from inside the compiled loop)
+
+Both trainers are `eqx.filter_jit`-compiled: python scalars (`n_batch`,
+`steps`, `lr`, `mc_*`, `type`) and the Monitor instance are static, so
+repeated calls with the same configuration — every stage of a
+boltzmann ladder, retuned bridge coefficients included — reuse one XLA
+executable. Memory caveat: training a MAF-style flow (NSF/NCSF) in its
+NON-native direction, or a CNF with `exact=True`, keeps large autodiff
+residuals per step; pass `checkpoint=True` to rematerialize the loss
+forward pass during the backward (more compute, much less memory).
 """
 
 from __future__ import annotations
@@ -83,6 +92,7 @@ class Monitor:
         )
 
 
+@eqx.filter_jit
 def train_reverse_KL(
     x_valid: Array,
     source: Potential,
@@ -95,6 +105,8 @@ def train_reverse_KL(
     mc_step: float,
     mc_iters: int,
     monitor: Monitor | None = None,
+    seed: int | Array = 0,
+    checkpoint: bool = False,
 ) -> tuple[Flow, Array]:
     """
     Single-stage reverse KL training of a flow on a fixed source set:
@@ -103,13 +115,18 @@ def train_reverse_KL(
     ESS history.
 
     Every Adam iteration draws a fresh `n_batch`-sized subset of
-    `x_valid` (without replacement) and freshens it with `mc_iters`
-    Langevin steps at the source potential before the gradient step.
-    Deterministic (no PRNG key): the per-step subsampling and
-    rejuvenation keys are derived internally from a fixed seed. The
-    loop runs under a single `lax.scan`, so the whole call compiles
-    once; the flow is differentiated in its native direction only (see
-    `reverse_KL`), and the update touches only the flow's array leaves.
+    `x_valid` (without replacement; note the draw sorts the full pool
+    per step — at pools beyond ~1e6 prefer an external batching scheme)
+    and freshens it with `mc_iters` Langevin steps at the source
+    potential before the gradient step. Deterministic: the per-step
+    keys derive from this driver's own base stream folded with `seed`
+    (distinct base streams per driver — no cross-driver collisions);
+    pass distinct `seed` values (a traced array avoids recompilation)
+    to decorrelate repeated runs. The loop runs under a single
+    `lax.scan` and the call is `filter_jit`-compiled, so one XLA
+    executable serves all same-configuration calls; the flow is
+    differentiated in its native direction only (see `reverse_KL`), and
+    the update touches only the flow's array leaves.
 
     The ESS history is the flow-proposal importance-sampling ESS of
     each step's rejuvenated batch (computed from the per-sample losses
@@ -129,6 +146,12 @@ def train_reverse_KL(
         mc_iters: int            Langevin rejuvenation steps per batch
         monitor:  Monitor        optional live status reporter (step, loss,
                                  batch ESS every `monitor.every` steps)
+        seed:     int | Array    extra fold into the internal PRNG stream
+                                 (default 0; pass a traced array to avoid
+                                 recompilation across many seeds)
+        checkpoint: bool         rematerialize the loss forward pass in the
+                                 backward (jax.checkpoint) — use for CNF
+                                 exact-trace or non-native-direction training
     Output:
         flow: Flow          the trained flow
         ess:  Array [steps] per-step batch ESS (before that step's update)
@@ -136,7 +159,7 @@ def train_reverse_KL(
     if type not in ("F", "G"):
         raise ValueError(f"train_reverse_KL: type must be 'F' or 'G', got {type!r}")
 
-    key = jax.random.key(0)  # fixed internal seed (deterministic interface)
+    key = jax.random.fold_in(jax.random.key(1), seed)  # driver-specific base stream
     N = x_valid.shape[0]
     params, static = eqx.partition(flow, eqx.is_inexact_array)
     m0 = jax.tree.map(jnp.zeros_like, params)
@@ -152,15 +175,15 @@ def train_reverse_KL(
             losses = reverse_KL(x, target, eqx.combine(p, static), type)
             return losses.mean(), losses
 
-        (loss, losses), grads = jax.value_and_grad(loss_fn, has_aux=True)(params)
+        loss_eval = jax.checkpoint(loss_fn) if checkpoint else loss_fn
+        (loss, losses), grads = jax.value_and_grad(loss_eval, has_aux=True)(params)
         ess = compute_ESS_log(source(x) - losses)  # log w = -target(y) + source(x) + ladj
         if monitor is not None:
             monitor.report(t, loss, ess)
-        t_f = t.astype(x_valid.dtype)  # bias-correction exponent
         m = jax.tree.map(lambda m_, g: _BETA1 * m_ + (1 - _BETA1) * g, m, grads)
         v = jax.tree.map(lambda v_, g: _BETA2 * v_ + (1 - _BETA2) * g * g, v, grads)
-        m_hat = jax.tree.map(lambda a: a / (1 - _BETA1**t_f), m)
-        v_hat = jax.tree.map(lambda a: a / (1 - _BETA2**t_f), v)
+        m_hat = jax.tree.map(lambda a: a / (1 - _BETA1 ** t.astype(a.dtype)), m)
+        v_hat = jax.tree.map(lambda a: a / (1 - _BETA2 ** t.astype(a.dtype)), v)
         params = jax.tree.map(
             lambda p, mh, vh: p - lr * mh / (jnp.sqrt(vh) + _EPS), params, m_hat, v_hat
         )
@@ -171,6 +194,7 @@ def train_reverse_KL(
     return eqx.combine(params, static), ess
 
 
+@eqx.filter_jit
 def train_forward_KL(
     x_valid: Array,
     source: Potential,
@@ -184,6 +208,8 @@ def train_forward_KL(
     mc_step: float,
     mc_iters: int,
     monitor: Monitor | None = None,
+    seed: int | Array = 0,
+    checkpoint: bool = False,
 ) -> tuple[Flow, Array]:
     """
     Single-stage forward KL training of a flow on a fixed source set:
@@ -201,9 +227,13 @@ def train_forward_KL(
     per-step keys are derived internally from a fixed seed. The loop
     runs under a single `lax.scan`, so the whole call compiles once.
 
-    The ESS history is the flow-proposal importance-sampling ESS of
-    each step's manufactured batch (computed from the per-sample losses
-    at no extra flow evaluations: log w = -target(y) + loss).
+    The ESS history evaluates the flow-vs-target overlap on each
+    step's manufactured batch (log w = -target(y) + loss, at no extra
+    flow evaluations). Since y is (approximately) target-distributed,
+    this is the reverse-direction chi^2 overlap — in (0, 1], equal to 1
+    iff proposal == target, a valid convergence monitor — but its value
+    is not numerically comparable to the proposal-side
+    `importance_weights` -> `compute_ESS` on the same flow.
 
     Input:
         x_valid:  Array [N, d]   fixed set of source samples
@@ -220,6 +250,10 @@ def train_forward_KL(
         mc_iters: int            Langevin rejuvenation steps per rung
         monitor:  Monitor        optional live status reporter (step, loss,
                                  batch ESS every `monitor.every` steps)
+        seed:     int | Array    extra fold into the internal PRNG stream
+                                 (default 0; traced array avoids recompiles)
+        checkpoint: bool         rematerialize the loss forward pass in the
+                                 backward (jax.checkpoint)
     Output:
         flow: Flow          the trained flow
         ess:  Array [steps] per-step batch ESS (before that step's update)
@@ -227,7 +261,7 @@ def train_forward_KL(
     if type not in ("F", "G"):
         raise ValueError(f"train_forward_KL: type must be 'F' or 'G', got {type!r}")
 
-    key = jax.random.key(0)  # fixed internal seed (deterministic interface)
+    key = jax.random.fold_in(jax.random.key(2), seed)  # driver-specific base stream
     N = x_valid.shape[0]
     params, static = eqx.partition(flow, eqx.is_inexact_array)
     m0 = jax.tree.map(jnp.zeros_like, params)
@@ -246,15 +280,15 @@ def train_forward_KL(
             losses = forward_KL(y, source, eqx.combine(p, static), type)
             return losses.mean(), losses
 
-        (loss, losses), grads = jax.value_and_grad(loss_fn, has_aux=True)(params)
+        loss_eval = jax.checkpoint(loss_fn) if checkpoint else loss_fn
+        (loss, losses), grads = jax.value_and_grad(loss_eval, has_aux=True)(params)
         ess = compute_ESS_log(-target(y) + losses)  # log w = -target(y) + source(x) + ladj
         if monitor is not None:
             monitor.report(t, loss, ess)
-        t_f = t.astype(x_valid.dtype)  # bias-correction exponent
         m = jax.tree.map(lambda m_, g: _BETA1 * m_ + (1 - _BETA1) * g, m, grads)
         v = jax.tree.map(lambda v_, g: _BETA2 * v_ + (1 - _BETA2) * g * g, v, grads)
-        m_hat = jax.tree.map(lambda a: a / (1 - _BETA1**t_f), m)
-        v_hat = jax.tree.map(lambda a: a / (1 - _BETA2**t_f), v)
+        m_hat = jax.tree.map(lambda a: a / (1 - _BETA1 ** t.astype(a.dtype)), m)
+        v_hat = jax.tree.map(lambda a: a / (1 - _BETA2 ** t.astype(a.dtype)), v)
         params = jax.tree.map(
             lambda p, mh, vh: p - lr * mh / (jnp.sqrt(vh) + _EPS), params, m_hat, v_hat
         )
@@ -263,6 +297,21 @@ def train_forward_KL(
     ts = jnp.arange(1, steps + 1)  # traced step counter (per-step keys + bias correction)
     (params, _, _), ess = lax.scan(body, (params, m0, v0), ts)
     return eqx.combine(params, static), ess
+
+
+_iw_log_jit = eqx.filter_jit(importance_weights_log)
+
+
+@eqx.filter_jit
+def _bg_advance(key_res, key_mc, y, log_w, flow, type, u_k, mc_step, mc_iters, chunk):
+    """Stage advance: push the particle set through the increment (chunked),
+    reweight by the stage log-weights, resample, Langevin-freshen at U_k."""
+    push = flow.__call__ if type == "F" else flow.inv
+    y_push = jnp.concatenate(
+        [push(c) for c in jnp.array_split(y, chunk, axis=0)], axis=0
+    )
+    y_new = resample(key_res, y_push, jnp.exp(log_w - log_w.max()))
+    return langevin(key_mc, y_new, u_k, step=mc_step, iters=mc_iters, chunk=chunk)
 
 
 _BG_DEFAULTS = {
@@ -289,6 +338,8 @@ def boltzmann_reverse_KL(
     mc_iters: int,
     monitor: Monitor | None = None,
     bg_param: dict | None = None,
+    chunk: int = 1,
+    checkpoint: bool = False,
 ) -> tuple[Flow, Array, list[dict]]:
     """
     Annealed Boltzmann generator on the reverse KL, as in the zflows
@@ -325,9 +376,12 @@ def boltzmann_reverse_KL(
     the largest deformation), thereafter extrapolates as
     t_init = min(t_prev + enlarge_factor (t_prev - t_pprev), 1), snapped
     to 1 when within `t_tol`. Every bridge shares one pytree structure
-    (`linear_combination([target, source], [t, 1 - t])`), so a single
-    compilation of the packed trainer serves the whole ladder.
-    Deterministic (no PRNG key), like the stage trainer it wraps.
+    (`linear_combination([target, source], [t, 1 - t])`) and the stage
+    trainer, weight evaluation, and advance are `filter_jit`-compiled,
+    so a single compilation of each serves the whole ladder.
+    Deterministic (no PRNG key): the ladder uses its own base stream,
+    and every stage attempt threads a distinct seed into the trainer,
+    so retries and stages explore fresh randomness.
 
     Both processes are monitored: the per-step training status streams
     through `monitor` (loss + batch ESS from inside the compiled loop),
@@ -353,6 +407,14 @@ def boltzmann_reverse_KL(
         bg_param: dict           overrides of the ladder parameters
                                  {t_safe, shrink_factor, enlarge_factor,
                                  tau, t_tol, max_stages, max_retry}
+        chunk:    int            split the full-set stage operations (weights,
+                                 push, Langevin) into this many chunks to
+                                 bound peak memory at large N or deep flows
+        checkpoint: bool         forwarded to the stage trainer: rematerialize
+                                 the loss forward pass in the backward
+                                 (jax.checkpoint) — worthwhile for deep flows,
+                                 CNF exact-trace, or non-native-direction
+                                 training
     Output:
         flow:   Flow         the LAST incremental map (mu_{t_{K-1}} -> target;
                              == stages[-1]["flow"]). The generator's sample
@@ -378,7 +440,7 @@ def boltzmann_reverse_KL(
         raise ValueError(f"boltzmann_reverse_KL: invalid bg_param {p!r}")
 
     status = monitor.printer if monitor is not None else print
-    key = jax.random.key(0)  # fixed internal seed (deterministic interface)
+    key = jax.random.key(3)  # the ladder's own base stream (distinct from the trainers)
 
     y = x_valid                        # particle set at t = 0 (= mu_0)
     stages: list[dict] = []
@@ -399,10 +461,13 @@ def boltzmann_reverse_KL(
             u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
             status(f"[stage {k}] t={t_prev:.4f} -> {t_k:.4f} "
                    f"(attempt {attempt}/{p['max_retry']}) training the increment ...")
+            seed = jnp.uint32(k * p["max_retry"] + attempt)  # fresh stream per attempt
             cand, _ = train_reverse_KL(y, u_prev, u_k, flow, type,
-                                       n_batch, steps, lr, mc_step, mc_iters, monitor)
-            log_w = importance_weights_log(y, u_prev, u_k, cand, type)
+                                       n_batch, steps, lr, mc_step, mc_iters, monitor,
+                                       seed=seed, checkpoint=checkpoint)
+            log_w = _iw_log_jit(y, u_prev, u_k, cand, type, chunk=chunk)
             ess_k = float(compute_ESS_log(log_w))
+            jax.effects_barrier()  # keep monitor lines ahead of the stage status
             status(f"[stage {k}] t={t_k:.4f} validation: incremental ESS = {ess_k:.3f} "
                    f"(tau = {p['tau']:.2f})")
             if ess_k >= p["tau"]:
@@ -418,9 +483,9 @@ def boltzmann_reverse_KL(
         # advance the particle set: push through the increment, reweight,
         # resample, and freshen with (unadjusted) Langevin at U_{t_k}
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
-        y_push = flow(y) if type == "F" else flow.inv(y)
-        y = resample(key_res, y_push, jnp.exp(log_w - log_w.max()))
-        y = langevin(key_mc, y, u_k, step=mc_step, iters=mc_iters)
+        y = _bg_advance(key_res, key_mc, y, log_w, flow, type, u_k,
+                        mc_step, mc_iters, chunk)
+        y = jax.block_until_ready(y)   # errors surface at THIS stage, not the next
         stages.append({"t": t_k, "ess": ess_k, "flow": flow})
         status(f"[stage {k}] t={t_k:.4f} ACCEPTED (attempt {attempt}): "
                f"stage flow saved; particle set advanced")

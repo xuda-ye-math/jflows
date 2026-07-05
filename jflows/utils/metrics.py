@@ -173,7 +173,7 @@ def compute_ESS_log(log_weights: Array) -> Array:
 # coverage — k-NN mode-collapse diagnostic
 # ──────────────────────────────────────────────────────────────────────
 
-def coverage(y: Array, x: Array, k: int = 5) -> Array:
+def coverage(y: Array, x: Array, k: int = 5, chunk: int = 1) -> Array:
     """
     Coverage metric (Naeem et al., 2020): the fraction of reference
     points x_i whose k-NN ball (radius = distance to the k-th nearest
@@ -188,20 +188,33 @@ def coverage(y: Array, x: Array, k: int = 5) -> Array:
     reached), whereas coverage against a wide-coverage reference set
     exposes the missing mode directly.
 
-    Memory: builds the [P, P] and [P, N] distance matrices — O(P(P+N)).
+    Memory: squared distances are computed in [P/chunk, P] and
+    [P/chunk, N] blocks from dot products — the [P, P, d] broadcast is
+    never formed. Peak memory is O(P (P + N) / chunk); raise `chunk`
+    for large sample sets (e.g. chunk >= P N / 1e8 at float32).
     Input:
         y: Array [N, d]   candidate samples (e.g. the flow's pushforward)
         x: Array [P, d]   reference samples (e.g. a wide-coverage measure)
         k: int            neighborhood order (default 5)
+        chunk: int        split the reference set into this many row blocks
     Output:
         coverage: Array (scalar in [0, 1])
     """
-    P = x.shape[0]
-    dxx = jnp.linalg.norm(x[:, None, :] - x[None, :, :], axis=-1)
-    dxx = dxx.at[jnp.arange(P), jnp.arange(P)].set(jnp.inf)
-    nnd_k = jnp.sort(dxx, axis=1)[:, k - 1]                 # [P]: distance to k-th nearest neighbor in x
-    dxy = jnp.linalg.norm(x[:, None, :] - y[None, :, :], axis=-1)  # [P, N]
-    return (dxy < nnd_k[:, None]).any(axis=1).mean()
+    x2 = (x * x).sum(axis=-1)                                   # [P]
+    y2 = (y * y).sum(axis=-1)                                   # [N]
+    covered = []
+    offset = 0
+    for xc in jnp.array_split(x, chunk, axis=0):
+        c = xc.shape[0]
+        xc2 = (xc * xc).sum(axis=-1)
+        dxx2 = xc2[:, None] - 2.0 * (xc @ x.T) + x2[None, :]    # [c, P] squared distances
+        rows = jnp.arange(c)
+        dxx2 = dxx2.at[rows, offset + rows].set(jnp.inf)        # mask self-distance
+        nnd2 = -jax.lax.top_k(-dxx2, k)[0][:, k - 1]            # squared k-NN radius within x
+        dxy2 = xc2[:, None] - 2.0 * (xc @ y.T) + y2[None, :]    # [c, N]
+        covered.append((dxy2 < nnd2[:, None]).any(axis=1))
+        offset += c
+    return jnp.concatenate(covered).mean()
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -228,4 +241,5 @@ def resample(key: Array, samples: Array, weights: Array, N: int | None = None) -
     cdf = jnp.cumsum(weights)
     u = jax.random.uniform(key, (N,), dtype=cdf.dtype) * cdf[-1]
     idx = jnp.searchsorted(cdf, u, side="right")
+    idx = jnp.minimum(idx, weights.shape[0] - 1)  # u can round up to cdf[-1]
     return samples[idx]

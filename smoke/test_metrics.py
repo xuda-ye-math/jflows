@@ -175,6 +175,8 @@ def main() -> None:
         d_i = sorted(float(np.linalg.norm(xs_[i] - xs_[j])) for j in range(32) if j != i)
         r_i = d_i[k_ - 1]
         covered += int(any(float(np.linalg.norm(xs_[i] - ys_[n])) < r_i for n in range(48)))
+    check("chunk invariance (chunk=3)", coverage(yc, xr, k=5, chunk=3),
+          coverage(yc, xr, k=5), tol=1e-12)
     check("brute-force agreement", coverage(jnp.asarray(ys_), jnp.asarray(xs_), k=k_),
           np.asarray(covered / 32), tol=1e-12)
 

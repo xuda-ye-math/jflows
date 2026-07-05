@@ -398,6 +398,9 @@ class Nlog_Gaussian_Mixture(Potential):
     components. The unnormalized density is
         mu(x) propto sum_k w_k * N(x | mean_k, diag(variance_k)),
     and the potential U(x) = -log mu(x) (up to an additive constant).
+    
+    Memory: each energy/gradient evaluation materializes an
+    [N, K, d] difference tensor (chunk the batch externally at large K).
     """
 
     log_weights: Array

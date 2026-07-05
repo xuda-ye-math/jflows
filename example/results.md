@@ -19,8 +19,8 @@ Both trainers regenerate their batch inside every Adam step. The reverse KL flow
 
 | objective | final ESS ($N = 40000$) | batch ESS along training |
 | --------- | :---: | :---: |
-| reverse KL | 0.9254 | 0.18 → 0.78 → 0.93 |
-| forward KL | 0.9508 | 0.75 → 0.96 → 0.98 |
+| reverse KL | 0.9324 | 0.19 → 0.83 → 0.93 |
+| forward KL | 0.9500 | 0.74 → 0.97 → 0.96 |
 
 <p align="center"><img src="2D_single.png" alt="2D single-stage training" width="1000px"></p>
 
@@ -47,12 +47,12 @@ The 4D two-charge target of zflows' `tests/4D_Boltzmann_generator.py`, sampled b
 
 ### Results
 
-The adaptive ladder reaches $t = 1$ in five stages, every stage accepted on its first attempt, in 17.2 s end to end on the full 120000-particle set:
+The adaptive ladder reaches $t = 1$ in five stages, every stage accepted on its first attempt, in 7.7 s end to end on the full 120000-particle set (the stage trainer, weight evaluation, and advance each compile once and are reused across all stages):
 
 | stage $k$ | 1 | 2 | 3 | 4 | 5 |
 | --------- | :---: | :---: | :---: | :---: | :---: |
 | $t_k$     | 0.10 | 0.25 | 0.475 | 0.8125 | 1.0 |
-| ESS       | 0.735 | 0.925 | 0.951 | 0.974 | 0.991 |
+| ESS       | 0.808 | 0.849 | 0.946 | 0.974 | 0.992 |
 
 <p align="center"><img src="4D_Boltzmann_generator.png" alt="4D Boltzmann generator" width="1000px"></p>
 
