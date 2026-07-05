@@ -77,6 +77,7 @@ def check_true(name: str, cond: bool, detail: str = "") -> None:
 
 
 def main() -> None:
+    open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START test_linear_combination | jax {jax.__version__} | {jax.default_backend()}")
 
     u0 = Nlog_Uniform([-BOX, -BOX], [BOX, BOX])

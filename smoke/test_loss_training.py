@@ -114,6 +114,7 @@ def train(name: str, flow, sample_fn, seed: int) -> np.ndarray:
 
 
 def main() -> None:
+    open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START test_loss_training | jax {jax.__version__} | {jax.default_backend()}")
     kf = jax.random.key(0)
     k1, k2, k3, k4 = jax.random.split(kf, 4)

@@ -79,6 +79,7 @@ def max_param_delta(flow_a, flow_b) -> float:
 
 
 def main() -> None:
+    open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START test_train | jax {jax.__version__} | {jax.default_backend()}")
     check_true("running on GPU", jax.default_backend() == "gpu",
                f"backend = {jax.default_backend()}")

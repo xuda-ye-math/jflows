@@ -103,6 +103,7 @@ def new_flow(key):
 
 
 def main() -> None:
+    open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START 2D_single | jax {jax.__version__} | backend {jax.default_backend()} | "
         f"N_VALID={N_VALID} N_BATCH={N_BATCH} STEPS={STEPS} LR={LR} "
         f"MC={MC_STEP}x{MC_ITERS}")

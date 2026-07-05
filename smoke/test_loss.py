@@ -69,6 +69,7 @@ def check_true(name: str, cond: bool, detail: str = "") -> None:
 
 def main() -> None:
     global FAILURES
+    open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START test_loss | jax {jax.__version__} | {jax.default_backend()}")
     key = jax.random.key(0)
     N = 16

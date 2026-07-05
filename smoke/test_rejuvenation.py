@@ -88,6 +88,7 @@ def check_moments(name: str, x, mean_tol: float, var_rtol: float) -> None:
 
 
 def main() -> None:
+    open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START test_rejuvenation | jax {jax.__version__} | {jax.default_backend()}")
     key = jax.random.key(0)
     N = 4096

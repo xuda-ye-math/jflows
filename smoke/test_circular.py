@@ -80,6 +80,7 @@ def wrap(x, B=PI):
 
 def main() -> None:
     global FAILURES
+    open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START test_circular | jax {jax.__version__} | {jax.default_backend()}")
     key = jax.random.key(0)
     K = 8

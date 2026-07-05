@@ -210,7 +210,11 @@ def coverage(y: Array, x: Array, k: int = 5) -> Array:
 
 def resample(key: Array, samples: Array, weights: Array, N: int | None = None) -> Array:
     """
-    Multinomial resampling from weighted distribution with replacement.
+    Multinomial resampling from weighted distribution with replacement,
+    drawn by inverse-CDF search: cumulative sum of the weights, N
+    uniform draws, `searchsorted`. Memory is O(M + N) — safe at large
+    particle counts (a categorical draw would materialize an [N, M]
+    Gumbel matrix, which explodes at N = M ~ 1e5).
     Input:
         key:     PRNG key
         samples: Array [M, d]
@@ -221,5 +225,7 @@ def resample(key: Array, samples: Array, weights: Array, N: int | None = None) -
     """
     if N is None:
         N = samples.shape[0]
-    idx = jax.random.categorical(key, jnp.log(weights), shape=(N,))
+    cdf = jnp.cumsum(weights)
+    u = jax.random.uniform(key, (N,), dtype=cdf.dtype) * cdf[-1]
+    idx = jnp.searchsorted(cdf, u, side="right")
     return samples[idx]

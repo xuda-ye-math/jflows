@@ -5,3 +5,4 @@ __pycache__/
 *.pth
 *.pt
 parity_check/
+PLAN.md
