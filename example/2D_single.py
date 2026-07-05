@@ -48,7 +48,7 @@ plt.rcParams.update({
 
 from jflows.flow import NSF
 from jflows.potential import Nlog_Gaussian, Nlog_Gaussian_Mixture
-from jflows.train import train_forward_KL, train_reverse_KL
+from jflows.train import Monitor, train_forward_KL, train_reverse_KL
 from jflows.utils import compute_ESS, importance_weights
 
 HERE = Path(__file__).resolve().parent
@@ -69,6 +69,7 @@ N_VALID: int = 40000   # the fixed source set (training pool + final ESS evaluat
 N_BATCH: int = 2000    # batch drawn from the fixed set per Adam step
 STEPS: int = 200       # Adam steps (one compiled call per method)
 LR: float = 1e-3       # Adam learning rate
+MONITOR_EVERY: int = 10  # print loss + batch ESS every MONITOR_EVERY steps
 
 # Langevin rejuvenation (reverse KL batches + the single-rung AIS)
 LADDER: int = 1        # one reweight + resample + rejuvenation hop
@@ -110,14 +111,16 @@ def main() -> None:
     log("[reverse KL] training (packed single stage) ...")
     flow_F, hist_F = train_reverse_KL(x_valid, u0, u1, new_flow(jax.random.key(0)),
                                       type="F", n_batch=N_BATCH, steps=STEPS, lr=LR,
-                                      mc_step=MC_STEP, mc_iters=MC_ITERS)
+                                      mc_step=MC_STEP, mc_iters=MC_ITERS,
+                                      monitor=Monitor(MONITOR_EVERY, "[reverse KL] ", log))
     log(f"[reverse KL] {STEPS} steps done   batch ESS "
         f"{float(hist_F[0]):.3f} -> {float(hist_F[STEPS // 2]):.3f} -> {float(hist_F[-1]):.3f}")
 
     log("[forward KL] training (packed single stage) ...")
     flow_G, hist_G = train_forward_KL(x_valid, u0, u1, new_flow(jax.random.key(1)),
                                       type="G", n_batch=N_BATCH, steps=STEPS, lr=LR,
-                                      ladder=LADDER, mc_step=MC_STEP, mc_iters=MC_ITERS)
+                                      ladder=LADDER, mc_step=MC_STEP, mc_iters=MC_ITERS,
+                                      monitor=Monitor(MONITOR_EVERY, "[forward KL] ", log))
     log(f"[forward KL] {STEPS} steps done   batch ESS "
         f"{float(hist_G[0]):.3f} -> {float(hist_G[STEPS // 2]):.3f} -> {float(hist_G[-1]):.3f}")
 
@@ -146,6 +149,7 @@ def main() -> None:
     axes[0].plot(steps_axis, np.asarray(hist_G), color="#D62728", lw=1.2, label="forward KL")
     axes[0].set_xlabel("step")
     axes[0].set_ylabel("ESS")
+    axes[0].set_xlim(0, STEPS)
     axes[0].set_ylim(0.0, 1.0)
     axes[0].set_title("batch ESS history")
     axes[0].legend(loc="lower right")

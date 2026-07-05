@@ -18,6 +18,8 @@ Public API:
                        source batch at the source potential
     train_forward_KL — forward KL; each step manufactures its target
                        batch by AIS through the CURRENT flow
+    Monitor          — live training-status reporter (loss + batch ESS
+                       every `every` steps, from inside the compiled loop)
 """
 
 from __future__ import annotations
@@ -35,9 +37,46 @@ from .utils.metrics import compute_ESS_log
 from .utils.rejuvenation import langevin
 
 
-__all__ = ["train_forward_KL", "train_reverse_KL"]
+__all__ = ["Monitor", "train_forward_KL", "train_reverse_KL"]
 
 _BETA1, _BETA2, _EPS = 0.9, 0.999, 1e-8
+
+
+class Monitor:
+    """
+    Live training-status monitor for the packed train_* drivers.
+
+    Reports the Adam step, the mean loss, and the batch ESS every
+    `every` steps through `printer`. The drivers invoke it inside the
+    compiled `lax.scan` via `jax.debug.callback`, so the status appears
+    WHILE the packed call is running (the non-reporting steps skip the
+    callback entirely via `lax.cond`).
+
+    Input:
+        every:   int        report every `every` Adam steps (e.g. 10)
+        prefix:  str        line prefix, e.g. '[reverse KL] ' (default '')
+        printer: callable   line consumer (default print; pass a log
+                            function to also write a status file)
+    """
+
+    def __init__(self, every: int, prefix: str = "", printer=print):
+        if every < 1:
+            raise ValueError(f"Monitor: every must be a positive int, got {every!r}")
+        self.every = int(every)
+        self.prefix = prefix
+        self.printer = printer
+
+    def _emit(self, t, loss, ess) -> None:
+        self.printer(f"{self.prefix}step {int(t):>5d}   "
+                     f"loss = {float(loss):+.4e}   ESS = {float(ess):.4f}")
+
+    def report(self, t: Array, loss: Array, ess: Array) -> None:
+        """Called by the drivers inside the scan body (traced values)."""
+        lax.cond(
+            t % self.every == 0,
+            lambda: jax.debug.callback(self._emit, t, loss, ess),
+            lambda: None,
+        )
 
 
 def train_reverse_KL(
@@ -51,6 +90,7 @@ def train_reverse_KL(
     lr: float,
     mc_step: float,
     mc_iters: int,
+    monitor: Monitor | None = None,
 ) -> tuple[Flow, Array]:
     """
     Single-stage reverse KL training of a flow on a fixed source set:
@@ -83,6 +123,8 @@ def train_reverse_KL(
         lr:       float          Adam learning rate
         mc_step:  float          Langevin rejuvenation step size
         mc_iters: int            Langevin rejuvenation steps per batch
+        monitor:  Monitor        optional live status reporter (step, loss,
+                                 batch ESS every `monitor.every` steps)
     Output:
         flow: Flow          the trained flow
         ess:  Array [steps] per-step batch ESS (before that step's update)
@@ -106,8 +148,10 @@ def train_reverse_KL(
             losses = reverse_KL(x, target, eqx.combine(p, static), type)
             return losses.mean(), losses
 
-        (_, losses), grads = jax.value_and_grad(loss_fn, has_aux=True)(params)
+        (loss, losses), grads = jax.value_and_grad(loss_fn, has_aux=True)(params)
         ess = compute_ESS_log(source(x) - losses)  # log w = -target(y) + source(x) + ladj
+        if monitor is not None:
+            monitor.report(t, loss, ess)
         t_f = t.astype(x_valid.dtype)  # bias-correction exponent
         m = jax.tree.map(lambda m_, g: _BETA1 * m_ + (1 - _BETA1) * g, m, grads)
         v = jax.tree.map(lambda v_, g: _BETA2 * v_ + (1 - _BETA2) * g * g, v, grads)
@@ -135,6 +179,7 @@ def train_forward_KL(
     ladder: int,
     mc_step: float,
     mc_iters: int,
+    monitor: Monitor | None = None,
 ) -> tuple[Flow, Array]:
     """
     Single-stage forward KL training of a flow on a fixed source set:
@@ -169,6 +214,8 @@ def train_forward_KL(
         ladder:   int            AIS rungs per manufactured batch
         mc_step:  float          Langevin rejuvenation step size
         mc_iters: int            Langevin rejuvenation steps per rung
+        monitor:  Monitor        optional live status reporter (step, loss,
+                                 batch ESS every `monitor.every` steps)
     Output:
         flow: Flow          the trained flow
         ess:  Array [steps] per-step batch ESS (before that step's update)
@@ -195,8 +242,10 @@ def train_forward_KL(
             losses = forward_KL(y, source, eqx.combine(p, static), type)
             return losses.mean(), losses
 
-        (_, losses), grads = jax.value_and_grad(loss_fn, has_aux=True)(params)
+        (loss, losses), grads = jax.value_and_grad(loss_fn, has_aux=True)(params)
         ess = compute_ESS_log(-target(y) + losses)  # log w = -target(y) + source(x) + ladj
+        if monitor is not None:
+            monitor.report(t, loss, ess)
         t_f = t.astype(x_valid.dtype)  # bias-correction exponent
         m = jax.tree.map(lambda m_, g: _BETA1 * m_ + (1 - _BETA1) * g, m, grads)
         v = jax.tree.map(lambda v_, g: _BETA2 * v_ + (1 - _BETA2) * g * g, v, grads)
