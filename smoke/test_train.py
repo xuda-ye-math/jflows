@@ -7,7 +7,8 @@ For train_reverse_KL / train_forward_KL / Monitor:
     2. train_reverse_KL: returns (Flow, ess[steps]); the mean loss on
        the fixed set decreases; the batch-ESS history lies in (0, 1]
        and rises; the final full-set flow-IS ESS clears a sane floor;
-       deterministic (two identical calls agree bit-for-bit);
+       deterministic (two identical calls agree bit-for-bit); the
+       mc_adjust=True (MALA) path trains to finite parameters;
     3. train_forward_KL: same contract with the target batches
        manufactured internally by single-rung AIS through the CURRENT
        flow;
@@ -118,6 +119,12 @@ def main() -> None:
                                   n_batch=N_BATCH, steps=STEPS, lr=LR,
                                   mc_step=MC_STEP, mc_iters=MC_ITERS)
     check("deterministic (same call twice)", max_param_delta(flow_F, flow_F2), 0.0, tol=0)
+    flow_A, _ = train_reverse_KL(x_valid, u0, u1, f0, type="F",
+                                 n_batch=N_BATCH, steps=20, lr=LR,
+                                 mc_step=MC_STEP, mc_iters=MC_ITERS, mc_adjust=True)
+    check_true("mc_adjust=True (MALA) trains finite",
+               bool(all(jnp.isfinite(x).all() for x in jax.tree.leaves(flow_A)
+                        if hasattr(x, "dtype") and jnp.issubdtype(x.dtype, jnp.floating))))
 
     # ── train_forward_KL ──
     log("train_forward_KL")

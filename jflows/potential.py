@@ -117,7 +117,7 @@ class Potential(eqx.Module):
 # Functional wrappers — turn a plain callable into a Potential instance
 # ──────────────────────────────────────────────────────────────────────
 
-class _FunctionPotential(Potential):
+class _Function_Potential(Potential):
     fn: Callable[[Array], Array] = eqx.field(static=True)
 
     def __call__(self, x: Array) -> Array:
@@ -144,7 +144,7 @@ def potential_from(fn: Callable[[Array], Array]) -> Potential:
     For potentials that carry state (physical constants, arrays, …),
     subclass `Potential` directly instead.
     """
-    return _FunctionPotential(fn)
+    return _Function_Potential(fn)
 
 
 # ──────────────────────────────────────────────────────────────────────

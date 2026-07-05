@@ -8,7 +8,7 @@ JAX normalizing flows for unconditional energy-based sampling and Boltzmann gene
 
 ## Features
 
-**Flexible flow classes and hyperparameters, one unified interface.** Five flow classes are supported — **NSF** (Neural Spline Flow), **NCSF** (Neural *Circular* Spline Flow, for periodic / angular domains), **CNF** (Continuous Normalizing Flow / FFJORD), **OTFlow** (optimal-transport continuous flow with a closed-form trace), and **RealNVP** (closed-form affine-coupling bijection on $\mathbb R^d$) — with the constructors
+**NSF and NCSF are the first-class models.** The **NSF** (Neural Spline Flow, on a box $[a, b]^d$) and the **NCSF** (Neural *Circular* Spline Flow, on the torus — the periodic domains of molecular angles) carry the energy-based workflows this package is built for; **CNF** (FFJORD), **OTFlow** (closed-form-trace continuous flow), and **RealNVP** (closed-form affine coupling) round out the family under one unified interface:
 
 ```python
 import jax
@@ -66,17 +66,18 @@ u = linear_combination([u0, u1], [1.0 - c, c])   # U = (1-c) U0 + c U1
 
 Coefficients are a plain array leaf, so retuning `c` along an annealing ladder never triggers recompilation.
 
-**Per-sample KL losses with one `type` argument.** `reverse_KL` and `forward_KL` take the flow and dispatch on `type`: `'F'` when the flow maps source → target, `'G'` when it maps target → source (the flow is differentiated in its native direction only — no inverse map in training). Every loss returns the full per-sample vector, shape `[N]`, for post-hoc reweighting / clipping; reduce with `.mean()`:
+**A strict interface hierarchy.** The API has two levels. The LOW level is the building blocks — per-sample losses and the SMC toolkit — for assembling custom pipelines. The HIGH level — the packed trainers and the annealed Boltzmann generator — composes those same blocks into one-call drivers. Everything below is organized in that order.
+
+**Low level: per-sample KL losses with one `type` argument.** `reverse_KL` and `forward_KL` take the flow and dispatch on `type`: `'F'` when the flow maps source → target, `'G'` when it maps target → source (the flow is differentiated in its native direction only — no inverse map in training). Every loss returns the full per-sample vector, shape `[N]`, for post-hoc reweighting / clipping; reduce with `.mean()`:
 
 ```python
-from jflows.loss import reverse_KL, forward_KL, OT_loss
+from jflows.loss import reverse_KL, forward_KL
 
 loss = reverse_KL(x, target, flow, type="F").mean()   # source samples x
 loss = forward_KL(y, source, flow, type="G").mean()   # target samples y
-loss = OT_loss(x, target, otflow, alpha_C=1.0, alpha_R=1.0).mean()   # OTFlow + OT regularizers
 ```
 
-**Packed training drivers.** `jflows.train` packs a whole training stage — Adam on the flow's parameters, the full step loop under one `lax.scan` — into a single compiled call that regenerates its batch *inside every Adam step* (the X-regularization data pipeline: no frozen batch is ever reused, so a fixed sample set does not get memorized):
+**High level: packed training drivers.** `jflows.train` packs a whole training stage — Adam on the flow's parameters, the full step loop under one `lax.scan` — into a single compiled call that regenerates its batch *inside every Adam step* (the X-regularization data pipeline: no frozen batch is ever reused, so a fixed sample set does not get memorized):
 
 ```python
 from jflows.train import train_reverse_KL, train_forward_KL, boltzmann_reverse_KL, Monitor
@@ -102,24 +103,24 @@ flow, ess = train_reverse_KL(..., monitor=Monitor(every=10, prefix="[reverse KL]
 # [reverse KL] step    20   loss = +3.7126e+00   ESS = 0.4879
 ```
 
-On top of the stage trainers, `boltzmann_reverse_KL` runs the full annealed
+**High level: the annealed Boltzmann generator.** On top of the stage trainers, `boltzmann_reverse_KL` runs the full annealed
 Boltzmann generator on the bridge ladder $U_t = (1-t)\,U_0 + t\,U_1$ with an
 ADAPTIVE coefficient: the stage flows are connected step by step — each stage
 trains the warm-started flow as the incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$
 on the advancing particle set, accepts on the incremental importance-sampling
 ESS (rejected stages shrink $t_k$ and retry with fresh randomness), and
-advances the set by reweight → resample → Langevin at $U_{t_k}$:
+advances the set by reweight → resample → Langevin at $U_{t_k}$ (MALA when `mc_adjust=True`):
 
 ```python
 from jflows.train import boltzmann_reverse_KL
 
-flow, y, stages = boltzmann_reverse_KL(
+y_valid, stages = boltzmann_reverse_KL(
     x_valid, source, target, flow, type="F",
     n_batch=2000, steps=500, lr=1e-4, mc_step=1e-3, mc_iters=100,
-    bg_param={"t_safe": 0.1, "shrink_factor": 0.7, "enlarge_factor": 1.5, "tau": 0.6},
+    bg_param={"t_safe": 0.1, "shrink_factor": 0.7, "enlarge_factor": 1.5, "tau_ess": 0.6},
 )
-# y      : the particle set at the target (the generator's sample output)
-# stages : per-stage records {"t", "ess", "flow"} — the saved incremental maps
+# y_valid : the advanced validation set at the target (the generator's sample output)
+# stages  : per-stage records {"t", "ess", "flow"} — the saved incremental maps
 ```
 
 The trainer, weight evaluation, and advance are `filter_jit`-compiled once for
@@ -127,7 +128,7 @@ the whole ladder (retuned bridge coefficients are array leaves, so no
 recompilation), and a `chunk` argument bounds the full-set stage operations at
 large particle counts.
 
-**SMC-style utilities with a two-level interface.** `jflows.utils` provides the *propose → reweight → resample → rejuvenate* building blocks, each at two levels: a packed loop for direct use and a per-step kernel for custom schedules:
+**Low level: the SMC toolkit.** `jflows.utils` provides the *propose → reweight → resample → rejuvenate* building blocks, each at two granularities — a packed loop for direct use and a per-step kernel for custom schedules:
 
 ```python
 from jflows.utils import (
@@ -247,7 +248,7 @@ python -m example.2D_single
 
 <p align="center"><img src="https://raw.githubusercontent.com/xuda-ye-math/jflows/main/example/2D_single.png" alt="2D single-stage training" width="1000px"></p>
 
-[`example/4D_boltzmann.py`](example/4D_boltzmann.py) runs `boltzmann_reverse_KL` on the 4D two-charge target of the zflows reference test — two particles on a soft annulus with regularized Coulomb repulsion — where a direct flow proposal has ESS ~ 0. The adaptive ladder reaches $t = 1$ in five first-attempt stages:
+[`example/4D_boltzmann.py`](example/4D_boltzmann.py) runs `boltzmann_reverse_KL` on the 4D two-charge target of the zflows reference test — two particles on a soft annulus with regularized Coulomb repulsion — where a direct flow proposal has ESS ~ 0. The adaptive ladder reaches $t = 1$ in four stages (the safe start is rejected once and shrunk before stage 1 passes):
 
 ```bash
 python -m example.4D_boltzmann

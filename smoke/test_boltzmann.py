@@ -6,17 +6,20 @@ For boltzmann_reverse_KL (the adaptive-ladder annealed BG):
     1. backend: the test runs directly on the GPU;
     2. ladder contract on a multimodal 2D target: at least one stage,
        coefficients strictly increasing and ending exactly at t = 1,
-       every accepted stage clears the ESS threshold tau;
+       every accepted stage clears the ESS threshold tau_ess;
     3. per-stage records: each stage saves its incremental flow (a
        Flow instance) and its ESS — no per-stage particle sets; the
-       last saved flow is bit-identical to the returned flow;
+       trained maps are returned ONLY through the stage records;
     4. final output: the advanced particle set has the full sample
        shape, is finite, and has actually moved off the source set;
     5. determinism: two identical calls agree bit for bit (same ladder,
        same trained flow);
     6. validation and monitoring: the stage printer receives training,
        validation, and acceptance lines;
-    7. rejection of bad arguments: type not in {'F', 'G'}, unknown
+    7. tau_smc pre-selection: a gated ladder (tau_smc > 0, MALA)
+       shrinks over-aggressive t_k via the single-rung SMC check and
+       still completes, with [select] lines reported;
+    8. rejection of bad arguments: type not in {'F', 'G'}, unknown
        bg_param keys, invalid shrink_factor.
 
 Default JAX backend (GPU); GPU memory preallocation is disabled.
@@ -46,7 +49,7 @@ FAILURES = 0
 N_VALID, N_BATCH, STEPS, LR = 4000, 500, 100, 2e-3
 MC_STEP, MC_ITERS = 1e-3, 20
 TAU = 0.5
-BG = {"t_safe": 0.3, "tau": TAU}
+BG = {"t_safe": 0.3, "tau_ess": TAU}
 
 
 def log(msg: str) -> None:
@@ -98,7 +101,7 @@ def main() -> None:
     # ── ladder contract ──
     log("boltzmann_reverse_KL ladder")
     lines: list[str] = []
-    flow, y, stages = boltzmann_reverse_KL(
+    y, stages = boltzmann_reverse_KL(
         x_valid, u0, u1, flow0, type="F",
         n_batch=N_BATCH, steps=STEPS, lr=LR, mc_step=MC_STEP, mc_iters=MC_ITERS,
         monitor=Monitor(STEPS, "[t] ", lines.append), bg_param=BG,
@@ -108,7 +111,7 @@ def main() -> None:
     check_true("at least one accepted stage", len(stages) >= 1, f"{len(stages)} stages")
     check_true("ladder strictly increasing", ts == sorted(set(ts)), f"t = {ts}")
     check_true("ladder complete (t = 1)", bool(ts) and ts[-1] == 1.0, f"t[-1] = {ts[-1] if ts else None}")
-    check_true("every stage ESS >= tau", all(s["ess"] >= TAU for s in stages),
+    check_true("every stage ESS >= tau_ess", all(s["ess"] >= TAU for s in stages),
                f"ESS = {[round(s['ess'], 3) for s in stages]}")
 
     # ── per-stage records ──
@@ -116,8 +119,6 @@ def main() -> None:
     check_true("stage flows saved", all(isinstance(s["flow"], NSF) for s in stages))
     check_true("record keys are t/ess/flow",
                all(set(s.keys()) == {"t", "ess", "flow"} for s in stages))
-    check("last saved flow == returned flow",
-          max_param_delta(stages[-1]["flow"], flow), 0.0, tol=0)
 
     # ── final output ──
     check_true("particle set full-size and finite",
@@ -128,15 +129,31 @@ def main() -> None:
 
     # ── determinism ──
     log("determinism")
-    flow2, y2, stages2 = boltzmann_reverse_KL(
+    y2, stages2 = boltzmann_reverse_KL(
         x_valid, u0, u1, flow0, type="F",
         n_batch=N_BATCH, steps=STEPS, lr=LR, mc_step=MC_STEP, mc_iters=MC_ITERS,
         bg_param=BG,
     )
     check_true("same ladder", [s["t"] for s in stages2] == ts,
                f"t = {[round(s['t'], 4) for s in stages2]}")
-    check("same trained flow", max_param_delta(flow, flow2), 0.0, tol=0)
+    check("same trained flow", max_param_delta(stages[-1]["flow"], stages2[-1]["flow"]), 0.0, tol=0)
     check("same particle set", y2, y, tol=0)
+
+    # ── tau_smc pre-selection gate ──
+    log("tau_smc SMC pre-selection")
+    sel_lines: list[str] = []
+    y3, stages3 = boltzmann_reverse_KL(
+        x_valid, u0, u1, flow0, type="F",
+        n_batch=N_BATCH, steps=STEPS, lr=LR, mc_step=MC_STEP, mc_iters=MC_ITERS,
+        mc_adjust=True,
+        monitor=Monitor(STEPS, "[t] ", sel_lines.append),
+        bg_param={"t_safe": 0.3, "tau_ess": TAU, "tau_smc": 0.2},
+    )
+    jax.effects_barrier()
+    check_true("gated ladder completes", bool(stages3) and stages3[-1]["t"] == 1.0,
+               f"t = {[round(s['t'], 3) for s in stages3]}")
+    check_true("[select] lines observed", any("[select]" in ln for ln in sel_lines),
+               next((ln for ln in sel_lines if "[select]" in ln), "(none)"))
 
     # ── monitoring ──
     log("monitoring")

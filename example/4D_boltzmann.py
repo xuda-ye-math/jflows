@@ -71,13 +71,15 @@ MONITOR_EVERY: int = 20  # print loss + batch ESS every MONITOR_EVERY steps
 # Langevin rejuvenation (training batches + the per-stage particle refresh)
 MC_STEP: float = 1e-3  # Langevin rejuvenation step size
 MC_ITERS: int = 100    # Langevin rejuvenation steps
+MC_ADJUST: bool = True # MALA (rejects Coulomb-wall proposals; keeps the set collision-free)
 
 # adaptive ladder (bg_param of boltzmann_reverse_KL)
 BG_PARAM = {
-    "t_safe": 0.1,        # stage-1 coefficient (the safe start)
+    "t_safe": 0.2,        # stage-1 coefficient (the safe start)
     "shrink_factor": 0.7,  # rejected stage: t_k <- t_prev + shrink (t_k - t_prev)
     "enlarge_factor": 1.5, # accepted stage: extrapolation growth
-    "tau": 0.6,            # full-set ESS acceptance threshold
+    "tau_smc": 0.2,        # SMC pre-selection gate on t_k
+    "tau_ess": 0.6,        # incremental ESS acceptance threshold
 }
 
 
@@ -129,9 +131,10 @@ def main() -> None:
                transforms=TRANSFORMS, hidden_features=HIDDEN_FEATURES).zeros()
 
     t0 = time.time()
-    flow, y, stages = boltzmann_reverse_KL(
+    y_valid_out, stages = boltzmann_reverse_KL(
         x_valid, u0, u1, flow, type="F",
-        n_batch=N_BATCH, steps=STEPS, lr=LR, mc_step=MC_STEP, mc_iters=MC_ITERS,
+        n_batch=N_BATCH, steps=STEPS, lr=LR,
+        mc_step=MC_STEP, mc_iters=MC_ITERS, mc_adjust=MC_ADJUST,
         monitor=Monitor(MONITOR_EVERY, "[train] ", log), bg_param=BG_PARAM,
     )
     ts = [s["t"] for s in stages]
@@ -157,7 +160,7 @@ def main() -> None:
     axes[0].legend(loc="lower right")
     axes[0].set_box_aspect(1.0)
 
-    y_np = np.asarray(y)
+    y_np = np.asarray(y_valid_out)
     theta = np.linspace(-np.pi, np.pi, 400)
     axes[1].scatter(y_np[:, 0], y_np[:, 1], s=0.2, alpha=0.3, color="#1F77B4A0",
                     rasterized=True)
