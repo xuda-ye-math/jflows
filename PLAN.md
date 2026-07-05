@@ -31,7 +31,7 @@ jflows
 │   ├── potential.py         # Potential, potential_from, Nlog_Uniform, Nlog_Gaussian,
 │   │                        #   Nlog_Gaussian_Mixture, linear_combination (potential algebra)
 │   ├── loss.py              # reverse_KL, forward_KL (type='F'/'G'), OT_loss — per-sample returns, shape (N,)
-│   ├── train.py             # train_reverse_KL — packed single-stage training (no zflows counterpart)
+│   ├── train.py             # train_reverse_KL, train_forward_KL — packed single-stage training (no zflows counterpart)
 │   ├── utils
 │   │   ├── __init__.py      # re-exports the flat jflows.utils namespace
 │   │   ├── metrics.py       # importance_weights (+log, type='F'/'G'), compute_ESS (+log),
