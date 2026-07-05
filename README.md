@@ -66,7 +66,7 @@ u = linear_combination([u0, u1], [1.0 - c, c])   # U = (1-c) U0 + c U1
 
 Coefficients are a plain array leaf, so retuning `c` along an annealing ladder never triggers recompilation.
 
-**A strict interface hierarchy.** The API has two levels. The LOW level is the building blocks — per-sample losses and the SMC toolkit — for assembling custom pipelines. The HIGH level — the packed trainers and the annealed Boltzmann generator — composes those same blocks into one-call drivers. Everything below is organized in that order.
+**A strict interface hierarchy.** The API has three levels. The LOW level is the building blocks — per-sample losses and the SMC toolkit — for assembling custom pipelines. The MEDIUM level — the packed training drivers — composes those blocks into one-call stage trainers. The HIGH level — the annealed Boltzmann generator — chains the stage trainers into the full adaptive-ladder pipeline. Everything below is organized in that order.
 
 **Low level: per-sample KL losses with one `type` argument.** `reverse_KL` and `forward_KL` take the flow and dispatch on `type`: `'F'` when the flow maps source → target, `'G'` when it maps target → source (the flow is differentiated in its native direction only — no inverse map in training). Every loss returns the full per-sample vector, shape `[N]`, for post-hoc reweighting / clipping; reduce with `.mean()`:
 
@@ -77,7 +77,29 @@ loss = reverse_KL(x, target, flow, type="F").mean()   # source samples x
 loss = forward_KL(y, source, flow, type="G").mean()   # target samples y
 ```
 
-**High level: packed training drivers.** `jflows.train` packs a whole training stage — Adam on the flow's parameters, the full step loop under one `lax.scan` — into a single compiled call that regenerates its batch *inside every Adam step* (the X-regularization data pipeline: no frozen batch is ever reused, so a fixed sample set does not get memorized):
+**Low level: the SMC toolkit.** `jflows.utils` provides the *propose → reweight → resample → rejuvenate* building blocks, each at two granularities — a packed loop for direct use and a per-step kernel for custom schedules:
+
+```python
+from jflows.utils import (
+    importance_weights, importance_weights_log,   # flow IS weights (type='F'/'G')
+    compute_ESS, compute_ESS_log,                 # effective sample size
+    coverage,                                     # k-NN mode-collapse diagnostic
+    resample,                                     # multinomial resampling
+    langevin, langevin_step,                      # ULA / MALA / tamed
+    stochastic_heun, hamiltonian_monte_carlo,     # more rejuvenation kernels
+    sequential_monte_carlo, smc,                  # annealed SMC over a bridge ladder
+    annealed_importance_sampling, ais,            # AIS through a trained flow
+    lbfgs, adamw,                                 # batched optimizers (+ init/step kernels)
+)
+
+log_w = importance_weights_log(samples, source, target, flow, type="F", chunk=1)
+ess   = compute_ESS_log(log_w)
+y     = ais(key, samples, source, target, flow, type="G", ladder=1, step=1e-3, iters=100)
+```
+
+`chunk` splits batches along dim 0 to bound peak VRAM (statistically equivalent to `chunk=1`). There is no compile machinery to manage: everything is jit-friendly by construction, and `jax.jit` at the call site covers the rest.
+
+**Medium level: packed training drivers.** `jflows.train` packs a whole training stage — Adam on the flow's parameters, the full step loop under one `lax.scan` — into a single compiled call that regenerates its batch *inside every Adam step* (the X-regularization data pipeline: no frozen batch is ever reused, so a fixed sample set does not get memorized):
 
 ```python
 from jflows.train import train_reverse_KL, train_forward_KL, boltzmann_reverse_KL, Monitor
@@ -127,28 +149,6 @@ The trainer, weight evaluation, and advance are `filter_jit`-compiled once for
 the whole ladder (retuned bridge coefficients are array leaves, so no
 recompilation), and a `chunk` argument bounds the full-set stage operations at
 large particle counts.
-
-**Low level: the SMC toolkit.** `jflows.utils` provides the *propose → reweight → resample → rejuvenate* building blocks, each at two granularities — a packed loop for direct use and a per-step kernel for custom schedules:
-
-```python
-from jflows.utils import (
-    importance_weights, importance_weights_log,   # flow IS weights (type='F'/'G')
-    compute_ESS, compute_ESS_log,                 # effective sample size
-    coverage,                                     # k-NN mode-collapse diagnostic
-    resample,                                     # multinomial resampling
-    langevin, langevin_step,                      # ULA / MALA / tamed
-    stochastic_heun, hamiltonian_monte_carlo,     # more rejuvenation kernels
-    sequential_monte_carlo, smc,                  # annealed SMC over a bridge ladder
-    annealed_importance_sampling, ais,            # AIS through a trained flow
-    lbfgs, adamw,                                 # batched optimizers (+ init/step kernels)
-)
-
-log_w = importance_weights_log(samples, source, target, flow, type="F", chunk=1)
-ess   = compute_ESS_log(log_w)
-y     = ais(key, samples, source, target, flow, type="G", ladder=1, step=1e-3, iters=100)
-```
-
-`chunk` splits batches along dim 0 to bound peak VRAM (statistically equivalent to `chunk=1`). There is no compile machinery to manage: everything is jit-friendly by construction, and `jax.jit` at the call site covers the rest.
 
 **Package layout.**
 
