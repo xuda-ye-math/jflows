@@ -1,6 +1,6 @@
 """4D annealed Boltzmann generator — reverse KL with an ADAPTIVE ladder.
 
-The 4D two-charge target of zflows' `tests/4D_Boltzmann_generator.py`:
+The 4D two-charge target of zflows' `tests/4D_boltzmann.py`:
 x = (x1, x2), x_i in R^2, confined to a soft annulus and repelling via a
 regularized 3D Coulomb interaction,
 
@@ -17,7 +17,7 @@ enlarge-factor extrapolation, shrink on rejection) — the fixed
 c_k = k / 12 schedule of the original is replaced by the ESS-gated
 selection.
 
-Run from the repo root:  ~/.envs/jax/bin/python -m example.4D_Boltzmann_generator
+Run from the repo root:  ~/.envs/jax/bin/python -m example.4D_boltzmann
 """
 
 import os
@@ -47,7 +47,7 @@ from jflows.potential import Nlog_Gaussian, Potential
 from jflows.train import Monitor, boltzmann_reverse_KL
 
 HERE = Path(__file__).resolve().parent
-LOG = HERE / "4D_Boltzmann_generator.log"
+LOG = HERE / "4D_boltzmann.log"
 
 # target physics (identical to the zflows original)
 R0: float = 2.0        # annulus radius of the soft trap
@@ -121,7 +121,7 @@ u1 = U_Target()
 
 def main() -> None:
     open(LOG, "w").close()   # fresh log per run (no appending)
-    log(f"START 4D_Boltzmann_generator | jax {jax.__version__} | "
+    log(f"START 4D_boltzmann | jax {jax.__version__} | "
         f"backend {jax.default_backend()} | N_VALID={N_VALID} N_BATCH={N_BATCH} "
         f"STEPS={STEPS} LR={LR} MC={MC_STEP}x{MC_ITERS} bg={BG_PARAM}")
     x_valid = u0.samples(jax.random.key(2), N_VALID)  # the fixed N_VALID source set
@@ -177,7 +177,7 @@ def main() -> None:
     axes[2].set_xlim(-np.pi, np.pi)
     axes[2].set_box_aspect(1.0)
 
-    png = HERE / "4D_Boltzmann_generator.png"
+    png = HERE / "4D_boltzmann.png"
     fig.savefig(png, dpi=300, bbox_inches="tight")
     plt.close(fig)
     log(f"DONE — figure at {png}")

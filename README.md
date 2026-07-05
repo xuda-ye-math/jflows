@@ -247,13 +247,13 @@ python -m example.2D_single
 
 <p align="center"><img src="https://raw.githubusercontent.com/xuda-ye-math/jflows/main/example/2D_single.png" alt="2D single-stage training" width="1000px"></p>
 
-[`example/4D_Boltzmann_generator.py`](example/4D_Boltzmann_generator.py) runs `boltzmann_reverse_KL` on the 4D two-charge target of the zflows reference test — two particles on a soft annulus with regularized Coulomb repulsion — where a direct flow proposal has ESS ~ 0. The adaptive ladder reaches $t = 1$ in five first-attempt stages:
+[`example/4D_boltzmann.py`](example/4D_boltzmann.py) runs `boltzmann_reverse_KL` on the 4D two-charge target of the zflows reference test — two particles on a soft annulus with regularized Coulomb repulsion — where a direct flow proposal has ESS ~ 0. The adaptive ladder reaches $t = 1$ in five first-attempt stages:
 
 ```bash
-python -m example.4D_Boltzmann_generator
+python -m example.4D_boltzmann
 ```
 
-<p align="center"><img src="https://raw.githubusercontent.com/xuda-ye-math/jflows/main/example/4D_Boltzmann_generator.png" alt="4D Boltzmann generator" width="1000px"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/xuda-ye-math/jflows/main/example/4D_boltzmann.png" alt="4D Boltzmann generator" width="1000px"></p>
 
 Numerical results and discussion: [`example/results.md`](example/results.md).
 

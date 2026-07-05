@@ -32,9 +32,9 @@ Both flows populate all three modes, and the AIS-fed forward KL ends with the hi
 
 Two practical notes. First, wall clock: each packed 200-step training compiles in a few seconds and executes in 1.5–2.5 s on an RTX 5070 Ti; the whole script (both trainings, evaluation, figure) runs in about 12 s. Second, reproducibility: the trainers are deterministic within a process (fixed internal seed — two identical calls agree bit for bit), while across separate launches XLA kernel autotuning can introduce last-ulp differences that 200 training steps amplify, so the final ESS varies by a few times $10^{-2}$ between runs (reverse KL $\approx 0.92$–$0.93$, forward KL $\approx 0.95$).
 
-## 4D_Boltzmann_generator — annealed BG with the adaptive ladder
+## 4D_boltzmann — annealed BG with the adaptive ladder
 
-The 4D two-charge target of zflows' `tests/4D_Boltzmann_generator.py`, sampled by [`4D_Boltzmann_generator.py`](4D_Boltzmann_generator.py) with `boltzmann_reverse_KL`: reverse KL along the bridge ladder $U_t = (1-t)\,U_0 + t\,U_1$, with the coefficient $t$ selected adaptively instead of the original fixed schedule $c_k = k/12$.
+The 4D two-charge target of zflows' `tests/4D_boltzmann.py`, sampled by [`4D_boltzmann.py`](4D_boltzmann.py) with `boltzmann_reverse_KL`: reverse KL along the bridge ladder $U_t = (1-t)\,U_0 + t\,U_1$, with the coefficient $t$ selected adaptively instead of the original fixed schedule $c_k = k/12$.
 
 ### Setup
 
@@ -54,7 +54,7 @@ The adaptive ladder reaches $t = 1$ in five stages, every stage accepted on its 
 | $t_k$     | 0.10 | 0.25 | 0.475 | 0.8125 | 1.0 |
 | ESS       | 0.808 | 0.849 | 0.946 | 0.974 | 0.992 |
 
-<p align="center"><img src="4D_Boltzmann_generator.png" alt="4D Boltzmann generator" width="1000px"></p>
+<p align="center"><img src="4D_boltzmann.png" alt="4D Boltzmann generator" width="1000px"></p>
 
 The left panel shows the adaptive ladder ($t_k$ and the per-stage incremental ESS); the middle panel the particle-1 marginal at $t = 1$, concentrated on the annulus $\lVert x_1 \rVert = r_0$ (dashed circle); the right panel the relative angle $\Delta\theta$ between the two particles, peaked at $\pm\pi$ with vanishing density at $0$ — the antipodal Coulomb minimum.
 
