@@ -22,6 +22,9 @@ Public API:
                        ladder U_t = (1-t) U_0 + t U_1: per stage selection ->
                        training -> ESS evaluation -> rejection -> advance,
                        with adaptive t selection (bg_param)
+    boltzmann_forward_KL — the forward KL twin: identical ladder, with
+                       train_forward_KL as the stage trainer (its per-step
+                       AIS shares the `ladder` with the SMC selection gate)
     Monitor          — live training-status reporter (loss + batch ESS
                        every `every` steps, from inside the compiled loop)
 
@@ -50,7 +53,7 @@ from .utils.metrics import compute_ESS_log, importance_weights_log, resample
 from .utils.rejuvenation import langevin
 
 
-__all__ = ["Monitor", "boltzmann_reverse_KL", "train_forward_KL", "train_reverse_KL"]
+__all__ = ["Monitor", "boltzmann_forward_KL", "boltzmann_reverse_KL", "train_forward_KL", "train_reverse_KL"]
 
 _BETA1, _BETA2, _EPS = 0.9, 0.999, 1e-8
 
@@ -344,6 +347,7 @@ def boltzmann_reverse_KL(
     n_batch: int,
     steps: int,
     lr: float,
+    ladder: int,
     mc_step: float,
     mc_iters: int,
     mc_adjust: bool = False,
@@ -363,13 +367,14 @@ def boltzmann_reverse_KL(
     distribution mu_{t_{k-1}} to the next bridge mu_{t_k} — each stage
     only ever learns a small deformation. Stage k runs
 
-        1. selection:       when tau_smc > 0, a single-rung SMC check
+        1. selection:       when tau_smc > 0, a `ladder`-rung SMC check
                             from U_{t_{k-1}} to the candidate bridge on
-                            the particle set shrinks t_k until its rung
-                            ESS clears tau_smc (at most 60 shrinks, as
-                            in the reference adaptive_step) — SMC is far
-                            cheaper than a training attempt, so the gate
-                            filters over-aggressive t_k for free;
+                            the particle set shrinks t_k until its
+                            MINIMUM per-rung ESS clears tau_smc (at most
+                            60 shrinks, as in the reference
+                            adaptive_step) — SMC is far cheaper than a
+                            training attempt, so the gate filters
+                            over-aggressive t_k for free;
         2. training:        `train_reverse_KL(y, U_{t_{k-1}}, U_{t_k},
                             flow, type, ...)` — a packed reverse KL
                             stage on batches drawn from the CURRENT
@@ -419,6 +424,8 @@ def boltzmann_reverse_KL(
         n_batch:  int            samples drawn from the particle set per Adam step
         steps:    int            Adam steps per stage attempt
         lr:       float          Adam learning rate
+        ladder:   int            SMC rungs of the tau_smc selection gate (the
+                                 gate accepts on the minimum per-rung ESS)
         mc_step:  float          Langevin step size (batch rejuvenation inside
                                  training, the SMC gate, AND the particle-set
                                  advance)
@@ -490,7 +497,7 @@ def boltzmann_reverse_KL(
             for s_i in range(60):                           # max_shrinks, as in the reference
                 u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
                 _, smc_ess = _smc_jit(jax.random.fold_in(smc_base, s_i), y_valid,
-                                      u_prev, u_k, ladder=1, step=mc_step,
+                                      u_prev, u_k, ladder=ladder, step=mc_step,
                                       iters=mc_iters, chunk=chunk)
                 ess_smc = float(smc_ess.min())
                 ok_smc = ess_smc >= p["tau_smc"]
@@ -539,5 +546,151 @@ def boltzmann_reverse_KL(
                f"({len(stages)} accepted stages); particle set at the last accepted bridge")
     else:
         status(f"boltzmann_reverse_KL: ladder COMPLETE ({len(stages)} stages); "
+               f"particle set at the target")
+    return y_valid, stages
+
+
+def boltzmann_forward_KL(
+    x_valid: Array,
+    source: Potential,
+    target: Potential,
+    flow: Flow,
+    type: str,
+    n_batch: int,
+    steps: int,
+    lr: float,
+    ladder: int,
+    mc_step: float,
+    mc_iters: int,
+    mc_adjust: bool = False,
+    monitor: Monitor | None = None,
+    bg_param: dict | None = None,
+    chunk: int = 1,
+    checkpoint: bool = False,
+) -> tuple[Array, list[dict]]:
+    """
+    Annealed Boltzmann generator on the forward KL — the twin of
+    `boltzmann_reverse_KL` with the same ladder machinery and parameter
+    setting: advance a particle set along the bridge ladder
+
+        U_t = (1 - t) U_0 + t U_1,        0 < t_1 < ... < t_K = 1,
+
+    where t is the linear-combination coefficient, by training the
+    warm-started flow as the INCREMENTAL map from the current particle
+    distribution mu_{t_{k-1}} to the next bridge mu_{t_k}. Stage k runs
+
+        1. selection:       when tau_smc > 0, a `ladder`-rung SMC check
+                            from U_{t_{k-1}} to the candidate bridge
+                            shrinks t_k until its MINIMUM per-rung ESS
+                            clears tau_smc (at most 60 shrinks);
+        2. training:        `train_forward_KL(y, U_{t_{k-1}}, U_{t_k},
+                            flow, type, ...)` — each Adam step draws an
+                            `n_batch` subset of the particle set and
+                            manufactures its target batch by
+                            `ladder`-rung AIS through the CURRENT flow
+                            (SMC gate and AIS share the same `ladder`);
+        3. ESS evaluation:  incremental importance-sampling ESS of the
+                            trained increment over the full particle
+                            set, from U_{t_{k-1}} to U_{t_k};
+        4. rejection:       ESS < tau_ess rejects the stage — shrink
+                            t_k <- t_prev + shrink_factor (t_k - t_prev)
+                            and retrain from the SAME warm start (at most
+                            `max_retry` attempts, then the ladder stops);
+        5. advance:         on acceptance, push the particle set through
+                            the increment, reweight by the stage
+                            importance weights, multinomially resample,
+                            and freshen with Langevin steps at U_{t_k}
+                            (MALA when `mc_adjust`).
+
+    `tau_smc`, the t schedule (t_safe / shrink_factor / enlarge_factor /
+    t_tol), acceptance, records, monitoring, determinism, and the
+    compile-once behaviour are identical to `boltzmann_reverse_KL`; the
+    ladder uses its own base PRNG stream and threads a distinct seed
+    into the trainer per stage attempt.
+
+    Input:  as `boltzmann_reverse_KL`, with `mc_adjust` applying to the
+            particle-set advance (the stage trainer's internal AIS
+            rejuvenation is unadjusted Langevin).
+    Output: as `boltzmann_reverse_KL` — (y_valid, stages) with per-stage
+            records {"t", "ess", "flow"}.
+    """
+    if type not in ("F", "G"):
+        raise ValueError(f"boltzmann_forward_KL: type must be 'F' or 'G', got {type!r}")
+    p = dict(_BG_DEFAULTS)
+    if bg_param:
+        unknown = set(bg_param) - set(p)
+        if unknown:
+            raise ValueError(f"boltzmann_forward_KL: unknown bg_param keys {sorted(unknown)}")
+        p.update(bg_param)
+    if not (0.0 < p["shrink_factor"] < 1.0 and 0.0 < p["t_safe"] <= 1.0 and p["max_retry"] >= 1):
+        raise ValueError(f"boltzmann_forward_KL: invalid bg_param {p!r}")
+
+    status = monitor.printer if monitor is not None else print
+    key = jax.random.key(4)  # this ladder's own base stream
+
+    y_valid = x_valid                  # validation/particle set at t = 0 (= mu_0)
+    stages: list[dict] = []
+    t_prev = 0.0
+    while t_prev < 1.0 and len(stages) < p["max_stages"]:
+        k = len(stages) + 1
+        hist = [0.0] + [s["t"] for s in stages]
+        t_k = p["t_safe"] if not stages else min(
+            hist[-1] + p["enlarge_factor"] * (hist[-1] - hist[-2]), 1.0
+        )
+        if 1.0 - t_k < p["t_tol"]:
+            t_k = 1.0
+        u_prev = linear_combination([target, source], [t_prev, 1.0 - t_prev])
+        # (1) SMC pre-selection of t_k
+        if p["tau_smc"] > 0.0:
+            smc_base = jax.random.fold_in(key, 10_000 + k)  # disjoint from the advance keys
+            for s_i in range(60):                           # max_shrinks, as in the reference
+                u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
+                _, smc_ess = _smc_jit(jax.random.fold_in(smc_base, s_i), y_valid,
+                                      u_prev, u_k, ladder=ladder, step=mc_step,
+                                      iters=mc_iters, chunk=chunk)
+                ess_smc = float(smc_ess.min())
+                ok_smc = ess_smc >= p["tau_smc"]
+                status(f"[stage {k}] [select] t_k={t_k:.4f}  SMC ESS = {ess_smc:.3f} "
+                       f"({'accept' if ok_smc else 'shrink'})")
+                if ok_smc:
+                    break
+                t_k = t_prev + p["shrink_factor"] * (t_k - t_prev)
+        accepted = False
+        for attempt in range(1, p["max_retry"] + 1):
+            u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
+            status(f"[stage {k}] t={t_prev:.4f} -> {t_k:.4f} "
+                   f"(attempt {attempt}/{p['max_retry']}) training the increment ...")
+            seed = jnp.uint32(k * p["max_retry"] + attempt)  # fresh stream per attempt
+            cand, _ = train_forward_KL(y_valid, u_prev, u_k, flow, type,
+                                       n_batch, steps, lr, ladder, mc_step,
+                                       mc_iters, monitor,
+                                       seed=seed, checkpoint=checkpoint)
+            log_w = _iw_log_jit(y_valid, u_prev, u_k, cand, type, chunk=chunk)
+            ess_k = float(compute_ESS_log(log_w))
+            jax.effects_barrier()  # keep monitor lines ahead of the stage status
+            status(f"[stage {k}] t={t_k:.4f} validation: incremental ESS = {ess_k:.3f} "
+                   f"(tau_ess = {p['tau_ess']:.2f})")
+            if ess_k >= p["tau_ess"]:
+                accepted = True
+                break
+            status(f"[stage {k}] t={t_k:.4f} REJECTED -> shrink")
+            t_k = t_prev + p["shrink_factor"] * (t_k - t_prev)
+        if not accepted:
+            status(f"[stage {k}] gave up after {p['max_retry']} attempts "
+                   f"(last t={t_k:.4f}, ESS = {ess_k:.3f}) — ladder INCOMPLETE")
+            break
+        flow = cand                    # warm start of every later stage
+        key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
+        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, flow, type, u_k,
+                              mc_step, mc_iters, mc_adjust, chunk)
+        y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage, not the next
+        stages.append({"t": t_k, "ess": ess_k, "flow": flow})
+        status(f"[stage {k}] t={t_k:.4f} ACCEPTED (attempt {attempt}): stage flow saved")
+        t_prev = t_k
+    if t_prev < 1.0:
+        status(f"boltzmann_forward_KL: ladder INCOMPLETE at t = {t_prev:.4f} "
+               f"({len(stages)} accepted stages); particle set at the last accepted bridge")
+    else:
+        status(f"boltzmann_forward_KL: ladder COMPLETE ({len(stages)} stages); "
                f"particle set at the target")
     return y_valid, stages

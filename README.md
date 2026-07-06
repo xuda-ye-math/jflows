@@ -138,7 +138,7 @@ from jflows.train import boltzmann_reverse_KL
 
 y_valid, stages = boltzmann_reverse_KL(
     x_valid, source, target, flow, type="F",
-    n_batch=2000, steps=500, lr=1e-4, mc_step=1e-3, mc_iters=100,
+    n_batch=2000, steps=500, lr=1e-4, ladder=1, mc_step=1e-3, mc_iters=100,
     bg_param={"t_safe": 0.1, "shrink_factor": 0.7, "enlarge_factor": 1.5, "tau_ess": 0.6},
 )
 # y_valid : the advanced validation set at the target (the generator's sample output)
@@ -219,7 +219,7 @@ python -m example.2D_single
 
 <p align="center"><img src="example/2D_single.png" alt="2D single-stage training" width="1000px"></p>
 
-[`example/4D_boltzmann.py`](example/4D_boltzmann.py) runs `boltzmann_reverse_KL` on the 4D two-charge target of the zflows reference test — two particles on a soft annulus with regularized Coulomb repulsion — where a direct flow proposal has ESS ~ 0. The adaptive ladder reaches $t = 1$ in four stages (the safe start is rejected once and shrunk before stage 1 passes):
+[`example/4D_boltzmann.py`](example/4D_boltzmann.py) runs BOTH annealed generators — `boltzmann_reverse_KL` and `boltzmann_forward_KL` — on the 4D two-charge target of the zflows reference test (two particles on a soft annulus with regularized Coulomb repulsion), where a direct flow proposal has ESS ~ 0. Both adaptive ladders reach $t = 1$ in four stages, compared row by row (top: reverse KL; bottom: forward KL):
 
 ```bash
 python -m example.4D_boltzmann

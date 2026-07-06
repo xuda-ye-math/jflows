@@ -10,9 +10,9 @@ Public surface (built up phase by phase, see PLAN.md):
                        algebra c*U, U+V, U-V, -U, U/c, sum([...]))
     jflows.loss      : reverse_KL, forward_KL (type='F'/'G'), OT_loss
     jflows.train     : train_reverse_KL, train_forward_KL (packed
-                       single-stage training), boltzmann_reverse_KL
-                       (adaptive-ladder Boltzmann generator), Monitor
-                       (live training-status reporter)
+                       single-stage training), boltzmann_reverse_KL,
+                       boltzmann_forward_KL (adaptive-ladder Boltzmann
+                       generators), Monitor (live training-status reporter)
     jflows.utils     : metrics / optimization / rejuvenation / annealing
 
 Internals (`jflows.core.*`) follow zflows' layout, with the deliberate

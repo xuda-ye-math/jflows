@@ -34,7 +34,7 @@ Two practical notes. First, wall clock: each packed 200-step training compiles i
 
 ## 4D_boltzmann — annealed BG with the adaptive ladder
 
-The 4D two-charge target of zflows' `tests/4D_boltzmann.py`, sampled by [`4D_boltzmann.py`](4D_boltzmann.py) with `boltzmann_reverse_KL`: reverse KL along the bridge ladder $U_t = (1-t)\,U_0 + t\,U_1$, with the coefficient $t$ selected adaptively instead of the original fixed schedule $c_k = k/12$.
+The 4D two-charge target of the zflows reference test, sampled by [`4D_boltzmann.py`](4D_boltzmann.py) with BOTH annealed generators — `boltzmann_reverse_KL` and `boltzmann_forward_KL` — along the bridge ladder $U_t = (1-t)\,U_0 + t\,U_1$, with the coefficient $t$ selected adaptively instead of the original fixed schedule $c_k = k/12$.
 
 ### Setup
 
@@ -43,21 +43,25 @@ The 4D two-charge target of zflows' `tests/4D_boltzmann.py`, sampled by [`4D_bol
   $U_1(x) = a\,[(\lVert x_1\rVert^2 - r_0^2)^2 + (\lVert x_2\rVert^2 - r_0^2)^2] + q^2 / \sqrt{\lVert x_1 - x_2\rVert^2 + \varepsilon^2}$
   with $r_0 = 2$, $a = 1$, $q^2 = 4$, $\varepsilon = 10^{-3}$ (identical to the original).
 - **Flow**: NSF on $[-3, 3]^4$, 8 bins, 6 autoregressive transforms, $(64, 64)$ conditioners, identity-initialised.
-- **Boltzmann generator**: the stage flows are connected step by step — stage $k$ selects $t_k$ through the single-rung SMC gate (`tau_smc`), trains the warm-started flow as the incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$ on batches drawn from the advancing particle set, accepts on the incremental importance-sampling ESS (`tau_ess`), and advances the set by reweight → resample → MALA at $U_{t_k}$ (`mc_adjust = True`; the Metropolis gate keeps the near-singular Coulomb tail out of the particle set, as in the zflows reference). Parameters: `N_VALID = 120000`, `N_BATCH = 2000`, `STEPS = 500`, `LR = 1e-4`, MALA `1e-3 × 100`; ladder `t_safe = 0.2`, `shrink_factor = 0.7`, `enlarge_factor = 1.5`, `tau_smc = 0.2`, `tau_ess = 0.6`.
+- **Boltzmann generators**: the stage flows are connected step by step — stage $k$ selects $t_k$ through the SMC gate (`tau_smc`, `LADDER = 1` rung), trains the warm-started flow as the incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$ on the advancing particle set, accepts on the incremental importance-sampling ESS (`tau_ess`), and advances the set by reweight → resample → MALA at $U_{t_k}$ (`mc_adjust = True`; the Metropolis gate keeps the near-singular Coulomb tail out of the particle set, as in the zflows reference). The reverse KL stages train on Langevin-freshened batches of the set; the forward KL stages train on target batches manufactured per Adam step by AIS through the current flow (SMC gate and AIS share `LADDER`). Parameters: `N_VALID = 120000`, `N_BATCH = 2000`, `STEPS = 500`, `LR = 1e-4`, MALA `1e-3 × 100`; ladder `t_safe = 0.2`, `shrink_factor = 0.7`, `enlarge_factor = 1.5`, `tau_smc = 0.2`, `tau_ess = 0.6`.
 
 ### Results
 
-The adaptive ladder reaches $t = 1$ in four stages, in 8.9 s end to end on the full 120000-particle set (the stage trainer, weight evaluation, and advance each compile once and are reused across all stages). The rejection machinery earns its keep at stage 1: the safe start $t = 0.2$ trains but misses the acceptance bar, shrinks to $0.14$, and every later stage passes on its first attempt:
+Both ladders reach $t = 1$ in four stages (~8-10 s each on the full 120000-particle set; the stage trainer, weight evaluation, and advance each compile once and are reused across all stages). The rejection machinery earns its keep in the reverse run: its safe start $t = 0.2$ trains but misses the acceptance bar and shrinks to $0.14$, while the AIS-fed forward run accepts the full safe start and climbs faster — every other stage passes on its first attempt:
 
-| stage $k$ | 1 | 2 | 3 | 4 |
+| reverse KL, stage $k$ | 1 | 2 | 3 | 4 |
 | --------- | :---: | :---: | :---: | :---: |
 | $t_k$     | 0.14 | 0.35 | 0.665 | 1.0 |
-| SMC gate  | 0.223 | 0.495 | 0.670 | 0.842 |
-| ESS       | 0.639 | 0.891 | 0.954 | 0.984 |
+| ESS       | 0.657 | 0.904 | 0.957 | 0.984 |
+
+| forward KL, stage $k$ | 1 | 2 | 3 | 4 |
+| --------- | :---: | :---: | :---: | :---: |
+| $t_k$     | 0.20 | 0.50 | 0.95 | 1.0 |
+| ESS       | 0.764 | 0.898 | 0.963 | 0.987 |
 
 <p align="center"><img src="4D_boltzmann.png" alt="4D Boltzmann generator" width="1000px"></p>
 
-The left panel shows the adaptive ladder ($t_k$ and the per-stage incremental ESS); the middle panel the particle-1 marginal at $t = 1$, concentrated on the annulus $\lVert x_1 \rVert = r_0$ (dashed circle); the right panel the relative angle $\Delta\theta$ between the two particles, peaked at $\pm\pi$ with vanishing density at $0$ — the antipodal Coulomb minimum.
+Each row (top: reverse KL; bottom: forward KL) shows the adaptive ladder ($t_k$ and the per-stage incremental ESS), the particle-1 marginal at $t = 1$ concentrated on the annulus $\lVert x_1 \rVert = r_0$ (dashed circle), and the relative angle $\Delta\theta$ between the two particles, peaked at $\pm\pi$ with vanishing density at $0$ — the antipodal Coulomb minimum.
 
 ### Reading the result
 

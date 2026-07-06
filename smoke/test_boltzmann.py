@@ -16,9 +16,12 @@ For boltzmann_reverse_KL (the adaptive-ladder annealed BG):
        same trained flow);
     6. validation and monitoring: the stage printer receives training,
        validation, and acceptance lines;
-    7. tau_smc pre-selection: a gated ladder (tau_smc > 0, MALA)
-       shrinks over-aggressive t_k via the single-rung SMC check and
-       still completes, with [select] lines reported;
+    7. tau_smc pre-selection: a gated ladder (tau_smc > 0, MALA,
+       ladder = 2) shrinks over-aggressive t_k via the multi-rung SMC
+       check and still completes, with [select] lines reported;
+    8. boltzmann_forward_KL: the forward KL twin (per-step AIS through
+       the current flow, type='G') completes its ladder with the same
+       record contract;
     8. rejection of bad arguments: type not in {'F', 'G'}, unknown
        bg_param keys, invalid shrink_factor.
 
@@ -39,7 +42,7 @@ import numpy as np  # noqa: E402
 
 from jflows.flow import NSF  # noqa: E402
 from jflows.potential import Nlog_Gaussian, Nlog_Gaussian_Mixture  # noqa: E402
-from jflows.train import Monitor, boltzmann_reverse_KL  # noqa: E402
+from jflows.train import Monitor, boltzmann_forward_KL, boltzmann_reverse_KL  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG = os.path.join(HERE, "test_boltzmann.log")
@@ -103,7 +106,8 @@ def main() -> None:
     lines: list[str] = []
     y, stages = boltzmann_reverse_KL(
         x_valid, u0, u1, flow0, type="F",
-        n_batch=N_BATCH, steps=STEPS, lr=LR, mc_step=MC_STEP, mc_iters=MC_ITERS,
+        n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=1,
+        mc_step=MC_STEP, mc_iters=MC_ITERS,
         monitor=Monitor(STEPS, "[t] ", lines.append), bg_param=BG,
     )
     jax.effects_barrier()
@@ -131,7 +135,8 @@ def main() -> None:
     log("determinism")
     y2, stages2 = boltzmann_reverse_KL(
         x_valid, u0, u1, flow0, type="F",
-        n_batch=N_BATCH, steps=STEPS, lr=LR, mc_step=MC_STEP, mc_iters=MC_ITERS,
+        n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=1,
+        mc_step=MC_STEP, mc_iters=MC_ITERS,
         bg_param=BG,
     )
     check_true("same ladder", [s["t"] for s in stages2] == ts,
@@ -145,7 +150,7 @@ def main() -> None:
     y3, stages3 = boltzmann_reverse_KL(
         x_valid, u0, u1, flow0, type="F",
         n_batch=N_BATCH, steps=STEPS, lr=LR, mc_step=MC_STEP, mc_iters=MC_ITERS,
-        mc_adjust=True,
+        ladder=2, mc_adjust=True,
         monitor=Monitor(STEPS, "[t] ", sel_lines.append),
         bg_param={"t_safe": 0.3, "tau_ess": TAU, "tau_smc": 0.2},
     )
@@ -154,6 +159,24 @@ def main() -> None:
                f"t = {[round(s['t'], 3) for s in stages3]}")
     check_true("[select] lines observed", any("[select]" in ln for ln in sel_lines),
                next((ln for ln in sel_lines if "[select]" in ln), "(none)"))
+
+    # ── boltzmann_forward_KL (the forward KL twin) ──
+    log("boltzmann_forward_KL ladder")
+    yf, stages_f = boltzmann_forward_KL(
+        x_valid, u0, u1, flow0, type="G",
+        n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=1,
+        mc_step=MC_STEP, mc_iters=MC_ITERS, mc_adjust=True,
+        bg_param=BG,
+    )
+    tsf = [s["t"] for s in stages_f]
+    check_true("forward ladder complete (t = 1)", bool(tsf) and tsf[-1] == 1.0,
+               f"t = {[round(t, 3) for t in tsf]}")
+    check_true("forward stage ESS >= tau_ess", all(s["ess"] >= TAU for s in stages_f),
+               f"ESS = {[round(s['ess'], 3) for s in stages_f]}")
+    check_true("forward record keys are t/ess/flow",
+               all(set(s.keys()) == {"t", "ess", "flow"} for s in stages_f))
+    check_true("forward particle set full-size and finite",
+               yf.shape == x_valid.shape and bool(jnp.isfinite(yf).all()), f"{yf.shape}")
 
     # ── monitoring ──
     log("monitoring")
@@ -170,7 +193,7 @@ def main() -> None:
     ):
         try:
             boltzmann_reverse_KL(x_valid, u0, u1, flow0,
-                                 n_batch=N_BATCH, steps=1, lr=LR,
+                                 n_batch=N_BATCH, steps=1, lr=LR, ladder=1,
                                  mc_step=MC_STEP, mc_iters=1, **kwargs)
             check_true(f"rejects {name}", False)
         except ValueError:

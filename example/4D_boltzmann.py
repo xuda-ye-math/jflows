@@ -1,21 +1,26 @@
-"""4D annealed Boltzmann generator — reverse KL with an ADAPTIVE ladder.
+"""4D annealed Boltzmann generator — reverse KL vs forward KL, ADAPTIVE ladder.
 
-The 4D two-charge target of zflows' `tests/4D_boltzmann.py`:
+The 4D two-charge target of the zflows reference test:
 x = (x1, x2), x_i in R^2, confined to a soft annulus and repelling via a
 regularized 3D Coulomb interaction,
 
     U_target(x) = a [ (|x1|^2 - r0^2)^2 + (|x2|^2 - r0^2)^2 ]
                 + q2 / sqrt(|x1 - x2|^2 + eps^2).
 
-A direct flow proposal from the 4D Gaussian source has ESS ~ 0, so the
-flow is trained along the bridge ladder U_t = (1 - t) U_0 + t U_1 by
-`boltzmann_reverse_KL`: per stage, packed reverse KL training against
-the bridge (warm-started), full-set ESS validation with
-rejection/shrink, then importance resampling + Langevin rejuvenation of
-the particle set. The ladder coefficient t is ADAPTIVE (safe start,
-enlarge-factor extrapolation, shrink on rejection) — the fixed
-c_k = k / 12 schedule of the original is replaced by the ESS-gated
-selection.
+A direct flow proposal from the 4D Gaussian source has ESS ~ 0, so both
+generators anneal along the bridge ladder U_t = (1 - t) U_0 + t U_1 with
+the ADAPTIVE coefficient (SMC-gated safe start, enlarge-factor
+extrapolation, ESS-gated rejection/shrink) replacing the fixed
+c_k = k / 12 schedule of the original:
+
+    boltzmann_reverse_KL (type='F'): each stage trains the increment by
+        reverse KL on Langevin-freshened batches of the particle set;
+    boltzmann_forward_KL (type='G'): each stage trains the increment by
+        forward KL on target batches manufactured per Adam step by AIS
+        through the CURRENT flow (SMC gate and AIS share LADDER).
+
+Both advance the particle set by reweight -> resample -> MALA and are
+compared row by row in the figure (top: reverse KL; bottom: forward KL).
 
 Run from the repo root:  ~/.envs/jax/bin/python -m example.4D_boltzmann
 """
@@ -44,7 +49,7 @@ plt.rcParams.update({
 from jax import Array
 from jflows.flow import NSF
 from jflows.potential import Nlog_Gaussian, Potential
-from jflows.train import Monitor, boltzmann_reverse_KL
+from jflows.train import Monitor, boltzmann_forward_KL, boltzmann_reverse_KL
 
 HERE = Path(__file__).resolve().parent
 LOG = HERE / "4D_boltzmann.log"
@@ -69,6 +74,7 @@ LR: float = 1e-4       # Adam learning rate
 MONITOR_EVERY: int = 20  # print loss + batch ESS every MONITOR_EVERY steps
 
 # Langevin rejuvenation (training batches + the per-stage particle refresh)
+LADDER: int = 1        # SMC rungs of the tau_smc selection gate
 MC_STEP: float = 1e-3  # Langevin rejuvenation step size
 MC_ITERS: int = 100    # Langevin rejuvenation steps
 MC_ADJUST: bool = True # MALA (rejects Coulomb-wall proposals; keeps the set collision-free)
@@ -127,58 +133,73 @@ def main() -> None:
         f"backend {jax.default_backend()} | N_VALID={N_VALID} N_BATCH={N_BATCH} "
         f"STEPS={STEPS} LR={LR} MC={MC_STEP}x{MC_ITERS} bg={BG_PARAM}")
     x_valid = u0.samples(jax.random.key(2), N_VALID)  # the fixed N_VALID source set
-    flow = NSF(jax.random.key(0), a=[-NSF_LIM] * 4, b=[NSF_LIM] * 4, bins=BINS,
-               transforms=TRANSFORMS, hidden_features=HIDDEN_FEATURES).zeros()
 
-    t0 = time.time()
-    y_valid_out, stages = boltzmann_reverse_KL(
-        x_valid, u0, u1, flow, type="F",
-        n_batch=N_BATCH, steps=STEPS, lr=LR,
-        mc_step=MC_STEP, mc_iters=MC_ITERS, mc_adjust=MC_ADJUST,
-        monitor=Monitor(MONITOR_EVERY, "[train] ", log), bg_param=BG_PARAM,
-    )
-    ts = [s["t"] for s in stages]
-    log(f"ladder done in {time.time() - t0:.1f}s: "
-        f"t = {[round(t, 4) for t in ts]}  ESS = {[round(s['ess'], 3) for s in stages]}  "
-        f"({'COMPLETE' if ts and ts[-1] == 1.0 else 'INCOMPLETE'})")
+    def new_flow(key):
+        return NSF(key, a=[-NSF_LIM] * 4, b=[NSF_LIM] * 4, bins=BINS,
+                   transforms=TRANSFORMS, hidden_features=HIDDEN_FEATURES).zeros()
 
-    # incremental stage quality (the generator's sample output is y)
-    if stages:
-        log(f"stage ESS: min = {min(s['ess'] for s in stages):.4f}   "
-            f"last = {stages[-1]['ess']:.4f}   (N_VALID = {N_VALID})")
+    results = {}
+    for name, driver, tp, key_f in (
+        ("reverse KL", boltzmann_reverse_KL, "F", jax.random.key(0)),
+        ("forward KL", boltzmann_forward_KL, "G", jax.random.key(1)),
+    ):
+        t0 = time.time()
+        y, stages = driver(
+            x_valid, u0, u1, new_flow(key_f), type=tp,
+            n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=LADDER,
+            mc_step=MC_STEP, mc_iters=MC_ITERS, mc_adjust=MC_ADJUST,
+            monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log), bg_param=BG_PARAM,
+        )
+        ts = [s["t"] for s in stages]
+        log(f"[{name}] ladder done in {time.time() - t0:.1f}s: "
+            f"t = {[round(t, 4) for t in ts]}  ESS = {[round(s['ess'], 3) for s in stages]}  "
+            f"({'COMPLETE' if ts and ts[-1] == 1.0 else 'INCOMPLETE'})")
+        if stages:
+            log(f"[{name}] stage ESS: min = {min(s['ess'] for s in stages):.4f}   "
+                f"last = {stages[-1]['ess']:.4f}   (N_VALID = {N_VALID})")
+        results[name] = (y, stages)
 
-    # figure: adaptive ladder | particle-1 marginal at t = 1 | relative angle
-    fig, axes = plt.subplots(1, 3, figsize=(8.4, 3.0), constrained_layout=True)
-
-    axes[0].plot(range(1, len(ts) + 1), ts, "o-", color="#1F77B4", lw=1.2, label=r"$t_k$")
-    axes[0].plot(range(1, len(ts) + 1), [s["ess"] for s in stages], "s--",
-                 color="#D62728", lw=1.2, label="stage ESS")
-    axes[0].set_xlabel("stage $k$")
-    axes[0].set_xticks(range(1, len(ts) + 1))
-    axes[0].set_ylim(0.0, 1.05)
-    axes[0].set_title("adaptive ladder")
-    axes[0].legend(loc="lower right")
-    axes[0].set_box_aspect(1.0)
-
-    y_np = np.asarray(y_valid_out)
+    # figure (2, 3): per row — adaptive ladder | particle-1 marginal | relative angle
+    fig, axes = plt.subplots(2, 3, figsize=(8.4, 6.0), constrained_layout=True)
     theta = np.linspace(-np.pi, np.pi, 400)
-    axes[1].scatter(y_np[:, 0], y_np[:, 1], s=0.2, alpha=0.3, color="#1F77B4A0",
-                    rasterized=True)
-    axes[1].plot(R0 * np.cos(theta), R0 * np.sin(theta), color="gray", lw=0.8, ls="--")
-    axes[1].set_title("particle 1 at $t = 1$")
-    axes[1].set_xlim(-NSF_LIM, NSF_LIM)
-    axes[1].set_ylim(-NSF_LIM, NSF_LIM)
-    axes[1].set_aspect("equal")
-    axes[1].set_xlabel(r"$x_1$")
-    axes[1].set_ylabel(r"$x_2$")
+    for row, (name, scatter_c, hist_c) in enumerate(
+        (("reverse KL", "#1F77B4A0", "#1F77B4A0"),
+         ("forward KL", "#D62728A0", "#D62728A0"))
+    ):
+        y, stages = results[name]
+        ts = [s["t"] for s in stages]
+        y_np = np.asarray(y)
 
-    dtheta = np.arctan2(y_np[:, 3], y_np[:, 2]) - np.arctan2(y_np[:, 1], y_np[:, 0])
-    dtheta = (dtheta + np.pi) % (2.0 * np.pi) - np.pi
-    axes[2].hist(dtheta, bins=80, density=True, color="#D62728A0")
-    axes[2].set_title(r"relative angle $\Delta\theta$")
-    axes[2].set_xlabel(r"$\Delta\theta$")
-    axes[2].set_xlim(-np.pi, np.pi)
-    axes[2].set_box_aspect(1.0)
+        ax = axes[row, 0]
+        ax.plot(range(1, len(ts) + 1), ts, "o-", color="#1F77B4", lw=1.2, label=r"$t_k$")
+        ax.plot(range(1, len(ts) + 1), [s["ess"] for s in stages], "s--",
+                color="#D62728", lw=1.2, label="stage ESS")
+        ax.set_xlabel("stage $k$")
+        ax.set_xticks(range(1, len(ts) + 1))
+        ax.set_ylim(0.0, 1.05)
+        ax.set_title(f"{name}: adaptive ladder")
+        ax.legend(loc="lower right")
+        ax.set_box_aspect(1.0)
+
+        ax = axes[row, 1]
+        ax.scatter(y_np[:, 0], y_np[:, 1], s=0.2, alpha=0.3, color=scatter_c,
+                   rasterized=True)
+        ax.plot(R0 * np.cos(theta), R0 * np.sin(theta), color="gray", lw=0.8, ls="--")
+        ax.set_title(f"{name}: particle 1 at $t = 1$")
+        ax.set_xlim(-NSF_LIM, NSF_LIM)
+        ax.set_ylim(-NSF_LIM, NSF_LIM)
+        ax.set_aspect("equal")
+        ax.set_xlabel(r"$x_1$")
+        ax.set_ylabel(r"$x_2$")
+
+        ax = axes[row, 2]
+        dtheta = np.arctan2(y_np[:, 3], y_np[:, 2]) - np.arctan2(y_np[:, 1], y_np[:, 0])
+        dtheta = (dtheta + np.pi) % (2.0 * np.pi) - np.pi
+        ax.hist(dtheta, bins=80, density=True, color=hist_c)
+        ax.set_title(f"{name}: relative angle $\\Delta\\theta$")
+        ax.set_xlabel(r"$\Delta\theta$")
+        ax.set_xlim(-np.pi, np.pi)
+        ax.set_box_aspect(1.0)
 
     png = HERE / "4D_boltzmann.png"
     fig.savefig(png, dpi=300, bbox_inches="tight")
