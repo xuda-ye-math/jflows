@@ -61,10 +61,10 @@ Potentials form a vector space: `c * u`, `u0 + u1`, `u0 - u1`, `-u`, `u / c`, an
 ```python
 from jflows.potential import linear_combination
 
-u = linear_combination([u0, u1], [1.0 - c, c])   # U = (1-c) U0 + c U1
+u = linear_combination([u1, u0], [t, 1.0 - t])   # U_t = (1-t) U0 + t U1
 ```
 
-Coefficients are a plain array leaf, so retuning `c` along an annealing ladder never triggers recompilation.
+Coefficients are a plain array leaf, so retuning `t` along an annealing ladder never triggers recompilation.
 
 **A strict interface hierarchy.** The API has three levels. The LOW level is the building blocks — per-sample losses and the SMC toolkit — for assembling custom pipelines. The MEDIUM level — the packed training drivers — composes those blocks into one-call stage trainers. The HIGH level — the annealed Boltzmann generator — chains the stage trainers into the full adaptive-ladder pipeline. Everything below is organized in that order.
 
