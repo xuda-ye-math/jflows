@@ -134,3 +134,45 @@ The tidy numbers are also written to [`CNF_vs_OTFlow.csv`](CNF_vs_OTFlow.csv) (`
 ### Reading the result
 
 Pushed out to $d = 128$, the two flows start nearly tied at low dimension ($\approx 0.97$ at $d = 4$) and then separate: OTFlow stays consistently above the CNF, and while both lose ESS as the dimension climbs, the CNF falls faster — from $0.97$ down to $0.43$ at $d = 128$, versus OTFlow's $0.97 \to 0.62$. The gap widens monotonically with $d$ (already $0.74$ vs $0.86$ at $d = 64$), so OTFlow's closed-form-trace / potential-gradient parameterisation is markedly more dimension-robust than the CNF's free-form velocity — the mode-seeking CNF's importance weights spike sooner as the ambient dimension grows. The high-dimensional cells converge slowly and use the full $1000$-step budget; per-cell wall time is tens of seconds and grows with $d$, the CNF's $O(d)$ exact trace closing most of the cost gap to OTFlow by $d = 128$. As with the other examples these are single-seed numbers that shift by a few times $10^{-2}$ between launches, so the reproducible finding is the widening OTFlow-over-CNF ordering, not the third decimal.
+
+## flow_scaling_law — forward vs inverse map latency
+
+Forward versus inverse map latency of an NSF as the dimension grows, run by [`flow_scaling_law.py`](flow_scaling_law.py) — the jflows counterpart of the zflows `compare_compiled_inverse` benchmark. jflows has no `torch.compile`, so this measures the pure jitted cost of the two fused maps, each returned with its $\log|\det J|$.
+
+### Setup
+
+- **Flow**: NSF on $[-3, 3]^d$, 12 bins, 4 autoregressive transforms, random-initialised (a nontrivial bijection, so the inverse does real work), with the conditioner width swept over $(64, 64)$, $(128, 128)$, $(256, 256)$.
+- **Maps**: `forward_map` $=$ `flow.call_and_ladj(x)` and `inverse_map` $=$ `flow.inv_and_ladj(y)`, each `eqx.filter_jit`-compiled once per (width, $d$) cell.
+- **Timing**: fixed `BATCH = 2000`, `WARMUP = 20` untimed calls to absorb the XLA compile, `TIMED = 50` timed calls, a single `block_until_ready` after the batch; latency is the mean wall time per call. Dimension swept over $d \in \{4, 8, 16, 32, 64, 128\}$.
+
+### Results
+
+Forward map, mean ms per call:
+
+<div align="center">
+
+| width   |  $d=4$ |  $d=8$ | $d=16$ | $d=32$ | $d=64$ | $d=128$ |
+| :-----: | :----: | :----: | :----: | :----: | :----: | :-----: |
+| 64x64   | 0.153  | 0.157  | 0.179  | 0.221  | 0.272  |  0.420  |
+| 128x128 | 0.166  | 0.171  | 0.199  | 0.231  | 0.317  |  0.451  |
+| 256x256 | 0.176  | 0.192  | 0.207  | 0.260  | 0.365  |  0.552  |
+
+</div>
+
+Inverse map, mean ms per call:
+
+<div align="center">
+
+| width   | $d=4$ | $d=8$ | $d=16$ | $d=32$ | $d=64$ | $d=128$ |
+| :-----: | :---: | :---: | :----: | :----: | :----: | :-----: |
+| 64x64   | 0.432 | 0.720 | 1.585  | 4.016  | 11.815 | 40.124  |
+| 128x128 | 0.471 | 0.846 | 1.865  | 4.585  | 13.338 | 46.438  |
+| 256x256 | 0.554 | 1.071 | 2.205  | 5.907  | 17.529 | 59.332  |
+
+</div>
+
+The full grid, with the inv/fwd ratio, is written to [`flow_scaling_law.csv`](flow_scaling_law.csv) (`hidden_features, dimension, forward_ms, inverse_ms, inv_over_fwd`).
+
+### Reading the result
+
+The forward map is a single parallel pass and stays essentially flat in dimension — at $(64, 64)$ it moves only $0.153 \to 0.420$ ms from $d = 4$ to $d = 128$ ($\sim 3\times$ over a $32\times$ dimension increase). The inverse is autoregressive: a MAF-style flow inverts one coordinate at a time, so it runs $d$ sequential conditioner passes and climbs steeply — $0.432 \to 40.1$ ms at $(64, 64)$, roughly $90\times$, and steepening as $d$ rises. The resulting inv/fwd penalty opens from $\sim 3\times$ at $d = 4$ to $\sim 100\times$ at $d = 128$ across all three widths. Widening the conditioner ($64 \to 256$) raises both maps but far less than dimension does — at $d = 128$ the inverse grows only $40 \to 59$ ms and the forward $0.42 \to 0.55$ ms — so dimension, through the sequential autoregressive inversion, is the dominant cost, not MLP width. This is the intrinsic forward/inverse asymmetry of autoregressive spline flows, and it is exactly why the losses in the other examples are differentiated in each flow's native forward direction and never invert during training. The absolute milliseconds are GPU-specific; the scaling — a near-flat forward and a steeply growing inverse, dominated by dimension — is the reproducible finding.
