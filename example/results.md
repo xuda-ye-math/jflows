@@ -17,10 +17,10 @@ Both trainers regenerate their batch inside every Adam step. The reverse KL flow
 
 ### Results
 
-| objective | final ESS ($N = 40000$) | batch ESS along training |
-| :---: | :---: | :---: |
-| reverse KL | 0.9324 | 0.19 → 0.83 → 0.93 |
-| forward KL | 0.9500 | 0.74 → 0.97 → 0.96 |
+| objective  | final ESS ($N = 40000$) | batch ESS along training |
+| :--------: | :---------------------: | :----------------------: |
+| reverse KL |          0.9324         |    0.19 → 0.83 → 0.93    |
+| forward KL |          0.9500         |    0.74 → 0.97 → 0.96    |
 
 <p align="center"><img src="2D_single.png" alt="2D single-stage training" width="1000px"></p>
 
@@ -46,10 +46,10 @@ The jflows rewrite of the zflows periodic reference test, run by [`3D_periodic.p
 
 ### Results
 
-| objective | final ESS ($N = 40000$) |
-| :---: | :---: |
-| reverse KL | 0.8335 |
-| forward KL | 0.9074 |
+| objective  | final ESS ($N = 40000$) |
+| :--------: | :---------------------: |
+| reverse KL |          0.8335         |
+| forward KL |          0.9074         |
 
 <p align="center"><img src="3D_periodic.png" alt="3D periodic NCSF" width="1000px"></p>
 
@@ -72,15 +72,15 @@ The 4D two-charge target of the zflows reference test, sampled by [`4D_boltzmann
 
 Both ladders reach $t = 1$ in four stages (~8-10 s each on the full 120000-particle set; the stage trainer, weight evaluation, and advance each compile once and are reused across all stages). The rejection machinery earns its keep in the reverse run: its safe start $t = 0.2$ trains but misses the acceptance bar and shrinks to $0.14$, while the AIS-fed forward run accepts the full safe start and climbs faster — every other stage passes on its first attempt:
 
-| reverse KL, stage $k$ | 1 | 2 | 3 | 4 |
-| :---: | :---: | :---: | :---: | :---: |
-| $t_k$     | 0.14 | 0.35 | 0.665 | 1.0 |
-| ESS       | 0.657 | 0.904 | 0.957 | 0.984 |
+| reverse KL, stage $k$ |   1   |   2   |   3   |   4   |
+| :-------------------: | :---: | :---: | :---: | :---: |
+|         $t_k$         |  0.14 |  0.35 | 0.665 |  1.0  |
+|          ESS          | 0.657 | 0.904 | 0.957 | 0.984 |
 
-| forward KL, stage $k$ | 1 | 2 | 3 | 4 |
-| :---: | :---: | :---: | :---: | :---: |
-| $t_k$     | 0.20 | 0.50 | 0.95 | 1.0 |
-| ESS       | 0.764 | 0.898 | 0.963 | 0.987 |
+| forward KL, stage $k$ |   1   |   2   |   3   |   4   |
+| :-------------------: | :---: | :---: | :---: | :---: |
+|         $t_k$         |  0.20 |  0.50 |  0.95 |  1.0  |
+|          ESS          | 0.764 | 0.898 | 0.963 | 0.987 |
 
 <p align="center"><img src="4D_boltzmann.png" alt="4D Boltzmann generator" width="1000px"></p>
 
