@@ -32,6 +32,29 @@ Both flows populate all three modes, and the AIS-fed forward KL ends with the hi
 
 Two practical notes. First, wall clock: each packed 200-step training compiles in a few seconds and executes in 1.5–2.5 s on an RTX 5070 Ti; the whole script (both trainings, evaluation, figure) runs in about 12 s. Second, reproducibility: the trainers are deterministic within a process (fixed internal seed — two identical calls agree bit for bit), while across separate launches XLA kernel autotuning can introduce last-ulp differences that 200 training steps amplify, so the final ESS varies by a few times $10^{-2}$ between runs (reverse KL $\approx 0.92$–$0.93$, forward KL $\approx 0.95$).
 
+## 3D_periodic — the NCSF on the torus
+
+The jflows rewrite of the zflows periodic reference test, run by [`3D_periodic.py`](3D_periodic.py): its purpose is to show that the **NCSF actually works** — the circular-spline flow trains, inverts, and reweights correctly on a genuinely periodic domain.
+
+### Setup
+
+- **Source** $\mu_0$: uniform on the periodic box $[-\pi, \pi]^3$.
+- **Target** $\mu_1 \propto e^{-U_1}$: the von Mises ridge mixture on the 3-torus,
+  $U_1(x) = -\log[\, e^{\kappa\cos(x_1 - x_2)} + e^{\kappa\cos(x_2 - x_3)} + e^{\kappa\cos(x_3 - x_1)} \,]$, $\kappa = 4$ — three pairwise ridges that wrap around the torus.
+- **Flow**: NCSF on $[-\pi, \pi]^3$, 8 bins, 4 autoregressive transforms, $(128, 128)$ conditioners, identity-initialised.
+- **Training**: one packed call per objective — `N_VALID = 40000` fixed source set, `N_BATCH = 2000` per Adam step, `STEPS = 200`, `LR = 1e-3` — followed by the reweighting pipeline: importance weights → ESS → multinomial resampling → MALA rejuvenation at the target (`1e-3 × 100`).
+
+### Results
+
+| objective | final ESS ($N = 40000$) |
+| --------- | :---: |
+| reverse KL | 0.8335 |
+| forward KL | 0.9074 |
+
+<p align="center"><img src="3D_periodic.png" alt="3D periodic NCSF" width="1000px"></p>
+
+Both panels show the resampled and rejuvenated particle sets (left: reverse KL; right: forward KL) concentrating on the wrap-around ridge tubes of the target — the structure a non-periodic flow cannot represent without seam artifacts. The healthy ESS of both objectives on this domain is the point: the NCSF's circular splines carry the periodic geometry end to end, matching the behaviour of the zflows original at the same $\kappa$, architecture, and training budget.
+
 ## 4D_boltzmann — annealed BG with the adaptive ladder
 
 The 4D two-charge target of the zflows reference test, sampled by [`4D_boltzmann.py`](4D_boltzmann.py) with BOTH annealed generators — `boltzmann_reverse_KL` and `boltzmann_forward_KL` — along the bridge ladder $U_t = (1-t)\,U_0 + t\,U_1$, with the coefficient $t$ selected adaptively instead of the original fixed schedule $c_k = k/12$.
@@ -66,26 +89,3 @@ Each row (top: reverse KL; bottom: forward KL) shows the adaptive ladder ($t_k$ 
 ### Reading the result
 
 The ESS trace follows the reference behaviour of the original fixed-ladder run — a lower leading rung, then a high plateau — while the ESS-gated selection compresses the schedule: the leading increment is small (`t_safe`), the accepted step then grows by the enlarge factor, and the final extrapolation snaps to $t = 1$, so four stages cover what the fixed schedule spent twelve rungs on. The generator's sample output is the advanced particle set; the per-stage incremental flows and their acceptance ESS are returned in the stage records.
-
-## 3D_periodic — the NCSF on the torus
-
-The jflows rewrite of the zflows periodic reference test, run by [`3D_periodic.py`](3D_periodic.py): its purpose is to show that the **NCSF actually works** — the circular-spline flow trains, inverts, and reweights correctly on a genuinely periodic domain.
-
-### Setup
-
-- **Source** $\mu_0$: uniform on the periodic box $[-\pi, \pi]^3$.
-- **Target** $\mu_1 \propto e^{-U_1}$: the von Mises ridge mixture on the 3-torus,
-  $U_1(x) = -\log[\, e^{\kappa\cos(x_1 - x_2)} + e^{\kappa\cos(x_2 - x_3)} + e^{\kappa\cos(x_3 - x_1)} \,]$, $\kappa = 4$ — three pairwise ridges that wrap around the torus.
-- **Flow**: NCSF on $[-\pi, \pi]^3$, 8 bins, 4 autoregressive transforms, $(128, 128)$ conditioners, identity-initialised.
-- **Training**: one packed call per objective — `N_VALID = 40000` fixed source set, `N_BATCH = 2000` per Adam step, `STEPS = 200`, `LR = 1e-3` — followed by the reweighting pipeline: importance weights → ESS → multinomial resampling → MALA rejuvenation at the target (`1e-3 × 100`).
-
-### Results
-
-| objective | final ESS ($N = 40000$) |
-| --------- | :---: |
-| reverse KL | 0.8335 |
-| forward KL | 0.9074 |
-
-<p align="center"><img src="3D_periodic.png" alt="3D periodic NCSF" width="1000px"></p>
-
-Both panels show the resampled and rejuvenated particle sets (left: reverse KL; right: forward KL) concentrating on the wrap-around ridge tubes of the target — the structure a non-periodic flow cannot represent without seam artifacts. The healthy ESS of both objectives on this domain is the point: the NCSF's circular splines carry the periodic geometry end to end, matching the behaviour of the zflows original at the same $\kappa$, architecture, and training budget.
