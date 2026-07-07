@@ -211,31 +211,7 @@ help(NSF)
 
 ## Examples
 
-[`example/2D_single.py`](example/2D_single.py) trains one NSF on a three-mode 2D Gaussian mixture with each KL objective — reverse KL on Langevin-freshened source batches, forward KL on AIS-manufactured target batches — and compares them by ESS. Run from the repo root:
-
-```bash
-python -m example.2D_single
-```
-
-<p align="center"><img src="example/2D_single.png" alt="2D single-stage training" width="1000px"></p>
-
-[`example/3D_periodic.py`](example/3D_periodic.py) validates the NCSF on a genuinely periodic domain: a von Mises ridge mixture on the 3-torus, trained with each KL objective in one packed stage and finished by the reweighting pipeline (importance weights → ESS → resample → MALA at the target):
-
-```bash
-python -m example.3D_periodic
-```
-
-<p align="center"><img src="example/3D_periodic.png" alt="3D periodic NCSF" width="1000px"></p>
-
-[`example/4D_boltzmann.py`](example/4D_boltzmann.py) runs BOTH annealed generators — `boltzmann_reverse_KL` and `boltzmann_forward_KL` — on the 4D two-charge target of the zflows reference test (two particles on a soft annulus with regularized Coulomb repulsion), where a direct flow proposal has ESS ~ 0. Both adaptive ladders reach $t = 1$ in four stages, compared row by row (top: reverse KL; bottom: forward KL):
-
-```bash
-python -m example.4D_boltzmann
-```
-
-<p align="center"><img src="example/4D_boltzmann.png" alt="4D Boltzmann generator" width="1000px"></p>
-
-Numerical results and discussion: [`example/results.md`](example/results.md).
+Worked examples for each model — a 2D Gaussian mixture, a 3D periodic (NCSF) target, and the 4D two-charge annealed Boltzmann generator — live in [`example/`](example). See [`example/results.md`](example/results.md) for the scripts, figures, and discussion.
 
 ## Acknowledgements
 

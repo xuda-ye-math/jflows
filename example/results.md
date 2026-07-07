@@ -105,3 +105,32 @@ Each row (top: reverse KL; bottom: forward KL) shows the adaptive ladder ($t_k$ 
 ### Reading the result
 
 The ESS trace follows the reference behaviour of the original fixed-ladder run — a lower leading rung, then a high plateau — while the ESS-gated selection compresses the schedule: the leading increment is small (`t_safe`), the accepted step then grows by the enlarge factor, and the final extrapolation snaps to $t = 1$, so four stages cover what the fixed schedule spent twelve rungs on. The generator's sample output is the advanced particle set; the per-stage incremental flows and their acceptance ESS are returned in the stage records.
+
+## CNF_vs_OTFlow — continuous flows across dimension
+
+CNF versus OTFlow on a fixed multi-modal target as the dimension grows, run by [`CNF_vs_OTFlow.py`](CNF_vs_OTFlow.py) — the jflows rewrite of the zflows `multi_well_compare` benchmark. Both continuous flows are trained by the **same** objective, plain reverse KL, so the comparison isolates the one variable that differs: the velocity-field architecture.
+
+### Setup
+
+- **Source** $\mu_0$: standard Gaussian on $\mathbb R^d$.
+- **Target** $\mu_1 \propto e^{-U_1}$: a factorized multi-well potential whose mode count stays fixed while $d$ is swept,
+  $U_1(x) = \sum_{i < 3} \beta_{\mathrm w}\,((x_i / s)^2 - 1)^2 + \sum_{i \ge 3} \tfrac12 x_i^2$, with $s = 1.5$, $\beta_{\mathrm w} = 1.5$. The first three coordinates are symmetric double wells (minima at $\pm s$), giving $2^3 = 8$ modes; the remaining $d - 3$ coordinates are standard Gaussian and only raise the dimension. The barrier is deliberately shallow so mode-seeking reverse KL must cover all eight modes rather than collapse onto a subset.
+- **Flows**: `CNF` (FFJORD, free-form MLP velocity, exact $O(d)$ augmented-Jacobian trace) with `frequency = 4`; `OTFlow` (velocity $= -\nabla\Phi$ with a closed-form Hessian trace) with `hidden = 64`, `layer = 3`, `rank = min(10, d+1)`. Both integrate with the same fixed-step RK4 (`nt = 12`) and $(64, 64)$-width ODE nets, identity-initialised.
+- **Training**: one packed `train_reverse_KL` call per cell — plain reverse KL with no rejuvenation (`MC_ITERS = 0`), `N_VALID = 40000` fixed source pool, `N_BATCH = 1024` per Adam step, `STEPS = 500`, `LR = 2e-3`, `checkpoint = True` (the CNF exact-trace path). The final ESS is the proposal importance-sampling ESS on a held-out $N = 20000$ source set.
+
+### Results
+
+<div align="center">
+
+| flow   | $d=4$  | $d=8$  | $d=12$ | $d=16$ | $d=20$ | $d=24$ |
+| :----: | :----: | :----: | :----: | :----: | :----: | :----: |
+| CNF    | 0.9534 | 0.9418 | 0.9116 | 0.9131 | 0.9060 | 0.8820 |
+| OTFlow | 0.9802 | 0.9628 | 0.9485 | 0.9656 | 0.9400 | 0.9417 |
+
+</div>
+
+The tidy numbers are also written to [`CNF_vs_OTFlow.csv`](CNF_vs_OTFlow.csv) (`flow, dimension, ess, train_seconds`) for downstream plotting.
+
+### Reading the result
+
+OTFlow holds its ESS in a tight $0.94$–$0.98$ band across the whole sweep with no systematic decay, while the CNF sits a few points lower at every dimension and drifts down mildly from $0.95$ at $d = 4$ to $0.88$ at $d = 24$. At this well depth and training budget neither flow collapses — both cover the eight modes — but OTFlow's potential-gradient field, with its closed-form $\Delta\Phi$, appears to keep the log-det more accurate and the trivial Gaussian directions cleaner, so its importance weights stay flatter as the ambient dimension climbs. The gain here is quality, not speed: OTFlow costs roughly $1.5$–$2\times$ the CNF wall time per cell, which is the trade a Boltzmann-generator pipeline wants when a higher, flatter ESS means fewer proposals per effective sample. As in the other examples the numbers are a single-seed run and shift by a few times $10^{-2}$ between launches (XLA autotuning), so the reproducible finding is the ordering — OTFlow above CNF, and flatter — not the third decimal.

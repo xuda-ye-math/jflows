@@ -11,17 +11,15 @@ Public API (the `type` argument names the transform type, 'F' or 'G'):
     reverse_KL  — source samples; transform is F (source -> target,
                   type='F') or G (target -> source, type='G')
     forward_KL  — target samples; same `type` convention
-    OT_loss     — reverse KL + optimal-transport regularizers
 """
 
 from jax import Array
 
-from .flow import Flow, OTFlow
+from .flow import Flow
 from .potential import Potential
 
 
 __all__ = [
-    "OT_loss",
     "forward_KL",
     "reverse_KL",
 ]
@@ -83,39 +81,3 @@ def forward_KL(y: Array, source: Potential, flow: Flow, type: str) -> Array:
     else:
         raise ValueError(f"forward_KL: type must be 'F' or 'G', got {type!r}")
     return source(x) - ladj
-
-
-# ──────────────────────────────────────────────────────────────────────
-# OT_loss — reverse KL + optimal-transport regularizers (OTFlow only)
-# ──────────────────────────────────────────────────────────────────────
-
-def OT_loss(
-    x: Array,
-    target: Potential,
-    otflow: OTFlow,
-    alpha_C: float = 1.0,
-    alpha_R: float = 1.0,
-) -> Array:
-    """
-    Full OT-Flow training objective: reverse KL plus the two optimal-transport
-    regularizers. Specific to `jflows.flow.OTFlow` — it integrates the
-    4-channel augmented ODE (position, log-det, transport cost, HJB residual)
-    in a single pass via `OTFlowTransform.call_full`. Returns the per-sample
-    contributions
-        target(F(x)) - log|det J_F(x)| + alpha_C * C(x) + alpha_R * R(x),
-    where the first two terms are exactly `reverse_KL` (the energy-based
-    objective), C(x) = integral_0^1 (1/2)|grad Phi|^2 dt is the transport cost,
-    and R(x) = integral_0^1 |(1/2)|grad Phi|^2 - d_t Phi| dt is the HJB residual.
-    Setting alpha_C = alpha_R = 0 recovers `reverse_KL(x, target, otflow, type='F')`.
-    Input:
-        x:       Array [N, d]   samples drawn from the source distribution
-        target:  Potential      negative log-density of the target (up to const)
-        otflow:  OTFlow         the optimal-transport flow
-        alpha_C: float          weight on the transport-cost regularizer (default 1.0)
-        alpha_R: float          weight on the HJB-residual regularizer (default 1.0)
-    Output:
-        loss: Array [N]   per-sample losses (reduce with .mean() for the objective)
-    """
-    F = otflow.t().transforms[0]            # the underlying OTFlowTransform
-    y, ladj, C, R = F.call_full(x)
-    return target(y) - ladj + alpha_C * C + alpha_R * R
