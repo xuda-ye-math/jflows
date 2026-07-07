@@ -21,8 +21,8 @@ Both trainers regenerate their batch inside every Adam step. The reverse KL flow
 
 | objective  | final ESS ($N = 40000$) | batch ESS along training |
 | :--------: | :---------------------: | :----------------------: |
-| reverse KL |         0.9245          |   0.19 -> 0.85 -> 0.93   |
-| forward KL |         0.9496          |   0.74 -> 0.97 -> 0.98   |
+| reverse KL |         0.9242          |   0.35 -> 0.88 -> 0.94   |
+| forward KL |         0.9455          |   0.84 -> 0.96 -> 0.97   |
 
 </div>
 
@@ -32,7 +32,7 @@ The left panel shows the per-step batch-ESS histories returned by the trainers (
 
 ### Reading the result
 
-Both flows populate all three modes, and the AIS-fed forward KL ends with the higher ESS: its data pipeline supplies (approximately) target-distributed samples covering every mode from the first step — its batch ESS starts already at $\sim 0.75$ — while the reverse KL starts near $0.19$ and pays its mode-seeking tax as the barriers grow. On a harder target — farther modes, or modes the initial proposal never reaches — the reverse objective can collapse entirely, and the forward objective inherits whatever the AIS chain covers; that regime (and the regularization that addresses it) is the subject of the X-regularization line of work these conventions come from.
+Both flows populate all three modes, and the AIS-fed forward KL ends with the higher ESS: its data pipeline supplies (approximately) target-distributed samples covering every mode from the first step — its batch ESS starts already at $\sim 0.84$ — while the reverse KL starts near $0.35$ and pays its mode-seeking tax as the barriers grow. On a harder target — farther modes, or modes the initial proposal never reaches — the reverse objective can collapse entirely, and the forward objective inherits whatever the AIS chain covers; that regime (and the regularization that addresses it) is the subject of the X-regularization line of work these conventions come from.
 
 Two practical notes. First, wall clock: each packed 200-step training compiles in a few seconds and executes in 1.5–2.5 s on an RTX 5070 Ti; the whole script (both trainings, evaluation, figure) runs in about 12 s. Second, reproducibility: the trainers are deterministic within a process (fixed internal seed — two identical calls agree bit for bit), while across separate launches XLA kernel autotuning can introduce last-ulp differences that 200 training steps amplify, so the final ESS varies by a few times $10^{-2}$ between runs (reverse KL $\approx 0.92$–$0.93$, forward KL $\approx 0.95$).
 
@@ -54,8 +54,8 @@ Run by [`3D_periodic.py`](3D_periodic.py): its purpose is to show that the **NCS
 
 | objective  | final ESS ($N = 40000$) |
 | :--------: | :---------------------: |
-| reverse KL |         0.8392          |
-| forward KL |         0.9090          |
+| reverse KL |         0.8472          |
+| forward KL |         0.9040          |
 
 </div>
 
@@ -74,7 +74,7 @@ The 4D two-charge target, sampled by [`4D_boltzmann.py`](4D_boltzmann.py) with B
   $U_1(x) = a\,[(\lVert x_1\rVert^2 - r_0^2)^2 + (\lVert x_2\rVert^2 - r_0^2)^2] + q^2 / \sqrt{\lVert x_1 - x_2\rVert^2 + \varepsilon^2}$
   with $r_0 = 2$, $a = 1$, $q^2 = 4$, $\varepsilon = 10^{-3}$ (identical to the original).
 - **Flow**: NSF on $[-3, 3]^4$, 8 bins, 6 autoregressive transforms, $(64, 64)$ conditioners, identity-initialised.
-- **Boltzmann generators**: the stage flows are connected step by step — stage $k$ selects $t_k$ through the SMC gate (`tau_smc`, `LADDER = 1` rung), trains the warm-started flow as the incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$ on the advancing particle set, accepts on the incremental importance-sampling ESS (`tau_ess`), and advances the set by reweight → resample → MALA at $U_{t_k}$ (`mc_adjust = True`; the Metropolis gate keeps the near-singular Coulomb tail out of the particle set). The reverse KL stages train on Langevin-freshened batches of the set; the forward KL stages train on target batches manufactured per Adam step by AIS through the current flow (SMC gate and AIS share `LADDER`). Parameters: `N_VALID = 120000`, `N_BATCH = 2000`, `STEPS = 500`, `LR = 1e-4`, MALA `1e-3 × 100`; ladder `t_safe = 0.2`, `shrink_factor = 0.7`, `enlarge_factor = 1.5`, `tau_smc = 0.2`, `tau_ess = 0.6`.
+- **Boltzmann generators**: the stage flows are connected step by step — stage $k$ selects $t_k$ through the SMC gate (`tau_smc`, `LADDER = 1` rung, on an `N_POOL`-sized selection pool drawn from the particle set), trains the warm-started flow as the incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$ on the advancing particle set, accepts on the incremental importance-sampling ESS (`tau_ess`), and advances the set by reweight → resample → MALA at $U_{t_k}$ (`mc_adjust = True`; the Metropolis gate keeps the near-singular Coulomb tail out of the particle set). The reverse KL stages train on Langevin-freshened batches of the set; the forward KL stages train on target batches manufactured per Adam step by AIS through the current flow (SMC gate and AIS share `LADDER`). Parameters: `N_VALID = 120000`, `N_POOL = 24000`, `N_BATCH = 2000`, `STEPS = 500`, `LR = 1e-4`, MALA `1e-3 × 100`; ladder `t_safe = 0.2`, `shrink_factor = 0.7`, `enlarge_factor = 1.5`, `tau_smc = 0.2`, `tau_ess = 0.6`.
 
 ### Results
 
@@ -82,10 +82,10 @@ Both ladders reach $t = 1$ in four stages (~8-10 s each on the full 120000-parti
 
 <div align="center">
 
-| reverse KL, stage $k$ |   1   |   2   |   3   |   4   |
-| :-------------------: | :---: | :---: | :---: | :---: |
-|         $t_k$         | 0.14  | 0.35  | 0.665 |  1.0  |
-|          ESS          | 0.620 | 0.894 | 0.954 | 0.985 |
+| reverse KL, stage $k$ |   1   |   2   |   3   |   4   |   5   |
+| :-------------------: | :---: | :---: | :---: | :---: | :---: |
+|         $t_k$         | 0.098 | 0.245 | 0.466 | 0.796 |  1.0  |
+|          ESS          | 0.654 | 0.814 | 0.944 | 0.972 | 0.993 |
 
 </div>
 
@@ -94,7 +94,7 @@ Both ladders reach $t = 1$ in four stages (~8-10 s each on the full 120000-parti
 | forward KL, stage $k$ |   1   |   2   |   3   |   4   |
 | :-------------------: | :---: | :---: | :---: | :---: |
 |         $t_k$         | 0.20  | 0.50  | 0.95  |  1.0  |
-|          ESS          | 0.764 | 0.899 | 0.963 | 0.987 |
+|          ESS          | 0.764 | 0.898 | 0.962 | 0.986 |
 
 </div>
 
@@ -104,7 +104,7 @@ Each row (top: reverse KL; bottom: forward KL) shows the adaptive ladder ($t_k$ 
 
 ### Reading the result
 
-The ESS trace follows the reference behaviour of the original fixed-ladder run — a lower leading rung, then a high plateau — while the ESS-gated selection compresses the schedule: the leading increment is small (`t_safe`), the accepted step then grows by the enlarge factor, and the final extrapolation snaps to $t = 1$, so four stages cover what the fixed schedule spent twelve rungs on. The generator's sample output is the advanced particle set; the per-stage incremental flows and their acceptance ESS are returned in the stage records.
+The ESS trace follows the reference behaviour of the original fixed-ladder run — a lower leading rung, then a high plateau — while the ESS-gated selection compresses the schedule: the leading increment is small (`t_safe`), the accepted step then grows by the enlarge factor, and the final extrapolation snaps to $t = 1$, so four or five stages cover what the fixed schedule spent twelve rungs on. The generator's sample output is the advanced particle set; the per-stage incremental flows and their acceptance ESS are returned in the stage records.
 
 ## CNF_vs_OTFlow — continuous flows across dimension
 
@@ -124,8 +124,8 @@ CNF versus OTFlow on a fixed multi-modal target as the dimension grows, run by [
 
 | flow   | $d=4$  | $d=8$  | $d=16$ | $d=32$ | $d=64$ | $d=128$ |
 | :----: | :----: | :----: | :----: | :----: | :----: | :-----: |
-| CNF    | 0.9704 | 0.9579 | 0.9310 | 0.8824 | 0.7411 | 0.4289  |
-| OTFlow | 0.9712 | 0.9595 | 0.9455 | 0.9144 | 0.8594 | 0.6150  |
+| CNF    | 0.9705 | 0.9579 | 0.9311 | 0.8824 | 0.7412 | 0.4293  |
+| OTFlow | 0.9713 | 0.9595 | 0.9456 | 0.9145 | 0.8588 | 0.6166  |
 
 </div>
 

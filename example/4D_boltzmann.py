@@ -68,6 +68,7 @@ HIDDEN_FEATURES = (64, 64)   # hidden widths of each conditioner MLP
 
 # training parameters
 N_VALID: int = 120000   # the fixed source set (training pool + validation ESS)
+N_POOL: int = 24000    # selection-pool size of the tau_smc SMC gate
 N_BATCH: int = 2000    # batch drawn from the fixed set per Adam step
 STEPS: int = 500       # Adam steps per stage attempt (one compiled call)
 LR: float = 1e-4       # Adam learning rate
@@ -129,8 +130,8 @@ def log(msg: str) -> None:
 def main() -> None:
     open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START 4D_boltzmann | jax {jax.__version__} | "
-        f"backend {jax.default_backend()} | N_VALID={N_VALID} N_BATCH={N_BATCH} "
-        f"STEPS={STEPS} LR={LR} MC={MC_STEP}x{MC_ITERS} bg={BG_PARAM}")
+        f"backend {jax.default_backend()} | N_VALID={N_VALID} N_POOL={N_POOL} "
+        f"N_BATCH={N_BATCH} STEPS={STEPS} LR={LR} MC={MC_STEP}x{MC_ITERS} bg={BG_PARAM}")
     x_valid = u0.samples(jax.random.key(2), N_VALID)  # the fixed N_VALID source set
 
     def new_flow(key):
@@ -145,7 +146,7 @@ def main() -> None:
         t0 = time.time()
         y, stages = driver(
             x_valid, u0, u1, new_flow(key_f), type=tp,
-            n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=LADDER,
+            n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=LADDER,
             mc_step=MC_STEP, mc_iters=MC_ITERS,
             monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log), bg_param=BG_PARAM,
         )

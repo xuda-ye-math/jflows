@@ -362,8 +362,8 @@ def train_forward_KLX_G(
 
     The ESS history is the honest flow-vs-target overlap of each step's
     manufactured batch, compute_ESS_log(z) with the log-ratio z above (at no
-    extra flow evaluations — z falls out of the loss forward pass), NOT the
-    regularized loss, so its value is unaffected by coeff_lambda. Since y is
+    extra flow evaluations — z falls out of the loss forward pass), so its
+    value is unaffected by coeff_lambda. Since y is
     (approximately) target-distributed, this is the reverse-direction chi^2
     overlap — in (0, 1], equal to 1 iff proposal == target.
 
@@ -436,6 +436,7 @@ def train_forward_KLX_G(
 
 _iw_log_jit = eqx.filter_jit(importance_weights_log)
 _smc_jit = eqx.filter_jit(sequential_monte_carlo)
+_langevin_jit = eqx.filter_jit(langevin)   # per-stage selection-pool rejuvenation
 
 
 @eqx.filter_jit
@@ -471,6 +472,7 @@ def boltzmann_reverse_KL(
     target: Potential,
     flow: Flow,
     type: str,
+    n_pool: int,
     n_batch: int,
     steps: int,
     lr: float,
@@ -495,12 +497,14 @@ def boltzmann_reverse_KL(
     only ever learns a small deformation. Stage k runs
 
         1. selection:       when tau_smc > 0, a `ladder`-rung SMC check
-                            from U_{t_{k-1}} to the candidate bridge on
-                            the particle set shrinks t_k until its
-                            MINIMUM per-rung ESS clears tau_smc (at most
-                            60 shrinks, as in the reference
-                            adaptive_step) — SMC is far cheaper than a
-                            training attempt, so the gate filters
+                            from U_{t_{k-1}} to the candidate bridge on an
+                            `n_pool`-sized selection pool — drawn with
+                            replacement from the particle set and
+                            Langevin-rejuvenated at U_{t_{k-1}} — shrinks
+                            t_k until its MINIMUM per-rung ESS clears
+                            tau_smc (at most 60 shrinks, as in the
+                            reference adaptive_step) — SMC is far cheaper
+                            than a training attempt, so the gate filters
                             over-aggressive t_k for free;
         2. training:        `train_reverse_KL(y, U_{t_{k-1}}, U_{t_k},
                             flow, type, ...)` — a packed reverse KL
@@ -548,6 +552,9 @@ def boltzmann_reverse_KL(
         flow:     Flow           the normalizing flow to train
         type:     str            'F' if the flow maps source -> target;
                                  'G' if it maps target -> source
+        n_pool:   int            selection-pool size: the tau_smc gate runs on
+                                 this many particles drawn (with replacement)
+                                 from the particle set per stage
         n_batch:  int            samples drawn from the particle set per Adam step
         steps:    int            Adam steps per stage attempt
         lr:       float          Adam learning rate
@@ -617,13 +624,21 @@ def boltzmann_reverse_KL(
         if 1.0 - t_k < p["t_tol"]:
             t_k = 1.0
         u_prev = linear_combination([target, source], [t_prev, 1.0 - t_prev])
-        # (1) SMC pre-selection of t_k (the reference adaptive_step): shrink
-        # until the single-rung SMC ESS on the particle set clears tau_smc
+        # (1) selection pool + SMC pre-selection of t_k (the reference
+        # adaptive_step): the gate runs on an n_pool-sized pool drawn with
+        # replacement from the particle set and rejuvenated at U_{t_{k-1}}
+        # (the set is exact mu_0 at t = 0); shrink t_k until the pool's
+        # minimum per-rung SMC ESS clears tau_smc
         if p["tau_smc"] > 0.0:
+            key_pool, key_mc_pool = jax.random.split(jax.random.fold_in(key, 20_000 + k))
+            pool = y_valid[jax.random.randint(key_pool, (n_pool,), 0, y_valid.shape[0])]
+            if t_prev > 0.0:
+                pool = _langevin_jit(key_mc_pool, pool, u_prev, step=mc_step,
+                                     iters=mc_iters, adjust=mc_adjust, chunk=chunk)
             smc_base = jax.random.fold_in(key, 10_000 + k)  # disjoint from the advance keys
             for s_i in range(60):                           # max_shrinks, as in the reference
                 u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
-                _, smc_ess = _smc_jit(jax.random.fold_in(smc_base, s_i), y_valid,
+                _, smc_ess = _smc_jit(jax.random.fold_in(smc_base, s_i), pool,
                                       u_prev, u_k, ladder=ladder, step=mc_step,
                                       iters=mc_iters, adjust=mc_adjust, chunk=chunk)
                 ess_smc = float(smc_ess.min())
@@ -683,6 +698,7 @@ def boltzmann_forward_KL(
     target: Potential,
     flow: Flow,
     type: str,
+    n_pool: int,
     n_batch: int,
     steps: int,
     lr: float,
@@ -707,9 +723,10 @@ def boltzmann_forward_KL(
     distribution mu_{t_{k-1}} to the next bridge mu_{t_k}. Stage k runs
 
         1. selection:       when tau_smc > 0, a `ladder`-rung SMC check
-                            from U_{t_{k-1}} to the candidate bridge
-                            shrinks t_k until its MINIMUM per-rung ESS
-                            clears tau_smc (at most 60 shrinks);
+                            from U_{t_{k-1}} to the candidate bridge on an
+                            `n_pool`-sized selection pool drawn from the
+                            particle set shrinks t_k until its MINIMUM
+                            per-rung ESS clears tau_smc (at most 60 shrinks);
         2. training:        `train_forward_KL(y, U_{t_{k-1}}, U_{t_k},
                             flow, type, ...)` — each Adam step draws an
                             `n_batch` subset of the particle set and
@@ -767,12 +784,18 @@ def boltzmann_forward_KL(
         if 1.0 - t_k < p["t_tol"]:
             t_k = 1.0
         u_prev = linear_combination([target, source], [t_prev, 1.0 - t_prev])
-        # (1) SMC pre-selection of t_k
+        # (1) SMC pre-selection of t_k on an n_pool-sized selection pool
+        # (drawn with replacement, rejuvenated at U_{t_{k-1}} when t > 0)
         if p["tau_smc"] > 0.0:
+            key_pool, key_mc_pool = jax.random.split(jax.random.fold_in(key, 20_000 + k))
+            pool = y_valid[jax.random.randint(key_pool, (n_pool,), 0, y_valid.shape[0])]
+            if t_prev > 0.0:
+                pool = _langevin_jit(key_mc_pool, pool, u_prev, step=mc_step,
+                                     iters=mc_iters, adjust=mc_adjust, chunk=chunk)
             smc_base = jax.random.fold_in(key, 10_000 + k)  # disjoint from the advance keys
             for s_i in range(60):                           # max_shrinks, as in the reference
                 u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
-                _, smc_ess = _smc_jit(jax.random.fold_in(smc_base, s_i), y_valid,
+                _, smc_ess = _smc_jit(jax.random.fold_in(smc_base, s_i), pool,
                                       u_prev, u_k, ladder=ladder, step=mc_step,
                                       iters=mc_iters, adjust=mc_adjust, chunk=chunk)
                 ess_smc = float(smc_ess.min())
@@ -828,6 +851,7 @@ def boltzmann_forward_KLX_G(
     source: Potential,
     target: Potential,
     flow: Flow,
+    n_pool: int,
     n_batch: int,
     steps: int,
     lr: float,
@@ -882,12 +906,18 @@ def boltzmann_forward_KLX_G(
         if 1.0 - t_k < p["t_tol"]:
             t_k = 1.0
         u_prev = linear_combination([target, source], [t_prev, 1.0 - t_prev])
-        # (1) SMC pre-selection of t_k
+        # (1) SMC pre-selection of t_k on an n_pool-sized selection pool
+        # (drawn with replacement, rejuvenated at U_{t_{k-1}} when t > 0)
         if p["tau_smc"] > 0.0:
+            key_pool, key_mc_pool = jax.random.split(jax.random.fold_in(key, 20_000 + k))
+            pool = y_valid[jax.random.randint(key_pool, (n_pool,), 0, y_valid.shape[0])]
+            if t_prev > 0.0:
+                pool = _langevin_jit(key_mc_pool, pool, u_prev, step=mc_step,
+                                     iters=mc_iters, adjust=mc_adjust, chunk=chunk)
             smc_base = jax.random.fold_in(key, 10_000 + k)  # disjoint from the advance keys
             for s_i in range(60):                           # max_shrinks, as in the reference
                 u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
-                _, smc_ess = _smc_jit(jax.random.fold_in(smc_base, s_i), y_valid,
+                _, smc_ess = _smc_jit(jax.random.fold_in(smc_base, s_i), pool,
                                       u_prev, u_k, ladder=ladder, step=mc_step,
                                       iters=mc_iters, adjust=mc_adjust, chunk=chunk)
                 ess_smc = float(smc_ess.min())

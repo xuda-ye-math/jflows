@@ -141,7 +141,7 @@ from jflows.train import boltzmann_reverse_KL
 
 y_valid, stages = boltzmann_reverse_KL(
     x_valid, source, target, flow, type="F",
-    n_batch=2000, steps=500, lr=1e-4, ladder=1, mc_step=1e-3, mc_iters=100,
+    n_pool=24000, n_batch=2000, steps=500, lr=1e-4, ladder=1, mc_step=1e-3, mc_iters=100,
     bg_param={"t_safe": 0.1, "shrink_factor": 0.7, "enlarge_factor": 1.5, "tau_ess": 0.6},
 )
 # y_valid : the advanced validation set at the target (the generator's sample output)

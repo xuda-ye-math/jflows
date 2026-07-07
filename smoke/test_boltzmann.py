@@ -18,7 +18,8 @@ For boltzmann_reverse_KL (the adaptive-ladder annealed BG):
        validation, and acceptance lines;
     7. tau_smc pre-selection: a gated ladder (tau_smc > 0, MALA,
        ladder = 2) shrinks over-aggressive t_k via the multi-rung SMC
-       check and still completes, with [select] lines reported;
+       check on an n_pool-sized selection pool and still completes,
+       with [select] lines reported;
     8. boltzmann_forward_KL: the forward KL twin (per-step AIS through
        the current flow, type='G') completes its ladder with the same
        record contract;
@@ -49,7 +50,7 @@ LOG = os.path.join(HERE, "test_boltzmann.log")
 
 FAILURES = 0
 
-N_VALID, N_BATCH, STEPS, LR = 4000, 500, 100, 2e-3
+N_VALID, N_POOL, N_BATCH, STEPS, LR = 4000, 1000, 500, 100, 2e-3
 MC_STEP, MC_ITERS = 1e-3, 20
 TAU = 0.5
 BG = {"t_safe": 0.3, "tau_ess": TAU}
@@ -106,7 +107,7 @@ def main() -> None:
     lines: list[str] = []
     y, stages = boltzmann_reverse_KL(
         x_valid, u0, u1, flow0, type="F",
-        n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=1,
+        n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=1,
         mc_step=MC_STEP, mc_iters=MC_ITERS,
         monitor=Monitor(STEPS, "[t] ", lines.append), bg_param=BG,
     )
@@ -135,7 +136,7 @@ def main() -> None:
     log("determinism")
     y2, stages2 = boltzmann_reverse_KL(
         x_valid, u0, u1, flow0, type="F",
-        n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=1,
+        n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=1,
         mc_step=MC_STEP, mc_iters=MC_ITERS,
         bg_param=BG,
     )
@@ -149,7 +150,8 @@ def main() -> None:
     sel_lines: list[str] = []
     y3, stages3 = boltzmann_reverse_KL(
         x_valid, u0, u1, flow0, type="F",
-        n_batch=N_BATCH, steps=STEPS, lr=LR, mc_step=MC_STEP, mc_iters=MC_ITERS,
+        n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR,
+        mc_step=MC_STEP, mc_iters=MC_ITERS,
         ladder=2, mc_adjust=True,
         monitor=Monitor(STEPS, "[t] ", sel_lines.append),
         bg_param={"t_safe": 0.3, "tau_ess": TAU, "tau_smc": 0.2},
@@ -164,7 +166,7 @@ def main() -> None:
     log("boltzmann_forward_KL ladder")
     yf, stages_f = boltzmann_forward_KL(
         x_valid, u0, u1, flow0, type="G",
-        n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=1,
+        n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=1,
         mc_step=MC_STEP, mc_iters=MC_ITERS, mc_adjust=True,
         bg_param=BG,
     )
@@ -193,8 +195,8 @@ def main() -> None:
     ):
         try:
             boltzmann_reverse_KL(x_valid, u0, u1, flow0,
-                                 n_batch=N_BATCH, steps=1, lr=LR, ladder=1,
-                                 mc_step=MC_STEP, mc_iters=1, **kwargs)
+                                 n_pool=N_POOL, n_batch=N_BATCH, steps=1, lr=LR,
+                                 ladder=1, mc_step=MC_STEP, mc_iters=1, **kwargs)
             check_true(f"rejects {name}", False)
         except ValueError:
             check_true(f"rejects {name}", True)
