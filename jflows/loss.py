@@ -13,6 +13,10 @@ Public API (the `type` argument names the transform type, 'F' or 'G'):
     forward_KL  — target samples; same `type` convention
     forward_KLX_G — target samples; forward KL + X functional, flow fixed
                   as G (target -> source), so no `type` argument
+    forward_X_G — the standalone X functional on samples of a weight
+                  measure omega (the target for X_mu; the mixture
+                  alpha*hat_mu + beta*bar_nu for the balanced term),
+                  flow fixed as G
 """
 
 import jax
@@ -26,6 +30,7 @@ from .potential import Potential
 __all__ = [
     "forward_KL",
     "forward_KLX_G",
+    "forward_X_G",
     "reverse_KL",
 ]
 
@@ -115,3 +120,36 @@ def forward_KLX_G(y: Array, source: Potential, target: Potential, flow: Flow,
     z = source(x) - target(y) - ladj     # per-sample log-ratio  log(mu/nu)
     perm = jax.random.permutation(key, y.shape[0])
     return z + coeff_lambda * jnp.abs(z - z[perm])
+
+
+def forward_X_G(y: Array, source: Potential, target: Potential, flow: Flow,
+                  key: Array) -> Array:
+    """
+    The standalone X functional X_omega, using samples of a weight measure
+    omega, with the flow fixed as the inverse map G (target -> source).
+    Writing the per-sample log-ratio z = log(mu/nu) as
+        z = source(G(y)) - target(y) - log|det J_G(y)|,
+    this returns the per-sample contributions
+        |z - z[perm]|
+    for a random permutation `perm` of the batch. Its mean is the X functional
+    X_omega = E_{y, y' ~ omega} |z(y) - z(y')|, the mean absolute pairwise
+    variation of z under omega — the X term of `forward_KLX_G` on its own, so
+    the weight is free to differ from the target: y ~ target gives the shape
+    term X_mu, and y drawn from the mixture alpha*hat_mu + beta*bar_nu —
+    hat_mu the quench-and-temper wide-coverage measure (mode discovery),
+    bar_nu the detached pushforward of source samples through G^{-1}
+    (leakage suppression) — gives the balanced mixture term
+    X_{alpha hat_mu + beta bar_nu} of the total training loss.
+    Input:
+        y:      Array [N, d]   samples drawn from the weight measure omega
+        source: Potential      negative log-density of the source (up to const)
+        target: Potential      negative log-density of the target (up to const)
+        flow:   Flow           the normalizing flow, applied as G (target -> source)
+        key:    Array          PRNG key seeding the batch permutation
+    Output:
+        loss: Array [N]   per-sample losses (reduce with .mean() for the objective)
+    """
+    x, ladj = flow.call_and_ladj(y)      # x = G(y), log|det J_G(y)|
+    z = source(x) - target(y) - ladj     # per-sample log-ratio  log(mu/nu)
+    perm = jax.random.permutation(key, y.shape[0])
+    return jnp.abs(z - z[perm])
