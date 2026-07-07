@@ -52,11 +52,13 @@ LOG = os.path.join(HERE, "test_annealing.log")
 
 FAILURES = 0
 
+N = 40000  # particles pushed through SMC / AIS (large enough for tight moment tolerances)
+
 WEIGHTS = jnp.asarray([0.35, 0.65])
-MEANS = jnp.asarray([[-3.0, 0.0], [3.0, 1.0]])
+MEANS = jnp.asarray([[-2.5, 0.0], [2.5, 1.0]])
 VARS = jnp.asarray([[0.4, 0.4], [0.5, 0.3]])
 TARGET = Nlog_Gaussian_Mixture(WEIGHTS, MEANS, VARS)
-SOURCE = Nlog_Gaussian([0.0, 0.0], [4.0, 4.0])
+SOURCE = Nlog_Gaussian([0.0, 0.0], [9.0, 9.0])  # broad enough to cover both target modes
 MEAN_TRUE = (WEIGHTS[:, None] * MEANS).sum(0)
 VAR_TRUE = (WEIGHTS[:, None] * (VARS + MEANS**2)).sum(0) - MEAN_TRUE**2
 
@@ -99,7 +101,6 @@ def check_target_match(name: str, x, m_tol: float = 0.15) -> None:
 def main() -> None:
     open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START test_annealing | jax {jax.__version__} | {jax.default_backend()}")
-    N = 4096
     x0 = SOURCE.samples(jax.random.key(1), N)
 
     # ── 1. SMC onto the two-mode mixture ──
@@ -142,9 +143,7 @@ def main() -> None:
     flow_id = RealNVP(jax.random.key(5), dimension=2, transforms=2).zeros()
     y = annealed_importance_sampling(jax.random.key(6), x0, SOURCE, TARGET, flow_id, type="F",
                                      ladder=10, step=0.05, iters=150)
-    # MALA (the default) mixes across modes more slowly than ULA, trading a
-    # little moment accuracy for stability -> wider mean tolerance
-    check_target_match("AIS (type=F) moments & mode proportions", y, m_tol=0.25)
+    check_target_match("AIS (type=F) moments & mode proportions", y)
     y_g = annealed_importance_sampling(jax.random.key(6), x0, SOURCE, TARGET, flow_id, type="G",
                                      ladder=10, step=0.05, iters=150)
     check("F/G agree for the identity flow (same key)", y_g, y, tol=1e-10)
