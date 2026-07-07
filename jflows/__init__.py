@@ -8,10 +8,11 @@ Public surface:
     jflows.potential : Potential, potential_from, Nlog_Uniform, Nlog_Gaussian,
                        Nlog_Gaussian_Mixture, linear_combination (+ the operator
                        algebra c*U, U+V, U-V, -U, U/c, sum([...]))
-    jflows.loss      : reverse_KL, forward_KL (type='F'/'G')
-    jflows.train     : train_reverse_KL, train_forward_KL (packed
-                       single-stage training), boltzmann_reverse_KL,
-                       boltzmann_forward_KL (adaptive-ladder Boltzmann
+    jflows.loss      : reverse_KL, forward_KL (type='F'/'G'), forward_KLX_G
+    jflows.train     : train_reverse_KL, train_forward_KL,
+                       train_forward_KLX_G (packed single-stage training),
+                       boltzmann_reverse_KL, boltzmann_forward_KL,
+                       boltzmann_forward_KLX_G (adaptive-ladder Boltzmann
                        generators), Monitor (live training-status reporter)
     jflows.utils     : metrics / optimization / rejuvenation / annealing
 

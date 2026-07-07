@@ -6,3 +6,7 @@ __pycache__/
 *.pt
 parity_check/
 PLAN.md
+
+# hidden dotfiles/dirs (e.g. .claude/), but keep this file
+.*
+!.gitignore
