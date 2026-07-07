@@ -38,7 +38,7 @@ HERE = Path(__file__).resolve().parent
 LOG = HERE / "CNF_vs_OTFlow.log"
 
 # dimension sweep and multi-well target
-DIMS = [4, 8, 12, 16, 20, 24]  # feature dimensions swept (modes stay fixed)
+DIMS = [4, 8, 16, 32, 64, 128]  # feature dimensions swept (modes stay fixed)
 N_WELL: int = 3        # double-well coordinates -> 2**N_WELL = 8 modes
 WELL_SEP: float = 1.5  # double-well minima at +/- WELL_SEP (energy 0)
 WELL_BARRIER: float = 1.5  # barrier height at the origin (shallow on purpose)
@@ -52,8 +52,8 @@ RANK: int = 10         # OTFlow low-rank quadratic (clamped to d + 1 per cell)
 
 # training parameters (plain reverse KL)
 N_VALID: int = 40000   # fixed source pool per dimension (subsampled per Adam step)
-N_BATCH: int = 1024    # source samples per Adam step
-STEPS: int = 500       # Adam steps per cell (one compiled call)
+N_BATCH: int = 512     # source samples per Adam step
+STEPS: int = 1000      # Adam steps per cell (one compiled call)
 LR: float = 2e-3       # Adam learning rate
 MONITOR_EVERY: int = 100  # print loss + batch ESS every MONITOR_EVERY steps
 MC_STEP: float = 1e-3  # Langevin step size (unused: MC_ITERS = 0)
