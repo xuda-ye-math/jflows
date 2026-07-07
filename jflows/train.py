@@ -53,7 +53,7 @@ from jax import Array, lax
 from .flow import Flow
 from .loss import forward_KL, reverse_KL
 from .potential import Potential, linear_combination
-from .utils.annealing import annealed_importance_sampling, sequential_monte_carlo
+from .utils.anneal import annealed_importance_sampling, sequential_monte_carlo
 from .utils.metrics import compute_ESS_log, importance_weights_log, resample
 from .utils.rejuvenation import langevin
 

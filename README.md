@@ -170,7 +170,7 @@ jflows
 ├── potential.py
 ├── train.py
 └── utils
-    ├── annealing.py
+    ├── anneal.py
     ├── __init__.py
     ├── metrics.py
     ├── optimization.py

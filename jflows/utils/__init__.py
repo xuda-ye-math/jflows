@@ -12,12 +12,12 @@ Split across four modules, re-exported here in the flat
     rejuvenation : langevin (alias rejuvenation), stochastic_heun,
                    hamiltonian_monte_carlo (alias hmc) + the low-level
                    *_step kernels and the leapfrog integrator
-    annealing    : sequential_monte_carlo (alias smc),
+    anneal       : sequential_monte_carlo (alias smc),
                    annealed_importance_sampling (alias ais; same 'F'/'G'
                    type argument)
 """
 
-from .annealing import (
+from .anneal import (
     ais,
     annealed_importance_sampling,
     sequential_monte_carlo,
