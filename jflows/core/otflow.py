@@ -302,10 +302,14 @@ class OTFlowTransform(Transform):
         return -grad[:, : self.dimension]
 
     def __call__(self, x: Array) -> Array:
-        return rk4_fixed(self._drift, x, self.t0, self.t1, self.nt)
+        x2 = x.reshape(-1, x.shape[-1])   # flatten leading batch dims to 2-D
+        y = rk4_fixed(self._drift, x2, self.t0, self.t1, self.nt)
+        return y.reshape(*x.shape[:-1], self.dimension)
 
     def _inverse(self, y: Array) -> Array:
-        return rk4_fixed(self._drift, y, self.t1, self.t0, self.nt)
+        y2 = y.reshape(-1, y.shape[-1])
+        x = rk4_fixed(self._drift, y2, self.t1, self.t0, self.nt)
+        return x.reshape(*y.shape[:-1], self.dimension)
 
     # ── augmented dynamics: [x, ℓ] for ladj, [x, ℓ, v, r] for OT costs ──
     def _f_ladj(self, t: Array, z: Array) -> Array:
@@ -326,9 +330,11 @@ class OTFlowTransform(Transform):
 
     def call_and_ladj(self, x: Array) -> tuple[Array, Array]:
         d = self.dimension
-        z0 = jnp.concatenate([x, jnp.zeros((x.shape[0], 1), dtype=x.dtype)], axis=1)
+        lead = x.shape[:-1]
+        x2 = x.reshape(-1, x.shape[-1])   # flatten leading batch dims to 2-D
+        z0 = jnp.concatenate([x2, jnp.zeros((x2.shape[0], 1), dtype=x.dtype)], axis=1)
         zT = rk4_fixed(self._f_ladj, z0, self.t0, self.t1, self.nt)
-        return zT[:, :d], zT[:, d]
+        return zT[:, :d].reshape(*lead, d), zT[:, d].reshape(lead)
 
     def call_full(self, x: Array) -> tuple[Array, Array, Array, Array]:
         """Forward map plus OT diagnostics in one integration.
@@ -339,9 +345,12 @@ class OTFlowTransform(Transform):
         OT regularisers.
         """
         d = self.dimension
-        z0 = jnp.concatenate([x, jnp.zeros((x.shape[0], 3), dtype=x.dtype)], axis=1)
+        lead = x.shape[:-1]
+        x2 = x.reshape(-1, x.shape[-1])   # flatten leading batch dims to 2-D
+        z0 = jnp.concatenate([x2, jnp.zeros((x2.shape[0], 3), dtype=x.dtype)], axis=1)
         zT = rk4_fixed(self._f_full, z0, self.t0, self.t1, self.nt)
-        return zT[:, :d], zT[:, d], zT[:, d + 1], zT[:, d + 2]
+        return (zT[:, :d].reshape(*lead, d), zT[:, d].reshape(lead),
+                zT[:, d + 1].reshape(lead), zT[:, d + 2].reshape(lead))
 
     def log_abs_det_jacobian(self, x: Array, y: Array) -> Array:
         _, ladj = self.call_and_ladj(x)

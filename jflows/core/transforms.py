@@ -652,7 +652,13 @@ class FreeFormJacobianTransform(Transform):
                     "FreeFormJacobianTransform(exact=False) needs a PRNG `key` "
                     "for the Hutchinson probe."
                 )
-            eps = jax.random.normal(self.key, x.shape, dtype=x.dtype)
+            # re-randomize the probe per call (content-hashed key, grad-severed
+            # by the int cast) so the Hutchinson trace is unbiased across
+            # training batches instead of frozen to the construction-time key
+            seed = (jnp.abs(x).sum() * 1e3).astype(jnp.int32)
+            eps = jax.random.normal(
+                jax.random.fold_in(self.key, seed), x.shape, dtype=x.dtype
+            )
 
         def f_aug(t: Array, z: Array) -> Array:
             xs = z[..., :d]

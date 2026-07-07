@@ -502,7 +502,7 @@ def boltzmann_reverse_KL(
                 u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
                 _, smc_ess = _smc_jit(jax.random.fold_in(smc_base, s_i), y_valid,
                                       u_prev, u_k, ladder=ladder, step=mc_step,
-                                      iters=mc_iters, chunk=chunk)
+                                      iters=mc_iters, adjust=mc_adjust, chunk=chunk)
                 ess_smc = float(smc_ess.min())
                 ok_smc = ess_smc >= p["tau_smc"]
                 status(f"[stage {k}] [select] t_k={t_k:.4f}  SMC ESS = {ess_smc:.3f} "
@@ -651,7 +651,7 @@ def boltzmann_forward_KL(
                 u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
                 _, smc_ess = _smc_jit(jax.random.fold_in(smc_base, s_i), y_valid,
                                       u_prev, u_k, ladder=ladder, step=mc_step,
-                                      iters=mc_iters, chunk=chunk)
+                                      iters=mc_iters, adjust=mc_adjust, chunk=chunk)
                 ess_smc = float(smc_ess.min())
                 ok_smc = ess_smc >= p["tau_smc"]
                 status(f"[stage {k}] [select] t_k={t_k:.4f}  SMC ESS = {ess_smc:.3f} "

@@ -141,7 +141,7 @@ def lbfgs_step(
     ys_last = (state.s[-1] * state.y[-1]).sum(axis=-1)
     yy_last = (state.y[-1] ** 2).sum(axis=-1)
     gamma = jnp.where(
-        state.k > 0,
+        (state.k > 0) & (ys_last > 1e-10),   # only a curvature-valid newest pair scales H_0
         ys_last / jnp.maximum(yy_last, 1e-10),
         jnp.ones_like(ys_last),
     )
