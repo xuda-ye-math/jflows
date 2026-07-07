@@ -132,7 +132,7 @@ def main() -> None:
     # ── 3. taming pass-through (mild taming: active only on outlier drifts) ──
     log("taming pass-through")
     x_tamed, ess_t = sequential_monte_carlo(jax.random.key(2), x0, SOURCE, TARGET,
-                                            ladder=16, step=0.05, iters=300, taming=0.05)
+                                            ladder=16, step=0.05, iters=300, taming=0.05, adjust=False)
     check_true("finite", bool(jnp.isfinite(x_tamed).all()))
     # taming caps the drift, biasing the finite-step chain -> wider mean tolerance
     check_target_match("tamed moments & proportions", x_tamed, m_tol=0.2)
@@ -142,7 +142,9 @@ def main() -> None:
     flow_id = RealNVP(jax.random.key(5), dimension=2, transforms=2).zeros()
     y = annealed_importance_sampling(jax.random.key(6), x0, SOURCE, TARGET, flow_id, type="F",
                                      ladder=10, step=0.05, iters=150)
-    check_target_match("AIS (type=F) moments & mode proportions", y)
+    # MALA (the default) crosses modes more slowly than ULA, so mode weights
+    # equilibrate less at this budget -> wider mean tolerance
+    check_target_match("AIS (type=F) moments & mode proportions", y, m_tol=0.25)
     y_g = annealed_importance_sampling(jax.random.key(6), x0, SOURCE, TARGET, flow_id, type="G",
                                      ladder=10, step=0.05, iters=150)
     check("F/G agree for the identity flow (same key)", y_g, y, tol=1e-10)

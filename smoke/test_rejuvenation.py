@@ -137,8 +137,8 @@ def main() -> None:
     log("tamed drift")
     quartic = potential_from(lambda x: 0.25 * ((x**2).sum(-1)) ** 2)
     x_far = jnp.full((32, 2), 10.0)
-    x_plain = langevin(jax.random.key(8), x_far, quartic, step=0.1, iters=200)
-    x_tamed = langevin(jax.random.key(8), x_far, quartic, step=0.1, iters=200, taming=1.0)
+    x_plain = langevin(jax.random.key(8), x_far, quartic, step=0.1, iters=200, adjust=False)
+    x_tamed = langevin(jax.random.key(8), x_far, quartic, step=0.1, iters=200, taming=1.0, adjust=False)
     check_true("untamed ULA diverges (demonstrates the hazard)",
                not bool(jnp.isfinite(x_plain).all()))
     check_true("tamed ULA stays finite", bool(jnp.isfinite(x_tamed).all()),

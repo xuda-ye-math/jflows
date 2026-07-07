@@ -21,8 +21,8 @@ Both trainers regenerate their batch inside every Adam step. The reverse KL flow
 
 | objective  | final ESS ($N = 40000$) | batch ESS along training |
 | :--------: | :---------------------: | :----------------------: |
-| reverse KL |         0.9324          |   0.19 -> 0.83 -> 0.93   |
-| forward KL |         0.9500          |   0.74 -> 0.97 -> 0.96   |
+| reverse KL |         0.9245          |   0.19 -> 0.85 -> 0.93   |
+| forward KL |         0.9496          |   0.74 -> 0.97 -> 0.98   |
 
 </div>
 
@@ -54,8 +54,8 @@ Run by [`3D_periodic.py`](3D_periodic.py): its purpose is to show that the **NCS
 
 | objective  | final ESS ($N = 40000$) |
 | :--------: | :---------------------: |
-| reverse KL |         0.8335          |
-| forward KL |         0.9074          |
+| reverse KL |         0.8392          |
+| forward KL |         0.9090          |
 
 </div>
 
@@ -85,7 +85,7 @@ Both ladders reach $t = 1$ in four stages (~8-10 s each on the full 120000-parti
 | reverse KL, stage $k$ |   1   |   2   |   3   |   4   |
 | :-------------------: | :---: | :---: | :---: | :---: |
 |         $t_k$         | 0.14  | 0.35  | 0.665 |  1.0  |
-|          ESS          | 0.657 | 0.904 | 0.957 | 0.984 |
+|          ESS          | 0.620 | 0.894 | 0.954 | 0.985 |
 
 </div>
 
@@ -94,7 +94,7 @@ Both ladders reach $t = 1$ in four stages (~8-10 s each on the full 120000-parti
 | forward KL, stage $k$ |   1   |   2   |   3   |   4   |
 | :-------------------: | :---: | :---: | :---: | :---: |
 |         $t_k$         | 0.20  | 0.50  | 0.95  |  1.0  |
-|          ESS          | 0.764 | 0.898 | 0.963 | 0.987 |
+|          ESS          | 0.764 | 0.899 | 0.963 | 0.987 |
 
 </div>
 

@@ -49,7 +49,7 @@ def langevin_step(
     x: Array,
     potential: Potential,
     step: float = 1e-3,
-    adjust: bool = False,
+    adjust: bool = True,
     taming: float = 0,
 ) -> tuple[Array, dict]:
     """
@@ -112,7 +112,7 @@ def langevin(
     potential: Potential,
     step: float = 1e-3,
     iters: int = 100,
-    adjust: bool = False,
+    adjust: bool = True,
     taming: float = 0,
     chunk: int = 1,
 ) -> Array:
@@ -122,10 +122,10 @@ def langevin(
     MALA / tamed-drift semantics, and the module docstring for the exact
     key derivation that makes the loop reproducible from the steps).
 
-    With adjust=False (default), the unadjusted Langevin algorithm (ULA):
-    O(step) bias, one gradient call per iteration. With adjust=True, the
-    standard MALA scheme whose stationary distribution is *exactly*
-    exp(-U) at ~2x the cost (two gradient calls per iteration).
+    With adjust=True (default), the standard MALA scheme whose stationary
+    distribution is *exactly* exp(-U) at ~2x the cost (two gradient calls
+    per iteration). With adjust=False, the unadjusted Langevin algorithm
+    (ULA): O(step) bias, one gradient call per iteration.
 
     Exposed both as `langevin` and as the `rejuvenation` alias (in SMC
     literature, Langevin steps are the standard rejuvenation move).

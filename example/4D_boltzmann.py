@@ -76,8 +76,7 @@ MONITOR_EVERY: int = 20  # print loss + batch ESS every MONITOR_EVERY steps
 # Langevin rejuvenation (training batches + the per-stage particle refresh)
 LADDER: int = 1        # SMC rungs of the tau_smc selection gate
 MC_STEP: float = 1e-3  # Langevin rejuvenation step size
-MC_ITERS: int = 100    # Langevin rejuvenation steps
-MC_ADJUST: bool = True # MALA (rejects Coulomb-wall proposals; keeps the set collision-free)
+MC_ITERS: int = 100    # Langevin rejuvenation steps (MALA default: rejects Coulomb-wall proposals)
 
 # adaptive ladder (bg_param of boltzmann_reverse_KL)
 BG_PARAM = {
@@ -147,7 +146,7 @@ def main() -> None:
         y, stages = driver(
             x_valid, u0, u1, new_flow(key_f), type=tp,
             n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=LADDER,
-            mc_step=MC_STEP, mc_iters=MC_ITERS, mc_adjust=MC_ADJUST,
+            mc_step=MC_STEP, mc_iters=MC_ITERS,
             monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log), bg_param=BG_PARAM,
         )
         ts = [s["t"] for s in stages]

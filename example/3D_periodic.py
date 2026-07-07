@@ -68,7 +68,6 @@ MONITOR_EVERY: int = 20  # print loss + batch ESS every MONITOR_EVERY steps
 LADDER: int = 1        # AIS rungs of the forward KL data manufacturing
 MC_STEP: float = 1e-3  # Langevin step size
 MC_ITERS: int = 100    # Langevin steps
-MC_ADJUST: bool = True # MALA for the post-resample rejuvenation at the target
 
 # figure
 N_PLOT: int = 10000    # subsample for a less crowded 3D scatter
@@ -116,7 +115,7 @@ def main() -> None:
     open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START 3D_periodic | jax {jax.__version__} | backend {jax.default_backend()} | "
         f"N_VALID={N_VALID} N_BATCH={N_BATCH} STEPS={STEPS} LR={LR} "
-        f"MC={MC_STEP}x{MC_ITERS} adjust={MC_ADJUST} kappa={KAPPA}")
+        f"MC={MC_STEP}x{MC_ITERS} kappa={KAPPA}")
     x_valid = u0.samples(jax.random.key(2), N_VALID)  # the fixed N_VALID source set
 
     results = {}
@@ -143,8 +142,7 @@ def main() -> None:
         log(f"[{name}] final ESS = {ess:.4f}   (N_VALID = {N_VALID})")
         key_res, key_mc = jax.random.split(jax.random.key(10 + row))
         y = resample(key_res, y, jnp.exp(log_w - log_w.max()))
-        y = langevin(key_mc, y, u1, step=MC_STEP, iters=MC_ITERS,
-                     adjust=MC_ADJUST, chunk=4)
+        y = langevin(key_mc, y, u1, step=MC_STEP, iters=MC_ITERS, chunk=4)
         log(f"[{name}] particle set resampled + rejuvenated at the target")
         results[name] = (y, ess)
 

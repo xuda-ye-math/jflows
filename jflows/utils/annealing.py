@@ -46,6 +46,7 @@ def sequential_monte_carlo(
     ladder: int = 1,
     step: float = 1e-3,
     iters: int = 100,
+    adjust: bool = True,
     taming: float = 0,
     chunk: int = 1,
 ) -> tuple[Array, Array]:
@@ -68,7 +69,7 @@ def sequential_monte_carlo(
              log w(x) = u_{k-1}(x) - u_k(x) = (1/M) * (source(x) - target(x)),
          exponentiated after subtracting the max for numerical stability.
       2. Multinomial resampling of x by w.
-      3. Langevin (ULA) rejuvenation targeting exp(-u_k) — i.e. ON THE
+      3. Langevin rejuvenation targeting exp(-u_k) — i.e. ON THE
          BRIDGE POTENTIAL u_k itself — for `iters` steps, with the tamed
          drift when `taming > 0`.
     After the final rung the particles approximate exp(-target).
@@ -88,8 +89,10 @@ def sequential_monte_carlo(
                                 single reweight + resample + Langevin hop
                                 straight from source to target; larger M
                                 bridges low-overlap source/target pairs.
-        step:    float          Langevin (ULA) step size, shared across rungs
+        step:    float          Langevin step size, shared across rungs
         iters:   int            Langevin steps per rung
+        adjust:  bool           if True, MALA rejuvenation on each bridge
+                                (unbiased); if False, ULA (see `langevin`)
         taming:  float          if > 0, tamed Langevin drift
                                 grad u_k / (1 + taming * ||grad u_k||) —
                                 stabilizes the rejuvenation on potentials
@@ -121,7 +124,7 @@ def sequential_monte_carlo(
         #     ON the bridge u_k to obtain fresh samples ~ exp(-u_k).
         key_r, key_l = jax.random.split(jax.random.fold_in(key, k))
         x = resample(key_r, x, w)
-        x = langevin(key_l, x, u_k, step=step, iters=iters, taming=taming, chunk=chunk)
+        x = langevin(key_l, x, u_k, step=step, iters=iters, adjust=adjust, taming=taming, chunk=chunk)
     return x, jnp.stack(ess)
 
 
@@ -139,6 +142,7 @@ def annealed_importance_sampling(
     ladder: int = 1,
     step: float = 1e-3,
     iters: int = 100,
+    adjust: bool = True,
     taming: float = 0,
     chunk: int = 1,
 ) -> Array:
@@ -196,8 +200,10 @@ def annealed_importance_sampling(
         ladder:    int               number of annealing rungs M (>= 1). M=1 is
                                      a single reweight + resample + Langevin hop
                                      from the flow proposal to the target.
-        step:      float             Langevin (ULA) step size, shared across rungs
+        step:      float             Langevin step size, shared across rungs
         iters:     int               Langevin steps per rung
+        adjust:    bool              if True, MALA rejuvenation in mu_1
+                                     (unbiased); if False, ULA (see `langevin`)
         taming:    float             if > 0, tamed Langevin drift on the target
                                      (see `langevin`)
         chunk:     int               split along dim 0 into this many chunks for
@@ -235,7 +241,7 @@ def annealed_importance_sampling(
         # (2) resample onto high-weight particles, then rejuvenate in mu_1.
         key_r, key_l = jax.random.split(jax.random.fold_in(key, k))
         y = resample(key_r, y, w)
-        y = langevin(key_l, y, target, step=step, iters=iters, taming=taming, chunk=chunk)
+        y = langevin(key_l, y, target, step=step, iters=iters, adjust=adjust, taming=taming, chunk=chunk)
     return y
 
 

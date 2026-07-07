@@ -107,7 +107,7 @@ def train_reverse_KL(
     lr: float,
     mc_step: float,
     mc_iters: int,
-    mc_adjust: bool = False,
+    mc_adjust: bool = True,
     monitor: Monitor | None = None,
     seed: int | Array = 0,
     checkpoint: bool = False,
@@ -215,6 +215,7 @@ def train_forward_KL(
     ladder: int,
     mc_step: float,
     mc_iters: int,
+    mc_adjust: bool = True,
     monitor: Monitor | None = None,
     seed: int | Array = 0,
     checkpoint: bool = False,
@@ -256,6 +257,9 @@ def train_forward_KL(
         ladder:   int            AIS rungs per manufactured batch
         mc_step:  float          Langevin rejuvenation step size
         mc_iters: int            Langevin rejuvenation steps per rung
+        mc_adjust: bool          False: unadjusted ULA in the AIS
+                                 rejuvenation; True: MALA (the Metropolis
+                                 gate for near-singular targets)
         monitor:  Monitor        optional live status reporter (step, loss,
                                  batch ESS every `monitor.every` steps)
         seed:     int | Array    extra fold into the internal PRNG stream
@@ -281,7 +285,7 @@ def train_forward_KL(
         x = x_valid[jax.random.choice(key_idx, N, (n_batch,), replace=False)]
         y = annealed_importance_sampling(
             key_ais, x, source, target, eqx.combine(params, static), type,
-            ladder=ladder, step=mc_step, iters=mc_iters,
+            ladder=ladder, step=mc_step, iters=mc_iters, adjust=mc_adjust,
         )
 
         def loss_fn(p):
@@ -350,7 +354,7 @@ def boltzmann_reverse_KL(
     ladder: int,
     mc_step: float,
     mc_iters: int,
-    mc_adjust: bool = False,
+    mc_adjust: bool = True,
     monitor: Monitor | None = None,
     bg_param: dict | None = None,
     chunk: int = 1,
@@ -562,7 +566,7 @@ def boltzmann_forward_KL(
     ladder: int,
     mc_step: float,
     mc_iters: int,
-    mc_adjust: bool = False,
+    mc_adjust: bool = True,
     monitor: Monitor | None = None,
     bg_param: dict | None = None,
     chunk: int = 1,
@@ -608,9 +612,9 @@ def boltzmann_forward_KL(
     ladder uses its own base PRNG stream and threads a distinct seed
     into the trainer per stage attempt.
 
-    Input:  as `boltzmann_reverse_KL`, with `mc_adjust` applying to the
-            particle-set advance (the stage trainer's internal AIS
-            rejuvenation is unadjusted Langevin).
+    Input:  as `boltzmann_reverse_KL`, with `mc_adjust` applying to both
+            the stage trainer's internal AIS rejuvenation and the
+            particle-set advance.
     Output: as `boltzmann_reverse_KL` — (y_valid, stages) with per-stage
             records {"t", "ess", "flow"}.
     """
@@ -663,7 +667,7 @@ def boltzmann_forward_KL(
             seed = jnp.uint32(k * p["max_retry"] + attempt)  # fresh stream per attempt
             cand, _ = train_forward_KL(y_valid, u_prev, u_k, flow, type,
                                        n_batch, steps, lr, ladder, mc_step,
-                                       mc_iters, monitor,
+                                       mc_iters, mc_adjust, monitor,
                                        seed=seed, checkpoint=checkpoint)
             log_w = _iw_log_jit(y_valid, u_prev, u_k, cand, type, chunk=chunk)
             ess_k = float(compute_ESS_log(log_w))

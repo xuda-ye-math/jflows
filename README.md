@@ -134,7 +134,7 @@ ADAPTIVE coefficient: the stage flows are connected step by step — each stage
 trains the warm-started flow as the incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$
 on the advancing particle set, accepts on the incremental importance-sampling
 ESS (rejected stages shrink $t_k$ and retry with fresh randomness), and
-advances the set by reweight → resample → Langevin at $U_{t_k}$ (MALA when `mc_adjust=True`):
+advances the set by reweight → resample → Langevin at $U_{t_k}$ (MALA by default; `mc_adjust=False` for plain ULA):
 
 ```python
 from jflows.train import boltzmann_reverse_KL
