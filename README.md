@@ -1,4 +1,4 @@
-<p align="center"><img src="https://raw.githubusercontent.com/xuda-ye-math/jflows/main/logo.png" alt="jflows logo" width="240px"></p>
+<p align="center"><img src="logo.png" alt="jflows logo" width="100px"></p>
 <p align="center"><sub><em>designed by ChatGPT</em></sub></p>
 
 # jflows
