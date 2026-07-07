@@ -19,8 +19,8 @@ Both trainers regenerate their batch inside every Adam step. The reverse KL flow
 
 | objective  | final ESS ($N = 40000$) | batch ESS along training |
 | :--------: | :---------------------: | :----------------------: |
-| reverse KL |          0.9324         |    0.19 → 0.83 → 0.93    |
-| forward KL |          0.9500         |    0.74 → 0.97 → 0.96    |
+| reverse KL |          0.9324         |   0.19 -> 0.83 -> 0.93   |
+| forward KL |          0.9500         |   0.74 -> 0.97 -> 0.96   |
 
 <p align="center"><img src="2D_single.png" alt="2D single-stage training" width="1000px"></p>
 
