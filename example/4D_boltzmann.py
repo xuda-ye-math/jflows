@@ -89,13 +89,6 @@ BG_PARAM = {
 }
 
 
-def log(msg: str) -> None:
-    line = f"[{time.strftime('%H:%M:%S')}] {msg}"
-    print(line, flush=True)
-    with open(LOG, "a") as fh:
-        fh.write(line + "\n")
-
-
 # source: 4D standard Gaussian
 u0 = Nlog_Gaussian(mean=[0.0] * 4, variance=[1.0] * 4)
 
@@ -125,6 +118,13 @@ class U_Target(Potential):
 
 
 u1 = U_Target()
+
+
+def log(msg: str) -> None:
+    line = f"[{time.strftime('%H:%M:%S')}] {msg}"
+    print(line, flush=True)
+    with open(LOG, "a") as fh:
+        fh.write(line + "\n")
 
 
 def main() -> None:

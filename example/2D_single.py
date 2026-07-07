@@ -77,13 +77,6 @@ MC_STEP: float = 1e-3  # Langevin rejuvenation step size
 MC_ITERS: int = 100    # Langevin rejuvenation steps per batch / AIS call
 
 
-def log(msg: str) -> None:
-    line = f"[{time.strftime('%H:%M:%S')}] {msg}"
-    print(line, flush=True)
-    with open(LOG, "a") as fh:
-        fh.write(line + "\n")
-
-
 # source: Gaussian U0
 u0 = Nlog_Gaussian(mean=[0.0, 0.0], variance=[SIGMA**2, SIGMA**2])
 
@@ -100,6 +93,13 @@ def new_flow(key):
     flow = NSF(key, a=[-NSF_LIM, -NSF_LIM], b=[+NSF_LIM, +NSF_LIM], bins=BINS,
                transforms=TRANSFORMS, hidden_features=HIDDEN_FEATURES)
     return flow.zeros()
+
+
+def log(msg: str) -> None:
+    line = f"[{time.strftime('%H:%M:%S')}] {msg}"
+    print(line, flush=True)
+    with open(LOG, "a") as fh:
+        fh.write(line + "\n")
 
 
 def main() -> None:
