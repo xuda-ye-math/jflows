@@ -1,8 +1,11 @@
+<p align="center"><img src="https://raw.githubusercontent.com/xuda-ye-math/jflows/main/logo.png" alt="jflows logo" width="240px"></p>
+<p align="center"><sub><em>designed by ChatGPT</em></sub></p>
+
 # jflows
 
 JAX normalizing flows for unconditional energy-based sampling and Boltzmann generators, built on [equinox](https://github.com/patrick-kidger/equinox).
 
-> **Status: experimental.** Tested only on **Linux + NVIDIA GPU** (CUDA-enabled `jax`).
+> **Status: experimental.** Tested only on **Linux + NVIDIA GPU** (CUDA-enabled `jax`); Google TPU and AMD GPU should also work. JAX GPU is not supported on Windows — not even under WSL.
 >
 > This project was developed with [Claude Code](https://claude.com/claude-code).
 
