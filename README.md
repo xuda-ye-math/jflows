@@ -1,6 +1,6 @@
 # jflows
 
-JAX normalizing flows for unconditional energy-based sampling and Boltzmann generators — the JAX + [equinox](https://github.com/patrick-kidger/equinox) twin of [zflows](https://github.com/xuda-ye-math/zflows).
+JAX normalizing flows for unconditional energy-based sampling and Boltzmann generators, built on [equinox](https://github.com/patrick-kidger/equinox).
 
 > **Status: experimental.** Tested only on **Linux + NVIDIA GPU** (CUDA-enabled `jax`).
 >
@@ -215,4 +215,4 @@ Worked examples for each model — a 2D Gaussian mixture, a 3D periodic (NCSF) t
 
 ## Acknowledgements
 
-`jflows` is the JAX port of [zflows](https://github.com/xuda-ye-math/zflows), and both are strongly inspired by [zuko](https://github.com/probabilists/zuko): the flow, transform, and masked-MLP machinery vendored into `jflows.core` is a stripped-down port of zuko's. Credit for the underlying design — and for the clean, composable `Transform` API the public flows build on — belongs to the zuko authors.
+`jflows` is strongly inspired by [zuko](https://github.com/probabilists/zuko): the flow, transform, and masked-MLP machinery vendored into `jflows.core` is a stripped-down port of zuko's. Credit for the underlying design — and for the clean, composable `Transform` API the public flows build on — belongs to the zuko authors.

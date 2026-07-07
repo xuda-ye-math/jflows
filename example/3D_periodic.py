@@ -1,7 +1,6 @@
 """3D periodic target — single-stage reverse KL with reweighting.
 
-The jflows rewrite of zflows' `tests/3D_periodic.py`: a von Mises ridge
-mixture on the 3-torus [-NCSF_LIM, NCSF_LIM]^3,
+A von Mises ridge mixture on the 3-torus [-NCSF_LIM, NCSF_LIM]^3,
 
     U_target(x) = -log[ exp(k cos(x1 - x2)) + exp(k cos(x2 - x3))
                       + exp(k cos(x3 - x1)) ],

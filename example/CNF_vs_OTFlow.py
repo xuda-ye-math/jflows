@@ -1,12 +1,12 @@
 """Multi-well (8-mode) reverse-KL benchmark: CNF vs OTFlow across dimension.
 
-The jflows rewrite of zflows' `tests/multi_well_compare.py`. Both continuous
-flows are trained by the SAME objective — plain reverse KL through
-`train_reverse_KL` (no rejuvenation, `MC_ITERS = 0`) — against the same target,
-so the comparison isolates the one variable that differs: CNF's free-form MLP
-velocity with an O(d) augmented-Jacobian trace vs OTFlow's potential-gradient
-velocity with a closed-form trace. Each cell reports the importance-sampling
-effective sample size (ESS) of the trained proposal.
+Both continuous flows are trained by the SAME objective — plain reverse KL
+through `train_reverse_KL` (no rejuvenation, `MC_ITERS = 0`) — against the
+same target, so the comparison isolates the one variable that differs:
+CNF's free-form MLP velocity with an O(d) augmented-Jacobian trace vs
+OTFlow's potential-gradient velocity with a closed-form trace. Each cell
+reports the importance-sampling effective sample size (ESS) of the trained
+proposal.
 
 Target potential (factorized, `dimension`-dependent):
     - the first N_WELL coordinates are symmetric DOUBLE WELLS,

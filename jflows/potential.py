@@ -1,9 +1,9 @@
 """Energy potentials and base distributions for jflows.
 
-Ported from `zflows/potential.py`. Every potential `U` is the energy of
-the unnormalized density `exp(-U)`; the concrete classes carry the
-`Nlog_` prefix (negative log) to mark the translation from distribution
-language to potential language:
+Every potential `U` is the energy of the unnormalized density
+`exp(-U)`; the concrete classes carry the `Nlog_` prefix (negative log)
+to mark the translation from distribution language to potential
+language:
 
     Potential             — abstract base; __call__(x) -> U(x), .grad(x)
     potential_from        — wrap a callable as a Potential instance

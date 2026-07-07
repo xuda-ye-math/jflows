@@ -1,9 +1,9 @@
 """Training objectives for jflows flows.
 
-Ported from `zflows/loss.py`. Every loss returns the PER-SAMPLE loss
-vector, shape [N] aligned with the batch — no internal reduction. Take
-`.mean()` for the scalar objective, or reweight / clip / trim the vector
-first for post-hoc regularisation. There are no temperature arguments
+Every loss returns the PER-SAMPLE loss vector, shape [N] aligned with
+the batch — no internal reduction. Take `.mean()` for the scalar
+objective, or reweight / clip / trim the vector first for post-hoc
+regularisation. There are no temperature arguments
 (every potential is the energy of `exp(-U)`), and no compile wrappers
 (`jax.jit` the training step at the call site).
 

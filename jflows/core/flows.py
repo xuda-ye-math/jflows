@@ -1,7 +1,7 @@
 """Unconditional lazy transformations used by jflows's public flows.
 
-Ported from `zflows/core/flows.py` with all `context` / `c=None` plumbing
-already absent. Each lazy transform is an eqx.Module whose `__call__()`
+Adapted from zuko's flow machinery, with all `context` / `c=None` plumbing
+removed. Each lazy transform is an eqx.Module whose `__call__()`
 (no argument) returns a concrete `Transform` from `.transforms`.
 
 Public classes:

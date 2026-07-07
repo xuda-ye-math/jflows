@@ -1,8 +1,8 @@
 """Batched particle optimization for jflows — L-BFGS and AdamW.
 
-L-BFGS is ported from `zflows/utils.py` (`lbfgs` + the `optimization`
-alias); `adamw` is an additional first-order alternative with no zflows
-counterpart. Both follow the two-level interface:
+`lbfgs` (aliased `optimization`) and `adamw` are the two batched
+optimizers, `adamw` an additional first-order alternative. Both follow
+the two-level interface:
 
     lbfgs_init / lbfgs_step / LBFGS_State — the low-level L-BFGS kernel:
         an explicit state pytree and one update per call, for custom
@@ -13,11 +13,11 @@ counterpart. Both follow the two-level interface:
     adamw                                 — the high-level loop, exactly
         a lax.scan over `adamw_step`.
 
-The zflows Python-list curvature history becomes fixed-shape ring
-buffers (jit needs static shapes): slot 0 is the oldest pair, slot -1
-the newest, and empty or curvature-violating pairs carry rho = 0, which
-makes the two-loop recursion ignore them — the same masking trick zflows
-applies to invalid pairs, so the math is unchanged.
+The curvature history is stored as fixed-shape ring buffers (jit needs
+static shapes): slot 0 is the oldest pair, slot -1 the newest, and empty
+or curvature-violating pairs carry rho = 0, which makes the two-loop
+recursion ignore them — the same masking trick applied to invalid pairs,
+so the math is unchanged.
 """
 
 from __future__ import annotations

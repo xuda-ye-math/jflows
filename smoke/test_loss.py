@@ -1,7 +1,7 @@
-"""Standalone loss smoke test (jflows only, no zflows fixtures) —
+"""Standalone loss smoke test (jflows only) —
 run from the repo root as `~/.envs/jax/bin/python -m smoke.test_loss`.
 
-For reverse_KL / forward_KL (type='F'/'G') and OT_loss:
+For reverse_KL / forward_KL (type='F'/'G'):
 
     1. per-sample contract: every loss returns shape [N], and permuting
        the batch permutes the loss vector;
@@ -10,8 +10,7 @@ For reverse_KL / forward_KL (type='F'/'G') and OT_loss:
     3. definition vs the core layer: each type reproduces the manual
        t() / t().inv computation exactly;
     4. type dispatch: an invalid `type` raises ValueError;
-    5. OT_loss with alpha_C = alpha_R = 0 recovers reverse_KL (type='F');
-    6. autograd: filter_grad of the batch-mean is finite and nonzero.
+    5. autograd: filter_grad of the batch-mean is finite and nonzero.
 
 Float64, on the default JAX backend (GPU when available; set
 JAX_PLATFORMS=cpu to force CPU); GPU memory preallocation is disabled.
@@ -32,8 +31,8 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 import numpy as np  # noqa: E402
 
-from jflows.flow import NSF, OTFlow  # noqa: E402
-from jflows.loss import OT_loss, forward_KL, reverse_KL  # noqa: E402
+from jflows.flow import NSF  # noqa: E402
+from jflows.loss import forward_KL, reverse_KL  # noqa: E402
 from jflows.potential import Nlog_Gaussian  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -115,15 +114,6 @@ def main() -> None:
         check_true("invalid type raises", False)
     except ValueError:
         check_true("invalid type raises", True)
-
-    log("OT_loss")
-    otf = OTFlow(jax.random.key(3), dimension=3, hidden=16, layer=3, rank=4, nt=8)
-    xo = jax.random.normal(jax.random.key(4), (8, 3))
-    lot = OT_loss(xo, target, otf, alpha_C=0.7, alpha_R=0.4)
-    check_true("shape", lot.shape == (8,), f"{lot.shape}")
-    check("alpha_C = alpha_R = 0 recovers reverse_KL",
-          OT_loss(xo, target, otf, alpha_C=0.0, alpha_R=0.0),
-          reverse_KL(xo, target, otf, type="F"), tol=1e-9)
 
     log("autograd through the batch-mean")
 

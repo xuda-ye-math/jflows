@@ -1,6 +1,6 @@
 """Pure array utilities used by jflows's transforms and flows.
 
-Ported from `zflows/core/numerics.py` (itself a subset of `zuko/utils.py`):
+Adapted from `zuko/utils.py`:
     - Partial: eqx.Module wrapper of functools.partial
     - bisection: implicit-grad bisection root finder (lax.custom_root)
     - broadcast: jnp.broadcast_to over the leading dims

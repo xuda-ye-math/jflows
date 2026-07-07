@@ -1,9 +1,5 @@
 """Sampling diagnostics, importance weights, and resampling for jflows.
 
-Ported from `zflows/utils.py` (the ESS diagnostics, the flow
-importance-sampling weights, and multinomial resampling; the CESS
-variants are dropped — PLAN.md §3.4).
-
 Public API (in pipeline order; the `type` argument names the transform
 type, 'F' or 'G', as in `reverse_KL` / `forward_KL`):
     importance_weights_log — unnormalized IS log-weights through a flow

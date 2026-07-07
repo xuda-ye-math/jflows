@@ -1,7 +1,6 @@
 """Optimal-transport flow (OT-Flow) machinery for jflows.
 
-Ported from `zflows/core/otflow.py`, itself adapted from the reference
-implementation of
+Adapted from the reference OT-Flow implementation of
 
     Onken, Fung, Li, Ruthotto.
     "OT-Flow: Fast and Accurate Continuous Normalizing Flows via Optimal
@@ -337,7 +336,7 @@ class OTFlowTransform(Transform):
         Returns `(y, ladj, transport_cost, hjb_residual)` where
         `transport_cost = ∫ ½|∇Φ|² dt` and
         `hjb_residual   = ∫ |½|∇Φ|² - ∂_tΦ| dt` — the per-sample integrated
-        OT regularisers consumed by `jflows.loss.OT_loss`.
+        OT regularisers.
         """
         d = self.dimension
         z0 = jnp.concatenate([x, jnp.zeros((x.shape[0], 3), dtype=x.dtype)], axis=1)

@@ -1,4 +1,4 @@
-"""Standalone circular-boundary test (jflows only, no zflows fixtures) —
+"""Standalone circular-boundary test (jflows only) —
 run from the repo root as `~/.envs/jax/bin/python -m smoke_tests.test_circular`.
 
 Tests the periodic boundary conditions of the circular machinery

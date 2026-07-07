@@ -1,6 +1,6 @@
 """Neural-network building blocks used by jflows flows.
 
-Ported from `zflows/core/nn.py`:
+Adapted from zuko's MLP machinery:
     - Linear / MLP                    — used by RealNVP coupling MLP and CNF ODE MLP
     - MaskedLinear / MaskedMLP        — used by MAF conditioner
 

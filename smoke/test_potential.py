@@ -1,4 +1,4 @@
-"""Standalone potential smoke test (jflows only, no zflows fixtures) —
+"""Standalone potential smoke test (jflows only) —
 run from the repo root as `~/.envs/jax/bin/python -m smoke_tests.test_potential`.
 
 For Nlog_Uniform, Nlog_Gaussian, Nlog_Gaussian_Mixture, and potential_from:

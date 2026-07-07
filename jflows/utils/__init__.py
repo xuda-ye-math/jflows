@@ -1,7 +1,7 @@
 """Sampling utilities for jflows — the flat `jflows.utils` namespace.
 
-Split across four modules (PLAN.md §3.4), re-exported here so
-`jflows.utils.<fn>` call sites read the same as in zflows:
+Split across four modules, re-exported here in the flat
+`jflows.utils` namespace:
 
     metrics      : importance_weights (+log; the type argument names the
                    transform type 'F'/'G'), compute_ESS, compute_ESS_log,

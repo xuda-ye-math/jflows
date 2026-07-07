@@ -16,7 +16,7 @@ translation by ±center_i (no scaling), so the box-bound geometry
 [a, b]^d is honoured without distorting the conditioner's dynamic
 range.
 
-JAX conventions (see PLAN.md §3):
+JAX conventions:
     - every constructor takes a PRNG `key` as its first argument;
     - flows are immutable pytrees — `zeros()` returns a NEW flow;
     - `activation` is a callable (e.g. `jax.nn.silu`), not a class.
@@ -426,10 +426,6 @@ class OTFlow(Flow):
 
     The forward map and `log|det J|` follow the standard `(y, ladj)` contract,
     so an `OTFlow` is a drop-in `Flow` for `reverse_KL` and the SMC utilities.
-    The two extra optimal-transport diagnostics — the transport cost
-    `∫½|∇Φ|² dt` and the HJB residual `∫|½|∇Φ|² - ∂_tΦ| dt` — are exposed
-    through `jflows.loss.OT_loss`, which integrates all four channels in one
-    pass; plain `reverse_KL` simply drops them.
 
     Arguments:
         key: PRNG key for Φ's initialisation.

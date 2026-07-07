@@ -1,4 +1,4 @@
-"""Standalone flow smoke test (jflows only, no zflows fixtures) —
+"""Standalone flow smoke test (jflows only) —
 run with ~/.envs/jax/bin/python.
 
 For every public flow class (NSF, NCSF, CNF, OTFlow, RealNVP incl. both
@@ -73,7 +73,7 @@ def exercise(name: str, flow, x, tol: float) -> None:
     check("F(inv(y)) == y", F(F.inv(y)), y, tol=tol)
 
     # 3. log-det vs per-sample autodiff jacobian (batch-1 wrapper: the
-    # continuous transforms take batched input only, matching zflows)
+    # continuous transforms take batched input only)
     J = jax.vmap(jax.jacfwd(lambda xi: F(xi[None, :])[0]))(x)
     _, logdet = jnp.linalg.slogdet(J)
     check("ladj vs slogdet", ladj, logdet, tol=max(tol, 1e-9))

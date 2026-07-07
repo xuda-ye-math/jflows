@@ -1,6 +1,6 @@
 """4D annealed Boltzmann generator — reverse KL vs forward KL, ADAPTIVE ladder.
 
-The 4D two-charge target of the zflows reference test:
+The 4D two-charge target:
 x = (x1, x2), x_i in R^2, confined to a soft annulus and repelling via a
 regularized 3D Coulomb interaction,
 
@@ -54,7 +54,7 @@ from jflows.train import Monitor, boltzmann_forward_KL, boltzmann_reverse_KL
 HERE = Path(__file__).resolve().parent
 LOG = HERE / "4D_boltzmann.log"
 
-# target physics (identical to the zflows original)
+# target physics
 R0: float = 2.0        # annulus radius of the soft trap
 A: float = 1.0         # trap stiffness
 Q2: float = 4.0        # Coulomb coupling

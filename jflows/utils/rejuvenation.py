@@ -1,8 +1,6 @@
 """MCMC rejuvenation kernels for jflows — Langevin / Heun / HMC.
 
-Ported from `zflows/utils.py` (`langevin` + the `rejuvenation` alias,
-`stochastic_heun`, `hamiltonian_monte_carlo` + the `hmc` alias), split
-into a two-level interface:
+Split into a two-level interface:
 
     langevin_step / stochastic_heun_step / hmc_step / leapfrog
         — the low-level kernels: one update per call, key per call,
@@ -303,7 +301,7 @@ def hmc_step(
 ) -> tuple[Array, dict]:
     """
     One full HMC trajectory (the loop body of `hamiltonian_monte_carlo`;
-    one zflows "burn"):
+    one MCMC burn):
 
       1. Resample momentum p ~ N(0, I_d) — a complete refresh that
          discards any correlation with the previous trajectory.

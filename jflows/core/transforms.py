@@ -1,8 +1,7 @@
 """Bijective transformations used by jflows flows.
 
-Ported from `zflows/core/transforms.py`, restricted to the subset that any
-jflows flow actually uses, plus the two behavioural tweaks inherited from
-zflows:
+Adapted from zuko's transform machinery, restricted to the subset that any
+jflows flow actually uses, plus two behavioural tweaks:
 
   - `MonotonicRQSTransform.bound` may be a per-coordinate `(d,)` array
     (or anything broadcastable to `widths.shape[:-1]`), not just a
@@ -26,7 +25,7 @@ JAX design notes:
     exactly the right trailing dims.
   - `t.inv` returns an `Inverse` view (or a structural inverse for
     `ComposedTransform` / `FreeFormJacobianTransform`); `t.inv(y)` and
-    `t.inv.call_and_ladj(y)` work as in zflows.
+    `t.inv.call_and_ladj(y)` work as in zuko.
 """
 
 from __future__ import annotations

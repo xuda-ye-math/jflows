@@ -1,7 +1,6 @@
 """Annealed transport samplers for jflows — SMC and flow-proposal AIS.
 
-Ported from `zflows/utils.py` (`sequential_monte_carlo`,
-`annealed_importance_sampling_{F,G}`), built on the other utils modules:
+Built on the other utils modules:
 importance reweighting + `resample` (metrics) alternating with Langevin
 rejuvenation (rejuvenation), whose `taming` stabilizer is exposed here
 as well.

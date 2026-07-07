@@ -1,8 +1,7 @@
 """Flow map scaling law — forward vs inverse latency across dimension.
 
-The jflows counterpart of zflows' `tests/compare_compiled_inverse.py`. jflows
-has no torch.compile, so this measures the pure jitted map latency of the two
-fused maps of an NSF across dimension and conditioner width:
+jflows has no torch.compile, so this measures the pure jitted map latency
+of the two fused maps of an NSF across dimension and conditioner width:
 
     forward + ladj:   flow.call_and_ladj(x)   -> (y, log|det J_F|)
     inverse + ladj:   flow.inv_and_ladj(y)    -> (x, log|det J_{F^-1}|)

@@ -357,8 +357,8 @@ def boltzmann_reverse_KL(
     checkpoint: bool = False,
 ) -> tuple[Array, list[dict]]:
     """
-    Annealed Boltzmann generator on the reverse KL, as in the zflows
-    4D reference: advance a particle set along the bridge ladder
+    Annealed Boltzmann generator on the reverse KL: advance a particle
+    set along the bridge ladder
 
         U_t = (1 - t) U_0 + t U_1,        0 < t_1 < ... < t_K = 1,
 

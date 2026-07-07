@@ -1,7 +1,7 @@
 """Internal machinery for jflows flows.
 
-Organised after zflows' core layout (transforms, MLPs, ODE solver) with two
-deliberate divergences inherited from it:
+Organised after zuko's core layout (transforms, MLPs, ODE solver), with two
+deliberate divergences from it:
 
     1. there is no `context` / conditional-on-c plumbing anywhere;
     2. MonotonicRQSTransform / CircularShiftTransform accept a per-coord
