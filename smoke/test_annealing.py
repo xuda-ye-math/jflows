@@ -142,8 +142,8 @@ def main() -> None:
     flow_id = RealNVP(jax.random.key(5), dimension=2, transforms=2).zeros()
     y = annealed_importance_sampling(jax.random.key(6), x0, SOURCE, TARGET, flow_id, type="F",
                                      ladder=10, step=0.05, iters=150)
-    # MALA (the default) crosses modes more slowly than ULA, so mode weights
-    # equilibrate less at this budget -> wider mean tolerance
+    # MALA (the default) mixes across modes more slowly than ULA, trading a
+    # little moment accuracy for stability -> wider mean tolerance
     check_target_match("AIS (type=F) moments & mode proportions", y, m_tol=0.25)
     y_g = annealed_importance_sampling(jax.random.key(6), x0, SOURCE, TARGET, flow_id, type="G",
                                      ladder=10, step=0.05, iters=150)
