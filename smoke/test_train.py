@@ -12,8 +12,13 @@ For train_reverse_KL / train_forward_KL / Monitor:
     3. train_forward_KL: same contract with the target batches
        manufactured internally by single-rung AIS through the CURRENT
        flow;
-    4. type dispatch: both drivers reject type not in {'F', 'G'};
-    5. Monitor: every < 1 rejected; reports exactly steps // every
+    4. train_forward_KLX_G: the X-regularized forward KL at a general
+       coeff_lambda — same contract, deterministic;
+    5. train_forward_KLXX_G: the full mixture loss at general
+       (coeff_lambda, coeff_alpha, coeff_beta) — quench-and-temper pool,
+       per-step hat_mu freshening, detached pushforward — same contract;
+    6. type dispatch: both typed drivers reject type not in {'F', 'G'};
+    7. Monitor: every < 1 rejected; reports exactly steps // every
        lines with the requested prefix from inside the compiled scan;
        attaching a monitor does not change the trained flow.
 
@@ -34,7 +39,13 @@ import numpy as np  # noqa: E402
 from jflows.flow import NSF  # noqa: E402
 from jflows.loss import forward_KL, reverse_KL  # noqa: E402
 from jflows.potential import Nlog_Gaussian, Nlog_Gaussian_Mixture  # noqa: E402
-from jflows.train import Monitor, train_forward_KL, train_reverse_KL  # noqa: E402
+from jflows.train import (  # noqa: E402
+    Monitor,
+    train_forward_KL,
+    train_forward_KLX_G,
+    train_forward_KLXX_G,
+    train_reverse_KL,
+)
 from jflows.utils import compute_ESS, importance_weights  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -45,6 +56,8 @@ FAILURES = 0
 SIGMA = 2.0
 N_VALID, N_BATCH, STEPS, LR = 8000, 1000, 200, 2e-3
 MC_STEP, MC_ITERS, LADDER = 1e-3, 20, 1
+N_POOL, MELT, OPT_STEP, OPT_ITERS = 2000, 2.0, 0.5, 100
+COEFF_LAMBDA, COEFF_ALPHA, COEFF_BETA = 0.7, 0.8, 0.3
 
 
 def log(msg: str) -> None:
@@ -138,6 +151,52 @@ def main() -> None:
                f"{float(ess_G[0]):.3f} -> {float(ess_G[-1]):.3f}")
     ess_full_G = float(compute_ESS(importance_weights(x_valid, u0, u1, flow_G, type="G")))
     check_true("final full-set ESS > 0.5", ess_full_G > 0.5, f"ESS = {ess_full_G:.4f}")
+
+    # ── train_forward_KLX_G ──
+    log(f"train_forward_KLX_G (coeff_lambda = {COEFF_LAMBDA})")
+    h0 = new_flow(jax.random.key(3))
+    flow_X, ess_X = train_forward_KLX_G(x_valid, u0, u1, h0,
+                                        n_batch=N_BATCH, steps=STEPS, lr=LR,
+                                        ladder=LADDER, mc_step=MC_STEP,
+                                        mc_iters=MC_ITERS,
+                                        coeff_lambda=COEFF_LAMBDA)
+    check_true("ess history shape", ess_X.shape == (STEPS,), f"{ess_X.shape}")
+    check_true("ess history in (0, 1]",
+               bool(jnp.all((ess_X > 0) & (ess_X <= 1.0))),
+               f"min {float(ess_X.min()):.3f} max {float(ess_X.max()):.3f}")
+    check_true("ess history rises", float(ess_X[-1]) > float(ess_X[0]),
+               f"{float(ess_X[0]):.3f} -> {float(ess_X[-1]):.3f}")
+    ess_full_X = float(compute_ESS(importance_weights(x_valid, u0, u1, flow_X, type="G")))
+    check_true("final full-set ESS > 0.5", ess_full_X > 0.5, f"ESS = {ess_full_X:.4f}")
+    flow_X2, _ = train_forward_KLX_G(x_valid, u0, u1, h0,
+                                     n_batch=N_BATCH, steps=STEPS, lr=LR,
+                                     ladder=LADDER, mc_step=MC_STEP,
+                                     mc_iters=MC_ITERS,
+                                     coeff_lambda=COEFF_LAMBDA)
+    check("deterministic (same call twice)", max_param_delta(flow_X, flow_X2), 0.0, tol=0)
+
+    # ── train_forward_KLXX_G ──
+    log(f"train_forward_KLXX_G (lambda {COEFF_LAMBDA}, alpha {COEFF_ALPHA}, "
+        f"beta {COEFF_BETA})")
+    flow_XX, ess_XX = train_forward_KLXX_G(
+        x_valid, u0, u1, h0, n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS,
+        lr=LR, ladder=LADDER, melt=MELT, opt_step=OPT_STEP, opt_iters=OPT_ITERS,
+        mc_step=MC_STEP, mc_iters=MC_ITERS, coeff_lambda=COEFF_LAMBDA,
+        coeff_alpha=COEFF_ALPHA, coeff_beta=COEFF_BETA)
+    check_true("ess history shape", ess_XX.shape == (STEPS,), f"{ess_XX.shape}")
+    check_true("ess history in (0, 1]",
+               bool(jnp.all((ess_XX > 0) & (ess_XX <= 1.0))),
+               f"min {float(ess_XX.min()):.3f} max {float(ess_XX.max()):.3f}")
+    check_true("ess history rises", float(ess_XX[-1]) > float(ess_XX[0]),
+               f"{float(ess_XX[0]):.3f} -> {float(ess_XX[-1]):.3f}")
+    ess_full_XX = float(compute_ESS(importance_weights(x_valid, u0, u1, flow_XX, type="G")))
+    check_true("final full-set ESS > 0.5", ess_full_XX > 0.5, f"ESS = {ess_full_XX:.4f}")
+    flow_XX2, _ = train_forward_KLXX_G(
+        x_valid, u0, u1, h0, n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS,
+        lr=LR, ladder=LADDER, melt=MELT, opt_step=OPT_STEP, opt_iters=OPT_ITERS,
+        mc_step=MC_STEP, mc_iters=MC_ITERS, coeff_lambda=COEFF_LAMBDA,
+        coeff_alpha=COEFF_ALPHA, coeff_beta=COEFF_BETA)
+    check("deterministic (same call twice)", max_param_delta(flow_XX, flow_XX2), 0.0, tol=0)
 
     # ── type dispatch ──
     log("type dispatch")

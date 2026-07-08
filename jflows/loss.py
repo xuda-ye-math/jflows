@@ -15,7 +15,7 @@ Public API (the `type` argument names the transform type, 'F' or 'G'):
                   as G (target -> source), so no `type` argument
     forward_X_G — the standalone X functional on samples of a weight
                   measure omega (the target for X_mu; the mixture
-                  alpha*hat_mu + beta*bar_nu for the balanced term),
+                  alpha*hat_mu + beta*bar_nu for the mixture term),
                   flow fixed as G
 """
 
@@ -138,7 +138,7 @@ def forward_X_G(y: Array, source: Potential, target: Potential, flow: Flow,
     term X_mu, and y drawn from the mixture alpha*hat_mu + beta*bar_nu —
     hat_mu the quench-and-temper wide-coverage measure (mode discovery),
     bar_nu the detached pushforward of source samples through G^{-1}
-    (leakage suppression) — gives the balanced mixture term
+    (leakage suppression) — gives the mixture term
     X_{alpha hat_mu + beta bar_nu} of the total training loss.
     Input:
         y:      Array [N, d]   samples drawn from the weight measure omega

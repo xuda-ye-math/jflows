@@ -1,6 +1,6 @@
 """Sampling utilities for jflows — the flat `jflows.utils` namespace.
 
-Split across four modules, re-exported here in the flat
+Split across five modules, re-exported here in the flat
 `jflows.utils` namespace:
 
     metrics      : importance_weights (+log; the type argument names the
@@ -15,6 +15,7 @@ Split across four modules, re-exported here in the flat
     anneal       : sequential_monte_carlo (alias smc),
                    annealed_importance_sampling (alias ais; same 'F'/'G'
                    type argument)
+    quench       : quench_and_temper (alias qt)
 """
 
 from .anneal import (
@@ -41,6 +42,10 @@ from .optimization import (
     lbfgs_init,
     lbfgs_step,
     optimization,
+)
+from .quench import (
+    qt,
+    quench_and_temper,
 )
 from .rejuvenation import (
     hamiltonian_monte_carlo,
@@ -77,6 +82,8 @@ __all__ = [
     "lbfgs_step",
     "leapfrog",
     "optimization",
+    "qt",
+    "quench_and_temper",
     "rejuvenation",
     "resample",
     "sequential_monte_carlo",

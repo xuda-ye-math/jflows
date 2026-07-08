@@ -23,7 +23,11 @@ For boltzmann_reverse_KL (the adaptive-ladder annealed BG):
     8. boltzmann_forward_KL: the forward KL twin (per-step AIS through
        the current flow, type='G') completes its ladder with the same
        record contract;
-    8. rejection of bad arguments: type not in {'F', 'G'}, unknown
+    9. boltzmann_forward_KLXX_G: the full-mixture generator at general
+       (coeff_lambda, coeff_alpha, coeff_beta) — per-stage quench-and-
+       temper pool, gated ladder — completes with the same record
+       contract;
+    10. rejection of bad arguments: type not in {'F', 'G'}, unknown
        bg_param keys, invalid shrink_factor.
 
 Default JAX backend (GPU); GPU memory preallocation is disabled.
@@ -43,7 +47,12 @@ import numpy as np  # noqa: E402
 
 from jflows.flow import NSF  # noqa: E402
 from jflows.potential import Nlog_Gaussian, Nlog_Gaussian_Mixture  # noqa: E402
-from jflows.train import Monitor, boltzmann_forward_KL, boltzmann_reverse_KL  # noqa: E402
+from jflows.train import (  # noqa: E402
+    Monitor,
+    boltzmann_forward_KL,
+    boltzmann_forward_KLXX_G,
+    boltzmann_reverse_KL,
+)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG = os.path.join(HERE, "test_boltzmann.log")
@@ -52,6 +61,8 @@ FAILURES = 0
 
 N_VALID, N_POOL, N_BATCH, STEPS, LR = 4000, 1000, 500, 100, 2e-3
 MC_STEP, MC_ITERS = 1e-3, 20
+MELT, OPT_STEP, OPT_ITERS = 2.0, 0.5, 100
+COEFF_LAMBDA, COEFF_ALPHA, COEFF_BETA = 0.7, 0.8, 0.3
 TAU = 0.5
 BG = {"t_safe": 0.3, "tau_ess": TAU}
 
@@ -179,6 +190,32 @@ def main() -> None:
                all(set(s.keys()) == {"t", "ess", "flow"} for s in stages_f))
     check_true("forward particle set full-size and finite",
                yf.shape == x_valid.shape and bool(jnp.isfinite(yf).all()), f"{yf.shape}")
+
+    # ── boltzmann_forward_KLXX_G (the full-mixture generator) ──
+    log(f"boltzmann_forward_KLXX_G ladder (lambda {COEFF_LAMBDA}, "
+        f"alpha {COEFF_ALPHA}, beta {COEFF_BETA}, gated)")
+    xx_lines: list[str] = []
+    yxx, stages_xx = boltzmann_forward_KLXX_G(
+        x_valid, u0, u1, flow0,
+        n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=2,
+        melt=MELT, opt_step=OPT_STEP, opt_iters=OPT_ITERS,
+        mc_step=MC_STEP, mc_iters=MC_ITERS,
+        coeff_lambda=COEFF_LAMBDA, coeff_alpha=COEFF_ALPHA, coeff_beta=COEFF_BETA,
+        monitor=Monitor(STEPS, "[t] ", xx_lines.append),
+        bg_param={"t_safe": 0.3, "tau_ess": TAU, "tau_smc": 0.2},
+    )
+    jax.effects_barrier()
+    tsxx = [s["t"] for s in stages_xx]
+    check_true("KLXX ladder complete (t = 1)", bool(tsxx) and tsxx[-1] == 1.0,
+               f"t = {[round(t, 3) for t in tsxx]}")
+    check_true("KLXX stage ESS >= tau_ess", all(s["ess"] >= TAU for s in stages_xx),
+               f"ESS = {[round(s['ess'], 3) for s in stages_xx]}")
+    check_true("KLXX record keys are t/ess/flow",
+               all(set(s.keys()) == {"t", "ess", "flow"} for s in stages_xx))
+    check_true("KLXX particle set full-size and finite",
+               yxx.shape == x_valid.shape and bool(jnp.isfinite(yxx).all()), f"{yxx.shape}")
+    check_true("KLXX [select] lines observed", any("[select]" in ln for ln in xx_lines),
+               next((ln for ln in xx_lines if "[select]" in ln), "(none)"))
 
     # ── monitoring ──
     log("monitoring")
