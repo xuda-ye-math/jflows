@@ -1,7 +1,7 @@
 """Standalone loss smoke test (jflows only) —
 run from the repo root as `~/.envs/jax/bin/python -m smoke.test_loss`.
 
-For reverse_KL / forward_KL (type='F'/'G'):
+For reverse_KL / forward_KL (type='F'/'G') and forward_KLX_G / forward_X_G:
 
     1. per-sample contract: every loss returns shape [N], and permuting
        the batch permutes the loss vector;
@@ -9,8 +9,13 @@ For reverse_KL / forward_KL (type='F'/'G'):
        forward_KL == source(y) exactly, per sample (type='F');
     3. definition vs the core layer: each type reproduces the manual
        t() / t().inv computation exactly;
-    4. type dispatch: an invalid `type` raises ValueError;
-    5. autograd: filter_grad of the batch-mean is finite and nonzero.
+    4. forward_KLX_G / forward_X_G: against the manual log-ratio
+       z = source(G(y)) - target(y) - ladj, forward_X_G == |z - z[perm]|
+       and forward_KLX_G == z + coeff_lambda * forward_X_G at the same
+       key, exactly; coeff_lambda = 0 reduces to z; X >= 0;
+    5. type dispatch: an invalid `type` raises ValueError;
+    6. autograd: filter_grad of the batch-mean is finite and nonzero
+       (reverse_KL and forward_KLX_G).
 
 Float64, on the default JAX backend (GPU when available; set
 JAX_PLATFORMS=cpu to force CPU); GPU memory preallocation is disabled.
@@ -32,7 +37,7 @@ import jax.numpy as jnp  # noqa: E402
 import numpy as np  # noqa: E402
 
 from jflows.flow import NSF  # noqa: E402
-from jflows.loss import forward_KL, reverse_KL  # noqa: E402
+from jflows.loss import forward_KL, forward_KLX_G, forward_X_G, reverse_KL  # noqa: E402
 from jflows.potential import Nlog_Gaussian  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -115,6 +120,25 @@ def main() -> None:
     except ValueError:
         check_true("invalid type raises", True)
 
+    log("forward_KLX_G / forward_X_G (flow fixed as G)")
+    src = Nlog_Gaussian([0.2, -0.4, 0.5], [1.0, 0.9, 1.1])
+    key_perm = jax.random.key(3)
+    lam = 0.7
+    klx = forward_KLX_G(y, src, target, nsf, key_perm, coeff_lambda=lam)
+    xf = forward_X_G(y, src, target, nsf, key_perm)
+    check_true("per-sample shapes [N]", klx.shape == (N,) and xf.shape == (N,),
+               f"{klx.shape} / {xf.shape}")
+    x_g2, l_g3 = T.call_and_ladj(y)                 # z = src(G(y)) - target(y) - ladj
+    z = src(x_g2) - target(y) - l_g3
+    perm_z = jax.random.permutation(key_perm, N)    # same key -> same permutation
+    check("forward_X_G == |z - z[perm]|", xf, jnp.abs(z - z[perm_z]), tol=0)
+    check("forward_KLX_G == z + lam * forward_X_G", klx, z + lam * xf, tol=0)
+    check("coeff_lambda = 0 reduces to z",
+          forward_KLX_G(y, src, target, nsf, key_perm, coeff_lambda=0.0), z, tol=0)
+    check_true("X >= 0", bool(jnp.all(xf >= 0)), f"min {float(xf.min()):.2e}")
+    check("z == forward_KL(G) - target(y)",
+          z, forward_KL(y, src, nsf, type="G") - target(y), tol=1e-12)
+
     log("autograd through the batch-mean")
 
     @eqx.filter_jit
@@ -128,6 +152,18 @@ def main() -> None:
     nonzero = any(bool(jnp.any(g != 0)) for g in leaves)
     check_true("filter_grad finite & nonzero", finite and nonzero,
                f"{len(leaves)} leaves, finite={finite}, any-nonzero={nonzero}")
+
+    @eqx.filter_jit
+    @eqx.filter_grad
+    def gklx(flow, y):
+        return forward_KLX_G(y, src, target, flow, key_perm, coeff_lambda=lam).mean()
+
+    grads2 = gklx(nsf, y)
+    leaves2 = [g for g in jax.tree_util.tree_leaves(grads2) if eqx.is_inexact_array(g)]
+    finite2 = all(bool(jnp.isfinite(g).all()) for g in leaves2)
+    nonzero2 = any(bool(jnp.any(g != 0)) for g in leaves2)
+    check_true("forward_KLX_G filter_grad finite & nonzero", finite2 and nonzero2,
+               f"{len(leaves2)} leaves, finite={finite2}, any-nonzero={nonzero2}")
 
     if FAILURES:
         log(f"DONE — {FAILURES} FAILURE(S)")

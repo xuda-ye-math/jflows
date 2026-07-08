@@ -123,7 +123,7 @@ def forward_KLX_G(y: Array, source: Potential, target: Potential, flow: Flow,
 
 
 def forward_X_G(y: Array, source: Potential, target: Potential, flow: Flow,
-                  key: Array) -> Array:
+                key: Array) -> Array:
     """
     The standalone X functional X_omega, using samples of a weight measure
     omega, with the flow fixed as the inverse map G (target -> source).
