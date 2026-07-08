@@ -1,5 +1,5 @@
-<p align="center"><img src="logo.png" alt="jflows logo" width="100px"></p>
-<p align="center"><sub><em>designed by ChatGPT</em></sub></p>
+<p align="center"><img src="jflows.png" alt="jflows banner" width="800px"></p>
+<p align="center"><sub><em>Banner designed by ChatGPT: the character Jax from "The Amazing Digital Circus", a nod to jflows being built on Google JAX.</em></sub></p>
 
 # jflows
 
