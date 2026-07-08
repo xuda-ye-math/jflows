@@ -425,7 +425,7 @@ class OTFlow(Flow):
     one `lax.scan` trace).
 
     The forward map and `log|det J|` follow the standard `(y, ladj)` contract,
-    so an `OTFlow` is a drop-in `Flow` for `reverse_KL` and the SMC utilities.
+    so an `OTFlow` is a drop-in `Flow` for `reverse_KL_F` and the SMC utilities.
 
     Arguments:
         key: PRNG key for Φ's initialisation.

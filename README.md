@@ -71,13 +71,13 @@ Coefficients are a plain array leaf, so retuning `t` along an annealing ladder n
 
 **A strict interface hierarchy.** The API has three levels. The LOW level is the building blocks — per-sample losses and the SMC toolkit — for assembling custom pipelines. The MEDIUM level — the packed training drivers — composes those blocks into one-call stage trainers. The HIGH level — the annealed Boltzmann generator — chains the stage trainers into the full adaptive-ladder pipeline. Everything below is organized in that order.
 
-**Low level: per-sample KL losses with one `type` argument.** `reverse_KL` and `forward_KL` take the flow and dispatch on `type`: `'F'` when the flow maps source → target, `'G'` when it maps target → source (the flow is differentiated in its native direction only — no inverse map in training). Every loss returns the full per-sample vector, shape `[N]`, for post-hoc reweighting / clipping; reduce with `.mean()`:
+**Low level: per-sample KL losses.** Each loss fixes the flow direction its suffix names — `reverse_KL_F` applies the flow as the forward map F (source → target), `forward_KL_G` as the inverse map G (target → source) — so every loss is differentiated in its native direction and no inverse map ever enters training. Every loss returns the full per-sample vector, shape `[N]`, for post-hoc reweighting / clipping; reduce with `.mean()`:
 
 ```python
-from jflows.loss import reverse_KL, forward_KL
+from jflows.loss import reverse_KL_F, forward_KL_G
 
-loss = reverse_KL(x, target, flow, type="F").mean()   # source samples x
-loss = forward_KL(y, source, flow, type="G").mean()   # target samples y
+loss = reverse_KL_F(x, target, flow).mean()   # source samples x, flow as F
+loss = forward_KL_G(y, source, flow).mean()   # target samples y, flow as G
 ```
 
 **Low level: the SMC toolkit.** `jflows.utils` provides the *propose → reweight → resample → rejuvenate* building blocks, each at two granularities — a packed loop for direct use and a per-step kernel for custom schedules:
@@ -105,30 +105,31 @@ y     = ais(key, samples, source, target, flow, type="G", ladder=1, step=1e-3, i
 **Medium level: packed training drivers.** `jflows.train` packs a whole training stage — Adam on the flow's parameters, the full step loop under one `lax.scan` — into a single compiled call that regenerates its batch *inside every Adam step* (the X-regularization data pipeline: no frozen batch is ever reused, so a fixed sample set does not get memorized):
 
 ```python
-from jflows.train import train_reverse_KL, train_forward_KL, boltzmann_reverse_KL, Monitor
+from jflows.train import train_reverse_KL_F, train_forward_KL_G, boltzmann_reverse_KL_F, Monitor
 
 # reverse KL: each step draws n_batch samples from the fixed set x_valid and
-# freshens them with Langevin rejuvenation at the source
-flow, ess = train_reverse_KL(x_valid, source, target, flow, type="F",
-                             n_batch=2000, steps=200, lr=1e-3,
-                             mc_step=1e-3, mc_iters=100)
+# freshens them with Langevin rejuvenation at the source (flow fixed as F)
+flow, ess = train_reverse_KL_F(x_valid, source, target, flow,
+                               n_batch=2000, steps=200, lr=1e-3,
+                               mc_step=1e-3, mc_iters=100)
 
 # forward KL: each step manufactures its target batch by single-rung AIS
-# through the CURRENT flow (pushforward -> reweight -> resample -> Langevin)
-flow, ess = train_forward_KL(x_valid, source, target, flow, type="G",
-                             n_batch=2000, steps=200, lr=1e-3,
-                             ladder=1, mc_step=1e-3, mc_iters=100)
+# through the CURRENT flow (pushforward -> reweight -> resample -> Langevin;
+# flow fixed as G)
+flow, ess = train_forward_KL_G(x_valid, source, target, flow,
+                               n_batch=2000, steps=200, lr=1e-3,
+                               ladder=1, mc_step=1e-3, mc_iters=100)
 ```
 
 Both drivers are deterministic (per-step keys derive from a fixed internal seed), compile once regardless of `steps`, and return the trained flow together with the per-step batch-ESS history. An optional `Monitor` reports live from inside the compiled loop:
 
 ```python
-flow, ess = train_reverse_KL(..., monitor=Monitor(every=10, prefix="[reverse KL] "))
+flow, ess = train_reverse_KL_F(..., monitor=Monitor(every=10, prefix="[reverse KL] "))
 # [reverse KL] step    10   loss = +4.7476e+00   ESS = 0.3542
 # [reverse KL] step    20   loss = +3.7126e+00   ESS = 0.4879
 ```
 
-**High level: the annealed Boltzmann generator.** On top of the stage trainers, `boltzmann_reverse_KL` runs the full annealed
+**High level: the annealed Boltzmann generator.** On top of the stage trainers, `boltzmann_reverse_KL_F` runs the full annealed
 Boltzmann generator on the bridge ladder $U_t = (1-t)\,U_0 + t\,U_1$ with an
 ADAPTIVE coefficient: the stage flows are connected step by step — each stage
 trains the warm-started flow as the incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$
@@ -137,10 +138,10 @@ ESS (rejected stages shrink $t_k$ and retry with fresh randomness), and
 advances the set by reweight → resample → Langevin at $U_{t_k}$ (MALA by default; `mc_adjust=False` for plain ULA):
 
 ```python
-from jflows.train import boltzmann_reverse_KL
+from jflows.train import boltzmann_reverse_KL_F
 
-y_valid, stages = boltzmann_reverse_KL(
-    x_valid, source, target, flow, type="F",
+y_valid, stages = boltzmann_reverse_KL_F(
+    x_valid, source, target, flow,
     n_pool=24000, n_batch=2000, steps=500, lr=1e-4, ladder=1, mc_step=1e-3, mc_iters=100,
     bg_param={"t_safe": 0.1, "shrink_factor": 0.7, "enlarge_factor": 1.5, "tau_ess": 0.6},
 )
@@ -206,8 +207,8 @@ python -c "import jflows; print(jflows.__doc__)"
 ```python
 from jflows.flow import NSF, RealNVP
 from jflows.potential import Potential, Nlog_Gaussian
-from jflows.loss import reverse_KL, forward_KL
-from jflows.train import train_reverse_KL, train_forward_KL, Monitor
+from jflows.loss import reverse_KL_F, forward_KL_G
+from jflows.train import train_reverse_KL_F, train_forward_KL_G, Monitor
 from jflows.utils import importance_weights, compute_ESS, resample, langevin
 
 help(NSF)

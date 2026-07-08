@@ -155,8 +155,7 @@ def annealed_importance_sampling(
 
     The flow acts either as the forward map F (type='F',
     source -> target) or as the inverse map G = F^{-1} (type='G',
-    target -> source), the same `type` convention as `reverse_KL` /
-    `forward_KL` / `importance_weights`.
+    target -> source), the same `type` convention as `importance_weights`.
 
     Annealing follows the geometric path between the flow proposal and the
     target,

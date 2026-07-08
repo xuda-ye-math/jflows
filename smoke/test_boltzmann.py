@@ -1,7 +1,7 @@
 """Standalone Boltzmann-generator smoke test (jflows only) — run from
 the repo root as `~/.envs/jax/bin/python -m smoke.test_boltzmann`.
 
-For boltzmann_reverse_KL (the adaptive-ladder annealed BG):
+For boltzmann_reverse_KL_F (the adaptive-ladder annealed BG):
 
     1. backend: the test runs directly on the GPU;
     2. ladder contract on a multimodal 2D target: at least one stage,
@@ -20,15 +20,15 @@ For boltzmann_reverse_KL (the adaptive-ladder annealed BG):
        ladder = 2) shrinks over-aggressive t_k via the multi-rung SMC
        check on an n_pool-sized selection pool and still completes,
        with [select] lines reported;
-    8. boltzmann_forward_KL: the forward KL twin (per-step AIS through
-       the current flow, type='G') completes its ladder with the same
-       record contract;
+    8. boltzmann_forward_KL_G: the forward KL twin (per-step AIS through
+       the current flow, flow fixed as G) completes its ladder with the
+       same record contract;
     9. boltzmann_forward_KLXX_G: the full-mixture generator at general
        (coeff_lambda, coeff_alpha, coeff_beta) — per-stage quench-and-
        temper pool, gated ladder — completes with the same record
        contract;
-    10. rejection of bad arguments: type not in {'F', 'G'}, unknown
-       bg_param keys, invalid shrink_factor.
+    10. rejection of bad arguments: unknown bg_param keys, invalid
+       shrink_factor.
 
 Default JAX backend (GPU); GPU memory preallocation is disabled.
 Exits nonzero on any failure.
@@ -49,9 +49,9 @@ from jflows.flow import NSF  # noqa: E402
 from jflows.potential import Nlog_Gaussian, Nlog_Gaussian_Mixture  # noqa: E402
 from jflows.train import (  # noqa: E402
     Monitor,
-    boltzmann_forward_KL,
+    boltzmann_forward_KL_G,
     boltzmann_forward_KLXX_G,
-    boltzmann_reverse_KL,
+    boltzmann_reverse_KL_F,
 )
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -114,10 +114,10 @@ def main() -> None:
                 transforms=2, hidden_features=(32, 32)).zeros()
 
     # ── ladder contract ──
-    log("boltzmann_reverse_KL ladder")
+    log("boltzmann_reverse_KL_F ladder")
     lines: list[str] = []
-    y, stages = boltzmann_reverse_KL(
-        x_valid, u0, u1, flow0, type="F",
+    y, stages = boltzmann_reverse_KL_F(
+        x_valid, u0, u1, flow0,
         n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=1,
         mc_step=MC_STEP, mc_iters=MC_ITERS,
         monitor=Monitor(STEPS, "[t] ", lines.append), bg_param=BG,
@@ -145,8 +145,8 @@ def main() -> None:
 
     # ── determinism ──
     log("determinism")
-    y2, stages2 = boltzmann_reverse_KL(
-        x_valid, u0, u1, flow0, type="F",
+    y2, stages2 = boltzmann_reverse_KL_F(
+        x_valid, u0, u1, flow0,
         n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=1,
         mc_step=MC_STEP, mc_iters=MC_ITERS,
         bg_param=BG,
@@ -159,8 +159,8 @@ def main() -> None:
     # ── tau_smc pre-selection gate ──
     log("tau_smc SMC pre-selection")
     sel_lines: list[str] = []
-    y3, stages3 = boltzmann_reverse_KL(
-        x_valid, u0, u1, flow0, type="F",
+    y3, stages3 = boltzmann_reverse_KL_F(
+        x_valid, u0, u1, flow0,
         n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR,
         mc_step=MC_STEP, mc_iters=MC_ITERS,
         ladder=2, mc_adjust=True,
@@ -173,10 +173,10 @@ def main() -> None:
     check_true("[select] lines observed", any("[select]" in ln for ln in sel_lines),
                next((ln for ln in sel_lines if "[select]" in ln), "(none)"))
 
-    # ── boltzmann_forward_KL (the forward KL twin) ──
-    log("boltzmann_forward_KL ladder")
-    yf, stages_f = boltzmann_forward_KL(
-        x_valid, u0, u1, flow0, type="G",
+    # ── boltzmann_forward_KL_G (the forward KL twin) ──
+    log("boltzmann_forward_KL_G ladder")
+    yf, stages_f = boltzmann_forward_KL_G(
+        x_valid, u0, u1, flow0,
         n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=1,
         mc_step=MC_STEP, mc_iters=MC_ITERS, mc_adjust=True,
         bg_param=BG,
@@ -225,15 +225,14 @@ def main() -> None:
 
     # ── argument rejection ──
     log("argument rejection")
-    for name, kwargs in (
-        ("type='X'", dict(type="X")),
-        ("unknown bg_param key", dict(type="F", bg_param={"tau_typo": 0.5})),
-        ("invalid shrink_factor", dict(type="F", bg_param={"shrink_factor": 1.5})),
+    for name, bg in (
+        ("unknown bg_param key", {"tau_typo": 0.5}),
+        ("invalid shrink_factor", {"shrink_factor": 1.5}),
     ):
         try:
-            boltzmann_reverse_KL(x_valid, u0, u1, flow0,
-                                 n_pool=N_POOL, n_batch=N_BATCH, steps=1, lr=LR,
-                                 ladder=1, mc_step=MC_STEP, mc_iters=1, **kwargs)
+            boltzmann_reverse_KL_F(x_valid, u0, u1, flow0,
+                                   n_pool=N_POOL, n_batch=N_BATCH, steps=1, lr=LR,
+                                   ladder=1, mc_step=MC_STEP, mc_iters=1, bg_param=bg)
             check_true(f"rejects {name}", False)
         except ValueError:
             check_true(f"rejects {name}", True)

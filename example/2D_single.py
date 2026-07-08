@@ -4,13 +4,13 @@ Trains one NSF on a simple 2D potential with each objective, neither of
 which touches the inverse map during training (each transform is
 differentiated in its native direction only):
 
-    reverse KL (type='F') : the flow acts as F (source -> target);
-                            `train_reverse_KL` draws an N_BATCH subset of
+    reverse KL            : the flow acts as F (source -> target);
+                            `train_reverse_KL_F` draws an N_BATCH subset of
                             the fixed source set every Adam step and
                             freshens it with Langevin rejuvenation at the
                             source.
-    forward KL (type='G') : the flow acts as G (target -> source);
-                            `train_forward_KL` manufactures its target
+    forward KL            : the flow acts as G (target -> source);
+                            `train_forward_KL_G` manufactures its target
                             batch every Adam step by single-rung AIS
                             through the CURRENT flow (pushforward ->
                             reweight -> resample -> Langevin rejuvenation
@@ -48,7 +48,7 @@ plt.rcParams.update({
 
 from jflows.flow import NSF
 from jflows.potential import Nlog_Gaussian, Nlog_Gaussian_Mixture
-from jflows.train import Monitor, train_forward_KL, train_reverse_KL
+from jflows.train import Monitor, train_forward_KL_G, train_reverse_KL_F
 from jflows.utils import compute_ESS, importance_weights
 
 HERE = Path(__file__).resolve().parent
@@ -110,16 +110,16 @@ def main() -> None:
     x_valid = u0.samples(jax.random.key(2), N_VALID)  # the fixed N_VALID source set
 
     log("[reverse KL] training (packed single stage) ...")
-    flow_F, hist_F = train_reverse_KL(x_valid, u0, u1, new_flow(jax.random.key(0)),
-                                      type="F", n_batch=N_BATCH, steps=STEPS, lr=LR,
+    flow_F, hist_F = train_reverse_KL_F(x_valid, u0, u1, new_flow(jax.random.key(0)),
+                                        n_batch=N_BATCH, steps=STEPS, lr=LR,
                                       mc_step=MC_STEP, mc_iters=MC_ITERS,
                                       monitor=Monitor(MONITOR_EVERY, "[reverse KL] ", log))
     log(f"[reverse KL] {STEPS} steps done   batch ESS "
         f"{float(hist_F[0]):.3f} -> {float(hist_F[STEPS // 2]):.3f} -> {float(hist_F[-1]):.3f}")
 
     log("[forward KL] training (packed single stage) ...")
-    flow_G, hist_G = train_forward_KL(x_valid, u0, u1, new_flow(jax.random.key(1)),
-                                      type="G", n_batch=N_BATCH, steps=STEPS, lr=LR,
+    flow_G, hist_G = train_forward_KL_G(x_valid, u0, u1, new_flow(jax.random.key(1)),
+                                        n_batch=N_BATCH, steps=STEPS, lr=LR,
                                       ladder=LADDER, mc_step=MC_STEP, mc_iters=MC_ITERS,
                                       monitor=Monitor(MONITOR_EVERY, "[forward KL] ", log))
     log(f"[forward KL] {STEPS} steps done   batch ESS "

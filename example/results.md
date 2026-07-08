@@ -13,7 +13,7 @@ Single-stage flow training on a 2D three-mode target, comparing the reverse KL a
 - **Flow**: NSF on $[-5, 5]^2$, 16 bins, 4 autoregressive transforms, $(64, 64)$ conditioners, identity-initialised (`zeros()`).
 - **Training**: one packed call per method — `N_VALID = 40000` fixed source set, `N_BATCH = 2000` per Adam step, `STEPS = 200`, `LR = 1e-3`, Langevin rejuvenation `MC_STEP = 1e-3`, `MC_ITERS = 100`, single-rung AIS (`LADDER = 1`).
 
-Both trainers regenerate their batch inside every Adam step. The reverse KL flow acts as $F$ (source → target, `type='F'`): each step draws an `N_BATCH` subset of the fixed set and freshens it with Langevin steps at the source. The forward KL flow acts as $G$ (target → source, `type='G'`): each step manufactures its target batch by single-rung AIS through the *current* flow — pushforward, self-normalized reweighting, multinomial resampling, Langevin rejuvenation at the target. Neither objective touches the inverse map during training, and the final ESS is computed on the full fixed set through the flow importance weights.
+Both trainers regenerate their batch inside every Adam step. The reverse KL flow acts as $F$ (source → target, `train_reverse_KL_F`): each step draws an `N_BATCH` subset of the fixed set and freshens it with Langevin steps at the source. The forward KL flow acts as $G$ (target → source, `train_forward_KL_G`): each step manufactures its target batch by single-rung AIS through the *current* flow — pushforward, self-normalized reweighting, multinomial resampling, Langevin rejuvenation at the target. Neither objective touches the inverse map during training, and the final ESS is computed on the full fixed set through the flow importance weights.
 
 ### Results
 
@@ -65,7 +65,7 @@ Both panels show the resampled and rejuvenated particle sets (left: reverse KL; 
 
 ## 4D_boltzmann — annealed BG with the adaptive ladder
 
-The 4D two-charge target, sampled by [`4D_boltzmann.py`](4D_boltzmann.py) with BOTH annealed generators — `boltzmann_reverse_KL` and `boltzmann_forward_KL` — along the bridge ladder $U_t = (1-t)\,U_0 + t\,U_1$, with the coefficient $t$ selected adaptively instead of a fixed schedule $c_k = k/12$.
+The 4D two-charge target, sampled by [`4D_boltzmann.py`](4D_boltzmann.py) with BOTH annealed generators — `boltzmann_reverse_KL_F` and `boltzmann_forward_KL_G` — along the bridge ladder $U_t = (1-t)\,U_0 + t\,U_1$, with the coefficient $t$ selected adaptively instead of a fixed schedule $c_k = k/12$.
 
 ### Setup
 
@@ -116,7 +116,7 @@ CNF versus OTFlow on a fixed multi-modal target as the dimension grows, run by [
 - **Target** $\mu_1 \propto e^{-U_1}$: a factorized multi-well potential whose mode count stays fixed while $d$ is swept,
   $U_1(x) = \sum_{i < 3} \beta_{\mathrm w}\,((x_i / s)^2 - 1)^2 + \sum_{i \ge 3} \tfrac12 x_i^2$, with $s = 1.5$, $\beta_{\mathrm w} = 1.5$. The first three coordinates are symmetric double wells (minima at $\pm s$), giving $2^3 = 8$ modes; the remaining $d - 3$ coordinates are standard Gaussian and only raise the dimension. The barrier is deliberately shallow so mode-seeking reverse KL must cover all eight modes rather than collapse onto a subset.
 - **Flows**: `CNF` (FFJORD, free-form MLP velocity, exact $O(d)$ augmented-Jacobian trace) with `frequency = 4`; `OTFlow` (velocity $= -\nabla\Phi$ with a closed-form Hessian trace) with `hidden = 64`, `layer = 3`, `rank = min(10, d+1)`. Both integrate with the same fixed-step RK4 (`nt = 12`) and $(64, 64)$-width ODE nets, identity-initialised.
-- **Training**: one packed `train_reverse_KL` call per cell — plain reverse KL with no rejuvenation (`MC_ITERS = 0`), `N_VALID = 40000` fixed source pool, `N_BATCH = 512` per Adam step, `STEPS = 1000`, `LR = 2e-3`, `checkpoint = True` (the CNF exact-trace path). The final ESS is the proposal importance-sampling ESS on a held-out $N = 20000$ source set.
+- **Training**: one packed `train_reverse_KL_F` call per cell — plain reverse KL with no rejuvenation (`MC_ITERS = 0`), `N_VALID = 40000` fixed source pool, `N_BATCH = 512` per Adam step, `STEPS = 1000`, `LR = 2e-3`, `checkpoint = True` (the CNF exact-trace path). The final ESS is the proposal importance-sampling ESS on a held-out $N = 20000$ source set.
 
 ### Results
 

@@ -6,8 +6,8 @@ A von Mises ridge mixture on the 3-torus [-NCSF_LIM, NCSF_LIM]^3,
                       + exp(k cos(x3 - x1)) ],
 
 sampled from the uniform source with BOTH objectives, each in one
-packed stage — reverse KL (`train_reverse_KL`, type='F') and forward KL
-(`train_forward_KL`, type='G', target data manufactured per Adam step
+packed stage — reverse KL (`train_reverse_KL_F`) and forward KL
+(`train_forward_KL_G`, target data manufactured per Adam step
 by single-rung AIS) — followed by the same reweighting pipeline:
 importance weights -> ESS -> multinomial resampling -> MALA
 rejuvenation at the target. The figure compares them side by side
@@ -42,7 +42,7 @@ plt.rcParams.update({
 from jax import Array
 from jflows.flow import NCSF
 from jflows.potential import Nlog_Uniform, Potential
-from jflows.train import Monitor, train_forward_KL, train_reverse_KL
+from jflows.train import Monitor, train_forward_KL_G, train_reverse_KL_F
 from jflows.utils import compute_ESS_log, importance_weights_log, langevin, resample
 
 HERE = Path(__file__).resolve().parent
@@ -122,14 +122,14 @@ def main() -> None:
     for row, name in enumerate(("reverse KL", "forward KL")):
         log(f"[{name}] training (packed single stage) ...")
         if name == "reverse KL":
-            flow, hist = train_reverse_KL(x_valid, u0, u1, new_flow(jax.random.key(0)),
-                                          type="F", n_batch=N_BATCH, steps=STEPS, lr=LR,
+            flow, hist = train_reverse_KL_F(x_valid, u0, u1, new_flow(jax.random.key(0)),
+                                            n_batch=N_BATCH, steps=STEPS, lr=LR,
                                           mc_step=MC_STEP, mc_iters=MC_ITERS,
                                           monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log))
             tp, y = "F", flow(x_valid)                # pushforward F(x)
         else:
-            flow, hist = train_forward_KL(x_valid, u0, u1, new_flow(jax.random.key(1)),
-                                          type="G", n_batch=N_BATCH, steps=STEPS, lr=LR,
+            flow, hist = train_forward_KL_G(x_valid, u0, u1, new_flow(jax.random.key(1)),
+                                            n_batch=N_BATCH, steps=STEPS, lr=LR,
                                           ladder=LADDER, mc_step=MC_STEP, mc_iters=MC_ITERS,
                                           monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log))
             tp, y = "G", flow.inv(x_valid)            # G's inverse pushes source forward

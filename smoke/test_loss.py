@@ -1,21 +1,20 @@
 """Standalone loss smoke test (jflows only) —
 run from the repo root as `~/.envs/jax/bin/python -m smoke.test_loss`.
 
-For reverse_KL / forward_KL (type='F'/'G') and forward_KLX_G / forward_X_G:
+For reverse_KL_F / forward_KL_G and forward_KLX_G / forward_X_G:
 
     1. per-sample contract: every loss returns shape [N], and permuting
        the batch permutes the loss vector;
-    2. identity flow (zeros()): reverse_KL == target(x) and
-       forward_KL == source(y) exactly, per sample (type='F');
-    3. definition vs the core layer: each type reproduces the manual
+    2. identity flow (zeros()): reverse_KL_F == target(x) and
+       forward_KL_G == source(y) exactly, per sample;
+    3. definition vs the core layer: every loss reproduces the manual
        t() / t().inv computation exactly;
     4. forward_KLX_G / forward_X_G: against the manual log-ratio
        z = source(G(y)) - target(y) - ladj, forward_X_G == |z - z[perm]|
        and forward_KLX_G == z + coeff_lambda * forward_X_G at the same
        key, exactly; coeff_lambda = 0 reduces to z; X >= 0;
-    5. type dispatch: an invalid `type` raises ValueError;
-    6. autograd: filter_grad of the batch-mean is finite and nonzero
-       (reverse_KL and forward_KLX_G).
+    5. autograd: filter_grad of the batch-mean is finite and nonzero
+       (reverse_KL_F and forward_KLX_G).
 
 Float64, on the default JAX backend (GPU when available; set
 JAX_PLATFORMS=cpu to force CPU); GPU memory preallocation is disabled.
@@ -37,7 +36,7 @@ import jax.numpy as jnp  # noqa: E402
 import numpy as np  # noqa: E402
 
 from jflows.flow import NSF  # noqa: E402
-from jflows.loss import forward_KL, forward_KLX_G, forward_X_G, reverse_KL  # noqa: E402
+from jflows.loss import forward_KL_G, forward_KLX_G, forward_X_G, reverse_KL_F  # noqa: E402
 from jflows.potential import Nlog_Gaussian  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -88,37 +87,26 @@ def main() -> None:
 
     log("per-sample contract")
     losses = {
-        "reverse_KL (F)": reverse_KL(x, target, nsf, type="F"),
-        "reverse_KL (G)": reverse_KL(x, target, nsf, type="G"),
-        "forward_KL (F)": forward_KL(y, target, nsf, type="F"),
-        "forward_KL (G)": forward_KL(y, target, nsf, type="G"),
+        "reverse_KL_F": reverse_KL_F(x, target, nsf),
+        "forward_KL_G": forward_KL_G(y, target, nsf),
     }
     for name, vec in losses.items():
         check_true(f"{name} shape", vec.shape == (N,), f"{vec.shape}")
     perm = jax.random.permutation(jax.random.key(2), N)
-    check("permutation equivariance", reverse_KL(x[perm], target, nsf, type="F"),
-          losses["reverse_KL (F)"][perm], tol=1e-12)
+    check("permutation equivariance", reverse_KL_F(x[perm], target, nsf),
+          losses["reverse_KL_F"][perm], tol=1e-12)
 
     log("identity flow (zeros)")
     flow_z = nsf.zeros()
-    check("reverse_KL == target(x)", reverse_KL(x, target, flow_z, type="F"), target(x), tol=1e-12)
-    check("forward_KL == source(y)", forward_KL(y, target, flow_z, type="F"), target(y), tol=1e-12)
+    check("reverse_KL_F == target(x)", reverse_KL_F(x, target, flow_z), target(x), tol=1e-12)
+    check("forward_KL_G == source(y)", forward_KL_G(y, target, flow_z), target(y), tol=1e-12)
 
-    log("F/G duality and aliases")
-    T = nsf.t()  # definition vs the core layer
+    log("definition vs the core layer")
+    T = nsf.t()
     y_c, l_c = T.call_and_ladj(x)
-    check("reverse_KL type=F == core", losses["reverse_KL (F)"], target(y_c) - l_c, tol=0)
-    y_g, l_g = T.inv.call_and_ladj(x)
-    check("reverse_KL type=G == core", losses["reverse_KL (G)"], target(y_g) - l_g, tol=0)
-    x_c, l_i = T.inv.call_and_ladj(y)
-    check("forward_KL type=F == core", losses["forward_KL (F)"], target(x_c) - l_i, tol=0)
+    check("reverse_KL_F == core", losses["reverse_KL_F"], target(y_c) - l_c, tol=0)
     x_g, l_g2 = T.call_and_ladj(y)
-    check("forward_KL type=G == core", losses["forward_KL (G)"], target(x_g) - l_g2, tol=0)
-    try:
-        reverse_KL(x, target, nsf, type="X")
-        check_true("invalid type raises", False)
-    except ValueError:
-        check_true("invalid type raises", True)
+    check("forward_KL_G == core", losses["forward_KL_G"], target(x_g) - l_g2, tol=0)
 
     log("forward_KLX_G / forward_X_G (flow fixed as G)")
     src = Nlog_Gaussian([0.2, -0.4, 0.5], [1.0, 0.9, 1.1])
@@ -136,15 +124,15 @@ def main() -> None:
     check("coeff_lambda = 0 reduces to z",
           forward_KLX_G(y, src, target, nsf, key_perm, coeff_lambda=0.0), z, tol=0)
     check_true("X >= 0", bool(jnp.all(xf >= 0)), f"min {float(xf.min()):.2e}")
-    check("z == forward_KL(G) - target(y)",
-          z, forward_KL(y, src, nsf, type="G") - target(y), tol=1e-12)
+    check("z == forward_KL_G - target(y)",
+          z, forward_KL_G(y, src, nsf) - target(y), tol=1e-12)
 
     log("autograd through the batch-mean")
 
     @eqx.filter_jit
     @eqx.filter_grad
     def gmean(flow, x):
-        return reverse_KL(x, target, flow, type="F").mean()
+        return reverse_KL_F(x, target, flow).mean()
 
     grads = gmean(nsf, x)
     leaves = [g for g in jax.tree_util.tree_leaves(grads) if eqx.is_inexact_array(g)]

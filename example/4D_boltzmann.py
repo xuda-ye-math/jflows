@@ -13,9 +13,9 @@ the ADAPTIVE coefficient (SMC-gated safe start, enlarge-factor
 extrapolation, ESS-gated rejection/shrink) replacing the fixed
 c_k = k / 12 schedule of the original:
 
-    boltzmann_reverse_KL (type='F'): each stage trains the increment by
+    boltzmann_reverse_KL_F: each stage trains the increment by
         reverse KL on Langevin-freshened batches of the particle set;
-    boltzmann_forward_KL (type='G'): each stage trains the increment by
+    boltzmann_forward_KL_G: each stage trains the increment by
         forward KL on target batches manufactured per Adam step by AIS
         through the CURRENT flow (SMC gate and AIS share LADDER).
 
@@ -49,7 +49,7 @@ plt.rcParams.update({
 from jax import Array
 from jflows.flow import NSF
 from jflows.potential import Nlog_Gaussian, Potential
-from jflows.train import Monitor, boltzmann_forward_KL, boltzmann_reverse_KL
+from jflows.train import Monitor, boltzmann_forward_KL_G, boltzmann_reverse_KL_F
 
 HERE = Path(__file__).resolve().parent
 LOG = HERE / "4D_boltzmann.log"
@@ -79,7 +79,7 @@ LADDER: int = 1        # SMC rungs of the tau_smc selection gate
 MC_STEP: float = 1e-3  # Langevin rejuvenation step size
 MC_ITERS: int = 100    # Langevin rejuvenation steps (MALA default: rejects Coulomb-wall proposals)
 
-# adaptive ladder (bg_param of boltzmann_reverse_KL)
+# adaptive ladder (bg_param of boltzmann_reverse_KL_F)
 BG_PARAM = {
     "t_safe": 0.2,        # stage-1 coefficient (the safe start)
     "shrink_factor": 0.7,  # rejected stage: t_k <- t_prev + shrink (t_k - t_prev)
@@ -139,17 +139,25 @@ def main() -> None:
                    transforms=TRANSFORMS, hidden_features=HIDDEN_FEATURES).zeros()
 
     results = {}
-    for name, driver, tp, key_f in (
-        ("reverse KL", boltzmann_reverse_KL, "F", jax.random.key(0)),
-        ("forward KL", boltzmann_forward_KL, "G", jax.random.key(1)),
+    for name, key_f in (
+        ("reverse KL", jax.random.key(0)),
+        ("forward KL", jax.random.key(1)),
     ):
         t0 = time.time()
-        y, stages = driver(
-            x_valid, u0, u1, new_flow(key_f), type=tp,
-            n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=LADDER,
-            mc_step=MC_STEP, mc_iters=MC_ITERS,
-            monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log), bg_param=BG_PARAM,
-        )
+        if name == "reverse KL":
+            y, stages = boltzmann_reverse_KL_F(
+                x_valid, u0, u1, new_flow(key_f),
+                n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=LADDER,
+                mc_step=MC_STEP, mc_iters=MC_ITERS,
+                monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log), bg_param=BG_PARAM,
+            )
+        else:
+            y, stages = boltzmann_forward_KL_G(
+                x_valid, u0, u1, new_flow(key_f),
+                n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=LADDER,
+                mc_step=MC_STEP, mc_iters=MC_ITERS,
+                monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log), bg_param=BG_PARAM,
+            )
         ts = [s["t"] for s in stages]
         log(f"[{name}] ladder done in {time.time() - t0:.1f}s: "
             f"t = {[round(t, 4) for t in ts]}  ESS = {[round(s['ess'], 3) for s in stages]}  "

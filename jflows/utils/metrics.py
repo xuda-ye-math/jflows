@@ -1,7 +1,7 @@
 """Sampling diagnostics, importance weights, and resampling for jflows.
 
 Public API (in pipeline order; the `type` argument names the transform
-type, 'F' or 'G', as in `reverse_KL` / `forward_KL`):
+type: 'F' if the flow maps source -> target, 'G' if target -> source):
     importance_weights_log — unnormalized IS log-weights through a flow
     importance_weights     — linear-space weights (max-shifted exp)
     compute_ESS            — effective sample size from linear weights
@@ -52,8 +52,7 @@ def importance_weights_log(
         mu_0(x) ~ exp(-source(x)),   mu_1(y) ~ exp(-target(y)).
     The flow acts either as the forward map F (type='F',
     source -> target) or as the inverse map G = F^{-1} (type='G',
-    target -> source), the same `type` convention as `reverse_KL` /
-    `forward_KL`.
+    target -> source).
 
     For x drawn from the source, y = F(x), the proposal density is
         log nu(y) = -source(x) - log|det J_F(x)|.

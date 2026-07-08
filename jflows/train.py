@@ -14,24 +14,27 @@ reused, so a single packed call does not memorize per-sample
 corrections.
 
 Public API:
-    train_reverse_KL — reverse KL; each step Langevin-freshens its
-                       source batch at the source potential
-    train_forward_KL — forward KL; each step manufactures its target
-                       batch by AIS through the CURRENT flow
+    train_reverse_KL_F — reverse KL (flow fixed as F, source -> target);
+                       each step Langevin-freshens its source batch at the
+                       source potential
+    train_forward_KL_G — forward KL (flow fixed as G, target -> source);
+                       each step manufactures its target batch by AIS
+                       through the CURRENT flow
     train_forward_KLX_G — forward KL + X functional (flow fixed as G,
-                       target -> source): train_forward_KL with the
+                       target -> source): train_forward_KL_G with the
                        coeff_lambda-weighted X regularizer added
     train_forward_KLXX_G — the full X-regularized forward KL:
                        KL + coeff_lambda * X_mu
                        + X_{coeff_alpha * hat_mu + coeff_beta * bar_nu},
                        with hat_mu a quench-and-temper pool of size
                        n_pool and bar_nu the detached pushforward
-    boltzmann_reverse_KL — annealed Boltzmann generator on the bridge
-                       ladder U_t = (1-t) U_0 + t U_1: per stage selection ->
-                       training -> ESS evaluation -> rejection -> advance,
-                       with adaptive t selection (bg_param)
-    boltzmann_forward_KL — the forward KL twin: identical ladder, with
-                       train_forward_KL as the stage trainer (its per-step
+    boltzmann_reverse_KL_F — annealed Boltzmann generator on the bridge
+                       ladder U_t = (1-t) U_0 + t U_1 (flow fixed as F):
+                       per stage selection -> training -> ESS evaluation ->
+                       rejection -> advance, with adaptive t selection
+                       (bg_param)
+    boltzmann_forward_KL_G — the forward KL twin: identical ladder, with
+                       train_forward_KL_G as the stage trainer (its per-step
                        AIS shares the `ladder` with the SMC selection gate)
     boltzmann_forward_KLX_G — the X-regularized twin: boltzmann_forward_KL's
                        ladder with train_forward_KLX_G as the stage trainer
@@ -59,7 +62,7 @@ import jax.numpy as jnp
 from jax import Array, lax
 
 from .flow import Flow
-from .loss import forward_KL, reverse_KL
+from .loss import forward_KL_G, reverse_KL_F
 from .potential import Potential, linear_combination
 from .utils.anneal import annealed_importance_sampling, sequential_monte_carlo
 from .utils.metrics import compute_ESS_log, importance_weights_log, resample
@@ -67,9 +70,9 @@ from .utils.quench import quench_and_temper
 from .utils.rejuvenation import langevin
 
 
-__all__ = ["Monitor", "boltzmann_forward_KL", "boltzmann_forward_KLX_G", "boltzmann_forward_KLXX_G",
-           "boltzmann_reverse_KL", "train_forward_KL", "train_forward_KLX_G", "train_forward_KLXX_G",
-           "train_reverse_KL"]
+__all__ = ["Monitor", "boltzmann_forward_KL_G", "boltzmann_forward_KLX_G", "boltzmann_forward_KLXX_G",
+           "boltzmann_reverse_KL_F", "train_forward_KL_G", "train_forward_KLX_G", "train_forward_KLXX_G",
+           "train_reverse_KL_F"]
 
 _BETA1, _BETA2, _EPS = 0.9, 0.999, 1e-8
 
@@ -112,12 +115,11 @@ class Monitor:
 
 
 @eqx.filter_jit
-def train_reverse_KL(
+def train_reverse_KL_F(
     x_valid: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
-    type: str,
     n_batch: int,
     steps: int,
     lr: float,
@@ -129,10 +131,10 @@ def train_reverse_KL(
     checkpoint: bool = False,
 ) -> tuple[Flow, Array]:
     """
-    Single-stage reverse KL training of a flow on a fixed source set:
-    minimize `reverse_KL(x, target, flow, type).mean()` with Adam for
-    `steps` iterations and return the trained flow with the per-step
-    ESS history.
+    Single-stage reverse KL training of a flow on a fixed source set,
+    with the flow fixed as the forward map F (source -> target): minimize
+    `reverse_KL_F(x, target, flow).mean()` with Adam for `steps`
+    iterations and return the trained flow with the per-step ESS history.
 
     Every Adam iteration draws a fresh `n_batch`-sized subset of
     `x_valid` (without replacement; note the draw sorts the full pool
@@ -145,8 +147,8 @@ def train_reverse_KL(
     to decorrelate repeated runs. The loop runs under a single
     `lax.scan` and the call is `filter_jit`-compiled, so one XLA
     executable serves all same-configuration calls; the flow is
-    differentiated in its native direction only (see `reverse_KL`), and
-    the update touches only the flow's array leaves.
+    differentiated in its native F direction only (see `reverse_KL_F`),
+    and the update touches only the flow's array leaves.
 
     The ESS history is the flow-proposal importance-sampling ESS of
     each step's rejuvenated batch (computed from the per-sample losses
@@ -156,9 +158,8 @@ def train_reverse_KL(
         x_valid:  Array [N, d]   fixed set of source samples
         source:   Potential      negative log-density of the source (up to const)
         target:   Potential      negative log-density of the target (up to const)
-        flow:     Flow           the normalizing flow to train
-        type:     str            'F' if the flow maps source -> target;
-                                 'G' if it maps target -> source
+        flow:     Flow           the normalizing flow to train, applied as F
+                                 (source -> target)
         n_batch:  int            samples drawn from the fixed set per Adam step
         steps:    int            number of Adam optimization steps
         lr:       float          Adam learning rate
@@ -180,9 +181,6 @@ def train_reverse_KL(
         flow: Flow          the trained flow
         ess:  Array [steps] per-step batch ESS (before that step's update)
     """
-    if type not in ("F", "G"):
-        raise ValueError(f"train_reverse_KL: type must be 'F' or 'G', got {type!r}")
-
     key = jax.random.fold_in(jax.random.key(1), seed)  # driver-specific base stream
     N = x_valid.shape[0]
     params, static = eqx.partition(flow, eqx.is_inexact_array)
@@ -196,7 +194,7 @@ def train_reverse_KL(
         x = langevin(key_mc, x, source, step=mc_step, iters=mc_iters, adjust=mc_adjust)
 
         def loss_fn(p):
-            losses = reverse_KL(x, target, eqx.combine(p, static), type)
+            losses = reverse_KL_F(x, target, eqx.combine(p, static))
             return losses.mean(), losses
 
         loss_eval = jax.checkpoint(loss_fn) if checkpoint else loss_fn
@@ -219,12 +217,11 @@ def train_reverse_KL(
 
 
 @eqx.filter_jit
-def train_forward_KL(
+def train_forward_KL_G(
     x_valid: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
-    type: str,
     n_batch: int,
     steps: int,
     lr: float,
@@ -237,18 +234,18 @@ def train_forward_KL(
     checkpoint: bool = False,
 ) -> tuple[Flow, Array]:
     """
-    Single-stage forward KL training of a flow on a fixed source set:
-    minimize `forward_KL(y, source, flow, type).mean()` with Adam for
-    `steps` iterations and return the trained flow with the per-step
-    ESS history.
+    Single-stage forward KL training of a flow on a fixed source set,
+    with the flow fixed as the inverse map G (target -> source): minimize
+    `forward_KL_G(y, source, flow).mean()` with Adam for `steps`
+    iterations and return the trained flow with the per-step ESS history.
 
     The target samples y ~ mu_1 are manufactured internally: every Adam
     iteration draws a fresh `n_batch`-sized subset of `x_valid` (without
     replacement) and runs annealed importance sampling through the
     CURRENT flow (`ladder` rungs, Langevin rejuvenation at the target
     with `mc_iters` steps of size `mc_step`). No gradient flows through
-    the data generation; the flow is differentiated in its native
-    direction only (see `forward_KL`). Deterministic (no PRNG key): the
+    the data generation; the flow is differentiated in its native G
+    direction only (see `forward_KL_G`). Deterministic (no PRNG key): the
     per-step keys are derived internally from a fixed seed. The loop
     runs under a single `lax.scan`, so the whole call compiles once.
 
@@ -264,9 +261,8 @@ def train_forward_KL(
         x_valid:  Array [N, d]   fixed set of source samples
         source:   Potential      negative log-density of the source (up to const)
         target:   Potential      negative log-density of the target (up to const)
-        flow:     Flow           the normalizing flow to train
-        type:     str            'F' if the flow maps source -> target;
-                                 'G' if it maps target -> source
+        flow:     Flow           the normalizing flow to train, applied as G
+                                 (target -> source)
         n_batch:  int            samples drawn from the fixed set per Adam step
         steps:    int            number of Adam optimization steps
         lr:       float          Adam learning rate
@@ -286,9 +282,6 @@ def train_forward_KL(
         flow: Flow          the trained flow
         ess:  Array [steps] per-step batch ESS (before that step's update)
     """
-    if type not in ("F", "G"):
-        raise ValueError(f"train_forward_KL: type must be 'F' or 'G', got {type!r}")
-
     key = jax.random.fold_in(jax.random.key(2), seed)  # driver-specific base stream
     N = x_valid.shape[0]
     params, static = eqx.partition(flow, eqx.is_inexact_array)
@@ -300,12 +293,12 @@ def train_forward_KL(
         key_idx, key_ais = jax.random.split(jax.random.fold_in(key, t))
         x = x_valid[jax.random.choice(key_idx, N, (n_batch,), replace=False)]
         y = annealed_importance_sampling(
-            key_ais, x, source, target, eqx.combine(params, static), type,
+            key_ais, x, source, target, eqx.combine(params, static), "G",
             ladder=ladder, step=mc_step, iters=mc_iters, adjust=mc_adjust,
         )
 
         def loss_fn(p):
-            losses = forward_KL(y, source, eqx.combine(p, static), type)
+            losses = forward_KL_G(y, source, eqx.combine(p, static))
             return losses.mean(), losses
 
         loss_eval = jax.checkpoint(loss_fn) if checkpoint else loss_fn
@@ -352,7 +345,7 @@ def train_forward_KLX_G(
     with Adam for `steps` iterations and return the trained flow with the
     per-step ESS history.
 
-    Identical to `train_forward_KL` at type='G' except the objective adds the
+    Identical to `train_forward_KL_G` except the objective adds the
     X functional. Writing the per-sample log-ratio
     z = source(G(y)) - target(y) - log|det J_G(y)|, the loss is
         mean(z) + coeff_lambda * mean(|z - z[perm]|)
@@ -421,7 +414,7 @@ def train_forward_KLX_G(
         def loss_fn(p):
             # z: per-sample log-ratio log(mu/nu); the returned vector equals
             # forward_KLX_G(y, source, target, flow, key_perm, coeff_lambda).
-            z = forward_KL(y, source, eqx.combine(p, static), "G") - target(y)
+            z = forward_KL_G(y, source, eqx.combine(p, static)) - target(y)
             losses = z + coeff_lambda * jnp.abs(z - z[perm])
             return losses.mean(), z
 
@@ -587,8 +580,8 @@ def train_forward_KLXX_G(
             # per-sample log-ratios log(mu/nu); the terms equal
             # forward_KLX_G on y plus (a+b)^2 * forward_X_G on y_mix.
             fl = eqx.combine(p, static)
-            z = forward_KL(y, source, fl, "G") - target(y)
-            zx = forward_KL(y_mix, source, fl, "G") - target(y_mix)
+            z = forward_KL_G(y, source, fl) - target(y)
+            zx = forward_KL_G(y_mix, source, fl) - target(y_mix)
             loss = (z + coeff_lambda * jnp.abs(z - z[perm])).mean() \
                 + (coeff_alpha + coeff_beta) ** 2 * jnp.abs(zx - zx[perm2]).mean()
             return loss, z
@@ -644,12 +637,11 @@ _BG_DEFAULTS = {
 }
 
 
-def boltzmann_reverse_KL(
+def boltzmann_reverse_KL_F(
     x_valid: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
-    type: str,
     n_pool: int,
     n_batch: int,
     steps: int,
@@ -664,8 +656,9 @@ def boltzmann_reverse_KL(
     checkpoint: bool = False,
 ) -> tuple[Array, list[dict]]:
     """
-    Annealed Boltzmann generator on the reverse KL: advance a particle
-    set along the bridge ladder
+    Annealed Boltzmann generator on the reverse KL, with the flow fixed
+    as the forward map F (source -> target): advance a particle set along
+    the bridge ladder
 
         U_t = (1 - t) U_0 + t U_1,        0 < t_1 < ... < t_K = 1,
 
@@ -684,8 +677,8 @@ def boltzmann_reverse_KL(
                             reference adaptive_step) — SMC is far cheaper
                             than a training attempt, so the gate filters
                             over-aggressive t_k for free;
-        2. training:        `train_reverse_KL(y, U_{t_{k-1}}, U_{t_k},
-                            flow, type, ...)` — a packed reverse KL
+        2. training:        `train_reverse_KL_F(y, U_{t_{k-1}}, U_{t_k},
+                            flow, ...)` — a packed reverse KL
                             stage on batches drawn from the CURRENT
                             particle set (the trainer's internal batch
                             rejuvenation runs at U_{t_{k-1}}, the very
@@ -727,9 +720,8 @@ def boltzmann_reverse_KL(
                                  particle set)
         source:   Potential      negative log-density of the source (up to const)
         target:   Potential      negative log-density of the target (up to const)
-        flow:     Flow           the normalizing flow to train
-        type:     str            'F' if the flow maps source -> target;
-                                 'G' if it maps target -> source
+        flow:     Flow           the normalizing flow to train, applied as F
+                                 (source -> target)
         n_pool:   int            selection-pool size: the tau_smc gate runs on
                                  this many particles drawn (with replacement)
                                  from the particle set per stage
@@ -774,16 +766,14 @@ def boltzmann_reverse_KL(
                              incremental map). The ladder is complete iff
                              stages[-1]["t"] == 1.
     """
-    if type not in ("F", "G"):
-        raise ValueError(f"boltzmann_reverse_KL: type must be 'F' or 'G', got {type!r}")
     p = dict(_BG_DEFAULTS)
     if bg_param:
         unknown = set(bg_param) - set(p)
         if unknown:
-            raise ValueError(f"boltzmann_reverse_KL: unknown bg_param keys {sorted(unknown)}")
+            raise ValueError(f"boltzmann_reverse_KL_F: unknown bg_param keys {sorted(unknown)}")
         p.update(bg_param)
     if not (0.0 < p["shrink_factor"] < 1.0 and 0.0 < p["t_safe"] <= 1.0 and p["max_retry"] >= 1):
-        raise ValueError(f"boltzmann_reverse_KL: invalid bg_param {p!r}")
+        raise ValueError(f"boltzmann_reverse_KL_F: invalid bg_param {p!r}")
 
     status = monitor.printer if monitor is not None else print
     key = jax.random.key(3)  # the ladder's own base stream (distinct from the trainers)
@@ -832,11 +822,11 @@ def boltzmann_reverse_KL(
             status(f"[stage {k}] t={t_prev:.4f} -> {t_k:.4f} "
                    f"(attempt {attempt}/{p['max_retry']}) training the increment ...")
             seed = jnp.uint32(k * p["max_retry"] + attempt)  # fresh stream per attempt
-            cand, _ = train_reverse_KL(y_valid, u_prev, u_k, flow, type,
-                                       n_batch, steps, lr, mc_step, mc_iters,
-                                       mc_adjust, monitor,
-                                       seed=seed, checkpoint=checkpoint)
-            log_w = _iw_log_jit(y_valid, u_prev, u_k, cand, type, chunk=chunk)
+            cand, _ = train_reverse_KL_F(y_valid, u_prev, u_k, flow,
+                                         n_batch, steps, lr, mc_step, mc_iters,
+                                         mc_adjust, monitor,
+                                         seed=seed, checkpoint=checkpoint)
+            log_w = _iw_log_jit(y_valid, u_prev, u_k, cand, "F", chunk=chunk)
             ess_k = float(compute_ESS_log(log_w))
             jax.effects_barrier()  # keep monitor lines ahead of the stage status
             status(f"[stage {k}] t={t_k:.4f} validation: incremental ESS = {ess_k:.3f} "
@@ -854,7 +844,7 @@ def boltzmann_reverse_KL(
         # advance the particle set: push through the increment, reweight,
         # resample, and freshen with Langevin (MALA when mc_adjust) at U_{t_k}
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
-        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, flow, type, u_k,
+        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, flow, "F", u_k,
                               mc_step, mc_iters, mc_adjust, chunk)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage, not the next
         stages.append({"t": t_k, "ess": ess_k, "flow": flow})
@@ -862,20 +852,19 @@ def boltzmann_reverse_KL(
                f"stage flow saved; particle set advanced")
         t_prev = t_k
     if t_prev < 1.0:
-        status(f"boltzmann_reverse_KL: ladder INCOMPLETE at t = {t_prev:.4f} "
+        status(f"boltzmann_reverse_KL_F: ladder INCOMPLETE at t = {t_prev:.4f} "
                f"({len(stages)} accepted stages); particle set at the last accepted bridge")
     else:
-        status(f"boltzmann_reverse_KL: ladder COMPLETE ({len(stages)} stages); "
+        status(f"boltzmann_reverse_KL_F: ladder COMPLETE ({len(stages)} stages); "
                f"particle set at the target")
     return y_valid, stages
 
 
-def boltzmann_forward_KL(
+def boltzmann_forward_KL_G(
     x_valid: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
-    type: str,
     n_pool: int,
     n_batch: int,
     steps: int,
@@ -890,8 +879,9 @@ def boltzmann_forward_KL(
     checkpoint: bool = False,
 ) -> tuple[Array, list[dict]]:
     """
-    Annealed Boltzmann generator on the forward KL — the twin of
-    `boltzmann_reverse_KL` with the same ladder machinery and parameter
+    Annealed Boltzmann generator on the forward KL, with the flow fixed
+    as the inverse map G (target -> source) — the twin of
+    `boltzmann_reverse_KL_F` with the same ladder machinery and parameter
     setting: advance a particle set along the bridge ladder
 
         U_t = (1 - t) U_0 + t U_1,        0 < t_1 < ... < t_K = 1,
@@ -905,8 +895,8 @@ def boltzmann_forward_KL(
                             `n_pool`-sized selection pool drawn from the
                             particle set shrinks t_k until its MINIMUM
                             per-rung ESS clears tau_smc (at most 60 shrinks);
-        2. training:        `train_forward_KL(y, U_{t_{k-1}}, U_{t_k},
-                            flow, type, ...)` — each Adam step draws an
+        2. training:        `train_forward_KL_G(y, U_{t_{k-1}}, U_{t_k},
+                            flow, ...)` — each Adam step draws an
                             `n_batch` subset of the particle set and
                             manufactures its target batch by
                             `ladder`-rung AIS through the CURRENT flow
@@ -926,26 +916,24 @@ def boltzmann_forward_KL(
 
     `tau_smc`, the t schedule (t_safe / shrink_factor / enlarge_factor /
     t_tol), acceptance, records, monitoring, determinism, and the
-    compile-once behaviour are identical to `boltzmann_reverse_KL`; the
+    compile-once behaviour are identical to `boltzmann_reverse_KL_F`; the
     ladder uses its own base PRNG stream and threads a distinct seed
     into the trainer per stage attempt.
 
-    Input:  as `boltzmann_reverse_KL`, with `mc_adjust` applying to both
+    Input:  as `boltzmann_reverse_KL_F`, with `mc_adjust` applying to both
             the stage trainer's internal AIS rejuvenation and the
             particle-set advance.
-    Output: as `boltzmann_reverse_KL` — (y_valid, stages) with per-stage
+    Output: as `boltzmann_reverse_KL_F` — (y_valid, stages) with per-stage
             records {"t", "ess", "flow"}.
     """
-    if type not in ("F", "G"):
-        raise ValueError(f"boltzmann_forward_KL: type must be 'F' or 'G', got {type!r}")
     p = dict(_BG_DEFAULTS)
     if bg_param:
         unknown = set(bg_param) - set(p)
         if unknown:
-            raise ValueError(f"boltzmann_forward_KL: unknown bg_param keys {sorted(unknown)}")
+            raise ValueError(f"boltzmann_forward_KL_G: unknown bg_param keys {sorted(unknown)}")
         p.update(bg_param)
     if not (0.0 < p["shrink_factor"] < 1.0 and 0.0 < p["t_safe"] <= 1.0 and p["max_retry"] >= 1):
-        raise ValueError(f"boltzmann_forward_KL: invalid bg_param {p!r}")
+        raise ValueError(f"boltzmann_forward_KL_G: invalid bg_param {p!r}")
 
     status = monitor.printer if monitor is not None else print
     key = jax.random.key(4)  # this ladder's own base stream
@@ -989,11 +977,11 @@ def boltzmann_forward_KL(
             status(f"[stage {k}] t={t_prev:.4f} -> {t_k:.4f} "
                    f"(attempt {attempt}/{p['max_retry']}) training the increment ...")
             seed = jnp.uint32(k * p["max_retry"] + attempt)  # fresh stream per attempt
-            cand, _ = train_forward_KL(y_valid, u_prev, u_k, flow, type,
-                                       n_batch, steps, lr, ladder, mc_step,
-                                       mc_iters, mc_adjust, monitor,
-                                       seed=seed, checkpoint=checkpoint)
-            log_w = _iw_log_jit(y_valid, u_prev, u_k, cand, type, chunk=chunk)
+            cand, _ = train_forward_KL_G(y_valid, u_prev, u_k, flow,
+                                         n_batch, steps, lr, ladder, mc_step,
+                                         mc_iters, mc_adjust, monitor,
+                                         seed=seed, checkpoint=checkpoint)
+            log_w = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunk=chunk)
             ess_k = float(compute_ESS_log(log_w))
             jax.effects_barrier()  # keep monitor lines ahead of the stage status
             status(f"[stage {k}] t={t_k:.4f} validation: incremental ESS = {ess_k:.3f} "
@@ -1009,17 +997,17 @@ def boltzmann_forward_KL(
             break
         flow = cand                    # warm start of every later stage
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
-        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, flow, type, u_k,
+        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, flow, "G", u_k,
                               mc_step, mc_iters, mc_adjust, chunk)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage, not the next
         stages.append({"t": t_k, "ess": ess_k, "flow": flow})
         status(f"[stage {k}] t={t_k:.4f} ACCEPTED (attempt {attempt}): stage flow saved")
         t_prev = t_k
     if t_prev < 1.0:
-        status(f"boltzmann_forward_KL: ladder INCOMPLETE at t = {t_prev:.4f} "
+        status(f"boltzmann_forward_KL_G: ladder INCOMPLETE at t = {t_prev:.4f} "
                f"({len(stages)} accepted stages); particle set at the last accepted bridge")
     else:
-        status(f"boltzmann_forward_KL: ladder COMPLETE ({len(stages)} stages); "
+        status(f"boltzmann_forward_KL_G: ladder COMPLETE ({len(stages)} stages); "
                f"particle set at the target")
     return y_valid, stages
 
@@ -1044,20 +1032,20 @@ def boltzmann_forward_KLX_G(
     checkpoint: bool = False,
 ) -> tuple[Array, list[dict]]:
     """
-    X-regularized forward KL Boltzmann generator — `boltzmann_forward_KL`
+    X-regularized forward KL Boltzmann generator — `boltzmann_forward_KL_G`
     with `train_forward_KLX_G` as the stage trainer, so every stage adds the
     coeff_lambda-weighted X functional on top of the forward KL. The flow is
     fixed as the inverse map G (target -> source); the bridge ladder, the SMC
     selection gate, the t schedule (t_safe / shrink_factor / enlarge_factor /
     t_tol), acceptance, per-stage records, monitoring, determinism, and the
-    compile-once behaviour are identical to `boltzmann_forward_KL`. The ladder
+    compile-once behaviour are identical to `boltzmann_forward_KL_G`. The ladder
     uses its own base PRNG stream and threads a distinct seed into the trainer
     per stage attempt.
 
-    Input:  as `boltzmann_forward_KL`, without `type` (fixed to G) and with
+    Input:  as `boltzmann_forward_KL_G`, with
             `coeff_lambda` — the X functional weight —
             forwarded to every stage's `train_forward_KLX_G`.
-    Output: as `boltzmann_forward_KL` — (y_valid, stages) with per-stage
+    Output: as `boltzmann_forward_KL_G` — (y_valid, stages) with per-stage
             records {"t", "ess", "flow"}.
     """
     p = dict(_BG_DEFAULTS)
@@ -1172,7 +1160,7 @@ def boltzmann_forward_KLXX_G(
 ) -> tuple[Array, list[dict]]:
     """
     X-regularized forward KL Boltzmann generator with the full mixture
-    loss — `boltzmann_forward_KL` with `train_forward_KLXX_G` as the stage
+    loss — `boltzmann_forward_KL_G` with `train_forward_KLXX_G` as the stage
     trainer, so every stage minimizes
 
         KL + coeff_lambda * X_mu + X_{coeff_alpha hat_mu + coeff_beta bar_nu}
@@ -1185,16 +1173,16 @@ def boltzmann_forward_KLXX_G(
     inverse map G (target -> source); the bridge ladder, the SMC selection
     gate, the t schedule (t_safe / shrink_factor / enlarge_factor / t_tol),
     acceptance, per-stage records, monitoring, determinism, and the
-    compile-once behaviour are identical to `boltzmann_forward_KL`. The
+    compile-once behaviour are identical to `boltzmann_forward_KL_G`. The
     ladder uses its own base PRNG stream and threads a distinct seed into
     the trainer per stage attempt.
 
-    Input:  as `boltzmann_forward_KL`, without `type` (fixed to G) and with
+    Input:  as `boltzmann_forward_KL_G`, with
             the quench-and-temper family (`melt`, `opt_step`, `opt_iters`)
             and the loss weights (`coeff_lambda`, `coeff_alpha`,
             `coeff_beta`) forwarded to every stage's
             `train_forward_KLXX_G`.
-    Output: as `boltzmann_forward_KL` — (y_valid, stages) with per-stage
+    Output: as `boltzmann_forward_KL_G` — (y_valid, stages) with per-stage
             records {"t", "ess", "flow"}.
     """
     p = dict(_BG_DEFAULTS)

@@ -1,7 +1,7 @@
 """Multi-well (8-mode) reverse-KL benchmark: CNF vs OTFlow across dimension.
 
 Both continuous flows are trained by the SAME objective — plain reverse KL
-through `train_reverse_KL` (no rejuvenation, `MC_ITERS = 0`) — against the
+through `train_reverse_KL_F` (no rejuvenation, `MC_ITERS = 0`) — against the
 same target, so the comparison isolates the one variable that differs:
 CNF's free-form MLP velocity with an O(d) augmented-Jacobian trace vs
 OTFlow's potential-gradient velocity with a closed-form trace. Each cell
@@ -31,7 +31,7 @@ import jax
 from jax import Array
 from jflows.flow import CNF, OTFlow
 from jflows.potential import Nlog_Gaussian, Potential
-from jflows.train import Monitor, train_reverse_KL
+from jflows.train import Monitor, train_reverse_KL_F
 from jflows.utils import compute_ESS_log, importance_weights_log
 
 HERE = Path(__file__).resolve().parent
@@ -135,8 +135,8 @@ def main() -> None:
         ):
             flow = build(fkey, d)
             t0 = time.perf_counter()
-            flow, _ = train_reverse_KL(
-                x_valid, u0, u1, flow, type="F",
+            flow, _ = train_reverse_KL_F(
+                x_valid, u0, u1, flow,
                 n_batch=N_BATCH, steps=STEPS, lr=LR,
                 mc_step=MC_STEP, mc_iters=MC_ITERS, checkpoint=CHECKPOINT,
                 monitor=Monitor(MONITOR_EVERY, f"[d={d:>2} {name:<6}] ", log),
