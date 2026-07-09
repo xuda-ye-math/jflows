@@ -44,11 +44,11 @@ from jflows.train import (  # noqa: E402
     _mask_keep,
     _masked_mean,
     _masked_pair_mean,
-    boltzmann_forward_KLXX_G,
     train_forward_KL_G,
     train_forward_KLX_G,
     train_forward_KLXX_G,
 )
+from jflows.boltzmann import boltzmann_forward_KLXX_G  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG = os.path.join(HERE, "test_clip.log")

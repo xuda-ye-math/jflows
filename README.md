@@ -105,7 +105,7 @@ y     = ais(key, samples, source, target, flow, type="G", ladder=1, step=1e-3, i
 **Medium level: packed training drivers.** `jflows.train` packs a whole training stage — Adam on the flow's parameters, the full step loop under one `lax.scan` — into a single compiled call that regenerates its batch *inside every Adam step* (the X-regularization data pipeline: no frozen batch is ever reused, so a fixed sample set does not get memorized):
 
 ```python
-from jflows.train import train_reverse_KL_F, train_forward_KL_G, boltzmann_reverse_KL_F, Monitor
+from jflows.train import train_reverse_KL_F, train_forward_KL_G, Monitor
 
 # reverse KL: each step draws n_batch samples from the fixed set x_valid and
 # freshens them with Langevin rejuvenation at the source (flow fixed as F)
@@ -141,7 +141,7 @@ identity map (pure SMC reweighting, computed with no flow inverse) has the highe
 incremental ESS, so a stage is never worse than SMC:
 
 ```python
-from jflows.train import boltzmann_reverse_KL_F
+from jflows.boltzmann import boltzmann_reverse_KL_F
 
 y_valid, stages = boltzmann_reverse_KL_F(
     x_valid, source, target, flow,

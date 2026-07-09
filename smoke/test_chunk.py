@@ -35,7 +35,7 @@ import numpy as np  # noqa: E402
 
 from jflows.flow import NCSF  # noqa: E402
 from jflows.potential import Nlog_Uniform, potential_from  # noqa: E402
-from jflows.train import _iw_log_jit  # noqa: E402
+from jflows.boltzmann import _iw_log_jit  # noqa: E402
 from jflows.utils import importance_weights_log  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))

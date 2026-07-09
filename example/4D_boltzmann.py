@@ -49,7 +49,8 @@ plt.rcParams.update({
 from jax import Array
 from jflows.flow import NSF
 from jflows.potential import Nlog_Gaussian, Potential
-from jflows.train import Monitor, boltzmann_forward_KL_G, boltzmann_reverse_KL_F
+from jflows.train import Monitor
+from jflows.boltzmann import boltzmann_forward_KL_G, boltzmann_reverse_KL_F
 
 HERE = Path(__file__).resolve().parent
 LOG = HERE / "4D_boltzmann.log"

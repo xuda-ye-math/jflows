@@ -47,8 +47,8 @@ import numpy as np  # noqa: E402
 
 from jflows.flow import NSF  # noqa: E402
 from jflows.potential import Nlog_Gaussian, Nlog_Gaussian_Mixture  # noqa: E402
-from jflows.train import (  # noqa: E402
-    Monitor,
+from jflows.train import Monitor  # noqa: E402
+from jflows.boltzmann import (  # noqa: E402
     boltzmann_forward_KL_G,
     boltzmann_forward_KLXX_G,
     boltzmann_reverse_KL_F,

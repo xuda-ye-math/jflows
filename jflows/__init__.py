@@ -12,10 +12,12 @@ Public surface:
                        forward_X_G
     jflows.train     : train_reverse_KL_F, train_forward_KL_G,
                        train_forward_KLX_G, train_forward_KLXX_G (packed
-                       single-stage training), boltzmann_reverse_KL_F,
-                       boltzmann_forward_KL_G, boltzmann_forward_KLX_G,
-                       boltzmann_forward_KLXX_G (adaptive-ladder Boltzmann
-                       generators), Monitor (live training-status reporter)
+                       single-stage training), Monitor (live training-status
+                       reporter)
+    jflows.boltzmann : boltzmann_reverse_KL_F, boltzmann_forward_KL_G,
+                       boltzmann_forward_KLX_G, boltzmann_forward_KLXX_G
+                       (adaptive-ladder Boltzmann generators built on the
+                       stage trainers of jflows.train)
     jflows.utils     : metrics / optimization / rejuvenation / anneal / quench
 
 Internals (`jflows.core.*`) are a stripped-down port of zuko's flow/transform
@@ -28,6 +30,6 @@ training all take the `Flow` itself (`flow.t()` is the advanced
 composition layer).
 """
 
-from . import flow, loss, potential, train, utils
+from . import boltzmann, flow, loss, potential, train, utils
 
-__all__ = ["flow", "loss", "potential", "train", "utils"]
+__all__ = ["boltzmann", "flow", "loss", "potential", "train", "utils"]
