@@ -6,6 +6,7 @@ __pycache__/
 *.pt
 parity_check/
 PLAN.md
+status.md
 Codes/
 
 # hidden dotfiles/dirs (e.g. .claude/), but keep this file

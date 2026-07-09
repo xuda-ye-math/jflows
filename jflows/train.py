@@ -77,6 +77,36 @@ __all__ = ["Monitor", "boltzmann_forward_KL_G", "boltzmann_forward_KLX_G", "bolt
 _BETA1, _BETA2, _EPS = 0.9, 0.999, 1e-8
 
 
+def _mask_keep(target: Potential, y: Array, e_clip: float) -> Array:
+    """Per-sample keep mask of the energy screen: True where the target
+    energy is admissible (target(y) <= e_clip), stop-gradient. Screened
+    samples are the near-singular particles the loss must not see."""
+    return lax.stop_gradient(target(y) <= e_clip)
+
+
+def _masked_mean(v: Array, keep: Array) -> Array:
+    """Mean of `v` over the kept samples only (screened entries drop from
+    numerator and denominator); an all-screened batch yields 0."""
+    kf = keep.astype(v.dtype)
+    return (kf * v).sum() / jnp.maximum(kf.sum(), 1.0)
+
+
+def _masked_pair_mean(diff: Array, keep: Array, perm: Array) -> Array:
+    """Mean of a permutation-paired term |z - z[perm]| over pairs whose
+    BOTH members are kept, so a screened sample contributes to neither its
+    own nor its partner's term."""
+    kf = keep.astype(diff.dtype)
+    pk = kf * kf[perm]
+    return (pk * diff).sum() / jnp.maximum(pk.sum(), 1.0)
+
+
+def _clip_global(grads, g_clip: float):
+    """Scale the whole gradient pytree so its global L2 norm is at most
+    g_clip (no-op when the norm is already below the ceiling)."""
+    gnorm = jnp.sqrt(sum(jnp.sum(jnp.square(g)) for g in jax.tree.leaves(grads)))
+    return jax.tree.map(lambda g: g * jnp.minimum(1.0, g_clip / (gnorm + _EPS)), grads)
+
+
 class Monitor:
     """
     Live training-status monitor for the packed train_* drivers.
@@ -232,6 +262,8 @@ def train_forward_KL_G(
     monitor: Monitor | None = None,
     seed: int | Array = 0,
     checkpoint: bool = False,
+    e_clip: float = float("inf"),
+    g_clip: float = float("inf"),
 ) -> tuple[Flow, Array]:
     """
     Single-stage forward KL training of a flow on a fixed source set,
@@ -278,6 +310,19 @@ def train_forward_KL_G(
                                  (default 0; traced array avoids recompiles)
         checkpoint: bool         rematerialize the loss forward pass in the
                                  backward (jax.checkpoint)
+        e_clip:   float          energy screen: manufactured samples with
+                                 target(y) > e_clip make no contribution to
+                                 the loss (masked mean over the kept batch).
+                                 Default inf keeps every sample (exact
+                                 unscreened behaviour, no overhead)
+        g_clip:   float          global gradient-norm clip: the raw gradient
+                                 is scaled to L2 norm at most g_clip BEFORE
+                                 the Adam moment update — a spike guard that
+                                 keeps an outlier high-energy batch from
+                                 corrupting Adam's running moments (Adam's
+                                 per-coordinate normalization makes the effect
+                                 on the final step size weak). Default inf
+                                 leaves the gradient untouched
     Output:
         flow: Flow          the trained flow
         ess:  Array [steps] per-step batch ESS (before that step's update)
@@ -296,13 +341,17 @@ def train_forward_KL_G(
             key_ais, x, source, target, eqx.combine(params, static), "G",
             ladder=ladder, step=mc_step, iters=mc_iters, adjust=mc_adjust,
         )
+        keep = _mask_keep(target, y, e_clip) if e_clip != float("inf") else None
 
         def loss_fn(p):
             losses = forward_KL_G(y, source, eqx.combine(p, static))
-            return losses.mean(), losses
+            loss = losses.mean() if keep is None else _masked_mean(losses, keep)
+            return loss, losses
 
         loss_eval = jax.checkpoint(loss_fn) if checkpoint else loss_fn
         (loss, losses), grads = jax.value_and_grad(loss_eval, has_aux=True)(params)
+        if g_clip != float("inf"):
+            grads = _clip_global(grads, g_clip)
         ess = compute_ESS_log(-target(y) + losses)  # log w = -target(y) + source(x) + ladj
         if monitor is not None:
             monitor.report(t, loss, ess)
@@ -337,6 +386,8 @@ def train_forward_KLX_G(
     monitor: Monitor | None = None,
     seed: int | Array = 0,
     checkpoint: bool = False,
+    e_clip: float = float("inf"),
+    g_clip: float = float("inf"),
 ) -> tuple[Flow, Array]:
     """
     Single-stage X-regularized forward KL training of a flow on a fixed
@@ -391,6 +442,14 @@ def train_forward_KLX_G(
                                  (default 0; traced array avoids recompiles)
         checkpoint: bool         rematerialize the loss forward pass in the
                                  backward (jax.checkpoint)
+        e_clip:   float          energy screen: manufactured samples with
+                                 target(y) > e_clip make no contribution to
+                                 the KL term nor, as a permutation partner,
+                                 to the X term. Default inf keeps every
+                                 sample (exact unscreened behaviour)
+        g_clip:   float          global gradient-norm clip on the raw gradient
+                                 before the Adam moment update — a spike guard
+                                 (default inf: none)
     Output:
         flow: Flow          the trained flow
         ess:  Array [steps] per-step batch ESS (before that step's update)
@@ -410,16 +469,23 @@ def train_forward_KLX_G(
             ladder=ladder, step=mc_step, iters=mc_iters, adjust=mc_adjust,
         )
         perm = jax.random.permutation(key_perm, n_batch)
+        keep = _mask_keep(target, y, e_clip) if e_clip != float("inf") else None
 
         def loss_fn(p):
             # z: per-sample log-ratio log(mu/nu); the returned vector equals
             # forward_KLX_G(y, source, target, flow, key_perm, coeff_lambda).
             z = forward_KL_G(y, source, eqx.combine(p, static)) - target(y)
-            losses = z + coeff_lambda * jnp.abs(z - z[perm])
-            return losses.mean(), z
+            if keep is None:
+                loss = (z + coeff_lambda * jnp.abs(z - z[perm])).mean()
+            else:
+                loss = (_masked_mean(z, keep)
+                        + coeff_lambda * _masked_pair_mean(jnp.abs(z - z[perm]), keep, perm))
+            return loss, z
 
         loss_eval = jax.checkpoint(loss_fn) if checkpoint else loss_fn
         (loss, z), grads = jax.value_and_grad(loss_eval, has_aux=True)(params)
+        if g_clip != float("inf"):
+            grads = _clip_global(grads, g_clip)
         ess = compute_ESS_log(z)  # log w = -target(y) + source(x) - ladj (no extra flow eval)
         if monitor is not None:
             monitor.report(t, loss, ess)
@@ -460,6 +526,8 @@ def train_forward_KLXX_G(
     monitor: Monitor | None = None,
     seed: int | Array = 0,
     checkpoint: bool = False,
+    e_clip: float = float("inf"),
+    g_clip: float = float("inf"),
 ) -> tuple[Flow, Array]:
     """
     Single-stage X-regularized forward KL training with the full mixture
@@ -535,6 +603,15 @@ def train_forward_KLXX_G(
                                  (default 0; traced array avoids recompiles)
         checkpoint: bool         rematerialize the loss forward pass in the
                                  backward (jax.checkpoint)
+        e_clip:   float          energy screen: samples with target > e_clip
+                                 make no contribution — applied to the mu
+                                 batch y (KL and X_mu terms) and independently
+                                 to the mixture batch y_mix (X_mix term), each
+                                 as a masked mean with partner screening.
+                                 Default inf keeps every sample
+        g_clip:   float          global gradient-norm clip on the raw gradient
+                                 before the Adam moment update — a spike guard
+                                 (default inf: none)
     Output:
         flow: Flow          the trained flow
         ess:  Array [steps] per-step batch ESS (before that step's update)
@@ -575,6 +652,9 @@ def train_forward_KLXX_G(
         y_mix = resample(key_mix, jnp.concatenate([y_hat, y_bar], axis=0),
                          w_mix, N=n_batch)
         perm2 = jax.random.permutation(key_perm2, n_batch)
+        screen = e_clip != float("inf")
+        keep = _mask_keep(target, y, e_clip) if screen else None
+        keep_mix = _mask_keep(target, y_mix, e_clip) if screen else None
 
         def loss_fn(p):
             # per-sample log-ratios log(mu/nu); the terms equal
@@ -582,12 +662,20 @@ def train_forward_KLXX_G(
             fl = eqx.combine(p, static)
             z = forward_KL_G(y, source, fl) - target(y)
             zx = forward_KL_G(y_mix, source, fl) - target(y_mix)
-            loss = (z + coeff_lambda * jnp.abs(z - z[perm])).mean() \
-                + (coeff_alpha + coeff_beta) ** 2 * jnp.abs(zx - zx[perm2]).mean()
+            ab2 = (coeff_alpha + coeff_beta) ** 2
+            if keep is None:
+                loss = (z + coeff_lambda * jnp.abs(z - z[perm])).mean() \
+                    + ab2 * jnp.abs(zx - zx[perm2]).mean()
+            else:
+                loss = (_masked_mean(z, keep)
+                        + coeff_lambda * _masked_pair_mean(jnp.abs(z - z[perm]), keep, perm)
+                        + ab2 * _masked_pair_mean(jnp.abs(zx - zx[perm2]), keep_mix, perm2))
             return loss, z
 
         loss_eval = jax.checkpoint(loss_fn) if checkpoint else loss_fn
         (loss, z), grads = jax.value_and_grad(loss_eval, has_aux=True)(params)
+        if g_clip != float("inf"):
+            grads = _clip_global(grads, g_clip)
         ess = compute_ESS_log(z)  # log w = -target(y) + source(x) - ladj (no extra flow eval)
         if monitor is not None:
             monitor.report(t, loss, ess)
@@ -605,7 +693,40 @@ def train_forward_KLXX_G(
     return eqx.combine(params, static), ess
 
 
-_iw_log_jit = eqx.filter_jit(importance_weights_log)
+_iw_log_kernel = eqx.filter_jit(importance_weights_log)
+
+
+def _iw_log_jit(samples, source, target, flow, type, chunk=1):
+    """Full-set log importance weights, chunked eagerly: the compiled
+    per-chunk kernel is looped in Python, so the device frees each chunk's
+    buffers before the next runs and the peak memory is one chunk's graph
+    (an in-graph chunk loop is overlapped by the XLA scheduler, which
+    reconstitutes the full-set peak). Statistically and numerically
+    identical to a single full-set call."""
+    return jnp.concatenate([
+        _iw_log_kernel(x, source, target, flow, type)
+        for x in jnp.array_split(samples, chunk, axis=0)
+    ], axis=0)
+
+
+_pot_diff_kernel = eqx.filter_jit(lambda y, source, target: source(y) - target(y))
+
+
+def _iw_log_identity(samples, source, target, chunk=1):
+    """Identity-map log importance weights source(y) - target(y), chunked
+    eagerly. This is the increment's SMC (identity-map) reweighting from
+    mu_{k-1} to mu_k: with the flow fixed to the identity the Jacobian term
+    vanishes and the log-weight is just the potential difference, in BOTH
+    flow directions. It evaluates two potentials and NEVER touches the flow
+    inverse — the whole point is that the identity check costs no
+    `inv_and_ladj` (the autoregressive inverse is the stage's most expensive
+    op). Only the trained flow pays for its inverse via `_iw_log_jit`."""
+    return jnp.concatenate([
+        _pot_diff_kernel(x, source, target)
+        for x in jnp.array_split(samples, chunk, axis=0)
+    ], axis=0)
+
+
 _smc_jit = eqx.filter_jit(sequential_monte_carlo)
 _langevin_jit = eqx.filter_jit(langevin)   # per-stage selection-pool rejuvenation
 
@@ -760,11 +881,27 @@ def boltzmann_reverse_KL_F(
                              complete ladder, at the last accepted bridge on
                              an incomplete one
         stages:  list[dict]  one record per accepted stage:
-                             {"t": float, "ess": float, "flow": Flow} —
-                             the coefficient, the incremental ESS, and the
-                             SAVED stage flow (stages[-1]["flow"] is the last
-                             incremental map). The ladder is complete iff
+                             {"t": float, "ess": float, "flow": Flow,
+                             "ess_history": Array [steps], "imp_history": float}
+                             — the coefficient; the accepted incremental ESS
+                             (see below); the SAVED stage flow
+                             (stages[-1]["flow"] is the last incremental map);
+                             the full per-step training-surrogate ESS history
+                             of the accepted attempt; and the identity
+                             improvement (below). The ladder is complete iff
                              stages[-1]["t"] == 1.
+
+                             Identity check: after training, each stage keeps
+                             whichever of the trained flow and the identity map
+                             (pure SMC reweighting) has the higher incremental
+                             ESS on the particle set. So "ess" is
+                             max(trained ESS, identity ESS) — the ACCEPTED map's
+                             ESS, not necessarily the trained flow's — "flow" is
+                             the identity map when the fallback wins, and
+                             "imp_history" = max(0, trained ESS - identity ESS)
+                             is the (non-negative) improvement over SMC. The
+                             identity ESS costs two potential evaluations and no
+                             flow inverse.
     """
     p = dict(_BG_DEFAULTS)
     if bg_param:
@@ -779,6 +916,7 @@ def boltzmann_reverse_KL_F(
     key = jax.random.key(3)  # the ladder's own base stream (distinct from the trainers)
 
     y_valid = x_valid                  # validation/particle set at t = 0 (= mu_0)
+    identity_flow = flow.zeros()       # identity map — the SMC fallback, shared by all stages
     stages: list[dict] = []
     t_prev = 0.0
     while t_prev < 1.0 and len(stages) < p["max_stages"]:
@@ -822,15 +960,25 @@ def boltzmann_reverse_KL_F(
             status(f"[stage {k}] t={t_prev:.4f} -> {t_k:.4f} "
                    f"(attempt {attempt}/{p['max_retry']}) training the increment ...")
             seed = jnp.uint32(k * p["max_retry"] + attempt)  # fresh stream per attempt
-            cand, _ = train_reverse_KL_F(y_valid, u_prev, u_k, flow,
-                                         n_batch, steps, lr, mc_step, mc_iters,
-                                         mc_adjust, monitor,
-                                         seed=seed, checkpoint=checkpoint)
-            log_w = _iw_log_jit(y_valid, u_prev, u_k, cand, "F", chunk=chunk)
-            ess_k = float(compute_ESS_log(log_w))
+            cand, ess_hist = train_reverse_KL_F(y_valid, u_prev, u_k, flow,
+                                                n_batch, steps, lr, mc_step, mc_iters,
+                                                mc_adjust, monitor,
+                                                seed=seed, checkpoint=checkpoint)
+            log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "F", chunk=chunk)
+            ess_tr = float(compute_ESS_log(log_w_tr))
+            log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunk=chunk)
+            ess_id = float(compute_ESS_log(log_w_id))
             jax.effects_barrier()  # keep monitor lines ahead of the stage status
-            status(f"[stage {k}] t={t_k:.4f} validation: incremental ESS = {ess_k:.3f} "
-                   f"(tau_ess = {p['tau_ess']:.2f})")
+            # identity check: keep the better of the trained flow and the
+            # identity map (pure SMC), so a stage is never worse than SMC
+            if ess_tr >= ess_id:
+                cand_flow, log_w, ess_k = cand, log_w_tr, ess_tr
+            else:
+                cand_flow, log_w, ess_k = identity_flow, log_w_id, ess_id
+            imp = ess_k - ess_id  # improvement over identity, always >= 0
+            status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
+                   f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f}; "
+                   f"tau_ess = {p['tau_ess']:.2f})")
             if ess_k >= p["tau_ess"]:
                 accepted = True
                 break
@@ -840,14 +988,15 @@ def boltzmann_reverse_KL_F(
             status(f"[stage {k}] gave up after {p['max_retry']} attempts "
                    f"(last t={t_k:.4f}, ESS = {ess_k:.3f}) — ladder INCOMPLETE")
             break
-        flow = cand                    # warm start of every later stage
+        flow = cand_flow               # warm start (identity if the fallback won)
         # advance the particle set: push through the increment, reweight,
         # resample, and freshen with Langevin (MALA when mc_adjust) at U_{t_k}
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
         y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, flow, "F", u_k,
                               mc_step, mc_iters, mc_adjust, chunk)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage, not the next
-        stages.append({"t": t_k, "ess": ess_k, "flow": flow})
+        stages.append({"t": t_k, "ess": ess_k, "flow": flow,
+                       "ess_history": ess_hist, "imp_history": imp})
         status(f"[stage {k}] t={t_k:.4f} ACCEPTED (attempt {attempt}): "
                f"stage flow saved; particle set advanced")
         t_prev = t_k
@@ -877,6 +1026,8 @@ def boltzmann_forward_KL_G(
     bg_param: dict | None = None,
     chunk: int = 1,
     checkpoint: bool = False,
+    e_clip: float = float("inf"),
+    g_clip: float = float("inf"),
 ) -> tuple[Array, list[dict]]:
     """
     Annealed Boltzmann generator on the forward KL, with the flow fixed
@@ -922,9 +1073,11 @@ def boltzmann_forward_KL_G(
 
     Input:  as `boltzmann_reverse_KL_F`, with `mc_adjust` applying to both
             the stage trainer's internal AIS rejuvenation and the
-            particle-set advance.
+            particle-set advance, and `e_clip` / `g_clip` (the energy screen
+            and global gradient-norm clip) forwarded to every stage's
+            `train_forward_KL_G` (default inf / inf: no screen, no clip).
     Output: as `boltzmann_reverse_KL_F` — (y_valid, stages) with per-stage
-            records {"t", "ess", "flow"}.
+            records {"t", "ess", "flow", "ess_history", "imp_history"}.
     """
     p = dict(_BG_DEFAULTS)
     if bg_param:
@@ -939,6 +1092,7 @@ def boltzmann_forward_KL_G(
     key = jax.random.key(4)  # this ladder's own base stream
 
     y_valid = x_valid                  # validation/particle set at t = 0 (= mu_0)
+    identity_flow = flow.zeros()       # identity map — the SMC fallback, shared by all stages
     stages: list[dict] = []
     t_prev = 0.0
     while t_prev < 1.0 and len(stages) < p["max_stages"]:
@@ -977,15 +1131,26 @@ def boltzmann_forward_KL_G(
             status(f"[stage {k}] t={t_prev:.4f} -> {t_k:.4f} "
                    f"(attempt {attempt}/{p['max_retry']}) training the increment ...")
             seed = jnp.uint32(k * p["max_retry"] + attempt)  # fresh stream per attempt
-            cand, _ = train_forward_KL_G(y_valid, u_prev, u_k, flow,
-                                         n_batch, steps, lr, ladder, mc_step,
-                                         mc_iters, mc_adjust, monitor,
-                                         seed=seed, checkpoint=checkpoint)
-            log_w = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunk=chunk)
-            ess_k = float(compute_ESS_log(log_w))
+            cand, ess_hist = train_forward_KL_G(y_valid, u_prev, u_k, flow,
+                                                n_batch, steps, lr, ladder, mc_step,
+                                                mc_iters, mc_adjust, monitor,
+                                                seed=seed, checkpoint=checkpoint,
+                                                e_clip=e_clip, g_clip=g_clip)
+            log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunk=chunk)
+            ess_tr = float(compute_ESS_log(log_w_tr))
+            log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunk=chunk)
+            ess_id = float(compute_ESS_log(log_w_id))
             jax.effects_barrier()  # keep monitor lines ahead of the stage status
-            status(f"[stage {k}] t={t_k:.4f} validation: incremental ESS = {ess_k:.3f} "
-                   f"(tau_ess = {p['tau_ess']:.2f})")
+            # identity check: keep the better of the trained flow and the
+            # identity map (pure SMC), so a stage is never worse than SMC
+            if ess_tr >= ess_id:
+                cand_flow, log_w, ess_k = cand, log_w_tr, ess_tr
+            else:
+                cand_flow, log_w, ess_k = identity_flow, log_w_id, ess_id
+            imp = ess_k - ess_id  # improvement over identity, always >= 0
+            status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
+                   f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f}; "
+                   f"tau_ess = {p['tau_ess']:.2f})")
             if ess_k >= p["tau_ess"]:
                 accepted = True
                 break
@@ -995,12 +1160,13 @@ def boltzmann_forward_KL_G(
             status(f"[stage {k}] gave up after {p['max_retry']} attempts "
                    f"(last t={t_k:.4f}, ESS = {ess_k:.3f}) — ladder INCOMPLETE")
             break
-        flow = cand                    # warm start of every later stage
+        flow = cand_flow               # warm start (identity if the fallback won)
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
         y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, flow, "G", u_k,
                               mc_step, mc_iters, mc_adjust, chunk)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage, not the next
-        stages.append({"t": t_k, "ess": ess_k, "flow": flow})
+        stages.append({"t": t_k, "ess": ess_k, "flow": flow,
+                       "ess_history": ess_hist, "imp_history": imp})
         status(f"[stage {k}] t={t_k:.4f} ACCEPTED (attempt {attempt}): stage flow saved")
         t_prev = t_k
     if t_prev < 1.0:
@@ -1030,6 +1196,8 @@ def boltzmann_forward_KLX_G(
     bg_param: dict | None = None,
     chunk: int = 1,
     checkpoint: bool = False,
+    e_clip: float = float("inf"),
+    g_clip: float = float("inf"),
 ) -> tuple[Array, list[dict]]:
     """
     X-regularized forward KL Boltzmann generator — `boltzmann_forward_KL_G`
@@ -1043,10 +1211,11 @@ def boltzmann_forward_KLX_G(
     per stage attempt.
 
     Input:  as `boltzmann_forward_KL_G`, with
-            `coeff_lambda` — the X functional weight —
+            `coeff_lambda` — the X functional weight — and
+            `e_clip` / `g_clip` (energy screen and gradient-norm clip)
             forwarded to every stage's `train_forward_KLX_G`.
     Output: as `boltzmann_forward_KL_G` — (y_valid, stages) with per-stage
-            records {"t", "ess", "flow"}.
+            records {"t", "ess", "flow", "ess_history", "imp_history"}.
     """
     p = dict(_BG_DEFAULTS)
     if bg_param:
@@ -1061,6 +1230,7 @@ def boltzmann_forward_KLX_G(
     key = jax.random.key(6)  # this ladder's own base stream
 
     y_valid = x_valid                  # validation/particle set at t = 0 (= mu_0)
+    identity_flow = flow.zeros()       # identity map — the SMC fallback, shared by all stages
     stages: list[dict] = []
     t_prev = 0.0
     while t_prev < 1.0 and len(stages) < p["max_stages"]:
@@ -1099,15 +1269,26 @@ def boltzmann_forward_KLX_G(
             status(f"[stage {k}] t={t_prev:.4f} -> {t_k:.4f} "
                    f"(attempt {attempt}/{p['max_retry']}) training the increment ...")
             seed = jnp.uint32(k * p["max_retry"] + attempt)  # fresh stream per attempt
-            cand, _ = train_forward_KLX_G(y_valid, u_prev, u_k, flow,
-                                          n_batch, steps, lr, ladder, mc_step,
-                                          mc_iters, coeff_lambda, mc_adjust, monitor,
-                                          seed=seed, checkpoint=checkpoint)
-            log_w = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunk=chunk)
-            ess_k = float(compute_ESS_log(log_w))
+            cand, ess_hist = train_forward_KLX_G(y_valid, u_prev, u_k, flow,
+                                                 n_batch, steps, lr, ladder, mc_step,
+                                                 mc_iters, coeff_lambda, mc_adjust, monitor,
+                                                 seed=seed, checkpoint=checkpoint,
+                                                 e_clip=e_clip, g_clip=g_clip)
+            log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunk=chunk)
+            ess_tr = float(compute_ESS_log(log_w_tr))
+            log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunk=chunk)
+            ess_id = float(compute_ESS_log(log_w_id))
             jax.effects_barrier()  # keep monitor lines ahead of the stage status
-            status(f"[stage {k}] t={t_k:.4f} validation: incremental ESS = {ess_k:.3f} "
-                   f"(tau_ess = {p['tau_ess']:.2f})")
+            # identity check: keep the better of the trained flow and the
+            # identity map (pure SMC), so a stage is never worse than SMC
+            if ess_tr >= ess_id:
+                cand_flow, log_w, ess_k = cand, log_w_tr, ess_tr
+            else:
+                cand_flow, log_w, ess_k = identity_flow, log_w_id, ess_id
+            imp = ess_k - ess_id  # improvement over identity, always >= 0
+            status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
+                   f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f}; "
+                   f"tau_ess = {p['tau_ess']:.2f})")
             if ess_k >= p["tau_ess"]:
                 accepted = True
                 break
@@ -1117,12 +1298,13 @@ def boltzmann_forward_KLX_G(
             status(f"[stage {k}] gave up after {p['max_retry']} attempts "
                    f"(last t={t_k:.4f}, ESS = {ess_k:.3f}) — ladder INCOMPLETE")
             break
-        flow = cand                    # warm start of every later stage
+        flow = cand_flow               # warm start (identity if the fallback won)
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
         y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, flow, "G", u_k,
                               mc_step, mc_iters, mc_adjust, chunk)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage, not the next
-        stages.append({"t": t_k, "ess": ess_k, "flow": flow})
+        stages.append({"t": t_k, "ess": ess_k, "flow": flow,
+                       "ess_history": ess_hist, "imp_history": imp})
         status(f"[stage {k}] t={t_k:.4f} ACCEPTED (attempt {attempt}): stage flow saved")
         t_prev = t_k
     if t_prev < 1.0:
@@ -1157,6 +1339,8 @@ def boltzmann_forward_KLXX_G(
     bg_param: dict | None = None,
     chunk: int = 1,
     checkpoint: bool = False,
+    e_clip: float = float("inf"),
+    g_clip: float = float("inf"),
 ) -> tuple[Array, list[dict]]:
     """
     X-regularized forward KL Boltzmann generator with the full mixture
@@ -1178,12 +1362,12 @@ def boltzmann_forward_KLXX_G(
     the trainer per stage attempt.
 
     Input:  as `boltzmann_forward_KL_G`, with
-            the quench-and-temper family (`melt`, `opt_step`, `opt_iters`)
-            and the loss weights (`coeff_lambda`, `coeff_alpha`,
-            `coeff_beta`) forwarded to every stage's
-            `train_forward_KLXX_G`.
+            the quench-and-temper family (`melt`, `opt_step`, `opt_iters`),
+            the loss weights (`coeff_lambda`, `coeff_alpha`, `coeff_beta`),
+            and `e_clip` / `g_clip` (energy screen and gradient-norm clip)
+            forwarded to every stage's `train_forward_KLXX_G`.
     Output: as `boltzmann_forward_KL_G` — (y_valid, stages) with per-stage
-            records {"t", "ess", "flow"}.
+            records {"t", "ess", "flow", "ess_history", "imp_history"}.
     """
     p = dict(_BG_DEFAULTS)
     if bg_param:
@@ -1198,6 +1382,7 @@ def boltzmann_forward_KLXX_G(
     key = jax.random.key(8)  # this ladder's own base stream
 
     y_valid = x_valid                  # validation/particle set at t = 0 (= mu_0)
+    identity_flow = flow.zeros()       # identity map — the SMC fallback, shared by all stages
     stages: list[dict] = []
     t_prev = 0.0
     while t_prev < 1.0 and len(stages) < p["max_stages"]:
@@ -1236,17 +1421,28 @@ def boltzmann_forward_KLXX_G(
             status(f"[stage {k}] t={t_prev:.4f} -> {t_k:.4f} "
                    f"(attempt {attempt}/{p['max_retry']}) training the increment ...")
             seed = jnp.uint32(k * p["max_retry"] + attempt)  # fresh stream per attempt
-            cand, _ = train_forward_KLXX_G(y_valid, u_prev, u_k, flow,
-                                           n_pool, n_batch, steps, lr, ladder,
-                                           melt, opt_step, opt_iters, mc_step,
-                                           mc_iters, coeff_lambda, coeff_alpha,
-                                           coeff_beta, mc_adjust, monitor,
-                                           seed=seed, checkpoint=checkpoint)
-            log_w = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunk=chunk)
-            ess_k = float(compute_ESS_log(log_w))
+            cand, ess_hist = train_forward_KLXX_G(y_valid, u_prev, u_k, flow,
+                                                  n_pool, n_batch, steps, lr, ladder,
+                                                  melt, opt_step, opt_iters, mc_step,
+                                                  mc_iters, coeff_lambda, coeff_alpha,
+                                                  coeff_beta, mc_adjust, monitor,
+                                                  seed=seed, checkpoint=checkpoint,
+                                                  e_clip=e_clip, g_clip=g_clip)
+            log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunk=chunk)
+            ess_tr = float(compute_ESS_log(log_w_tr))
+            log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunk=chunk)
+            ess_id = float(compute_ESS_log(log_w_id))
             jax.effects_barrier()  # keep monitor lines ahead of the stage status
-            status(f"[stage {k}] t={t_k:.4f} validation: incremental ESS = {ess_k:.3f} "
-                   f"(tau_ess = {p['tau_ess']:.2f})")
+            # identity check: keep the better of the trained flow and the
+            # identity map (pure SMC), so a stage is never worse than SMC
+            if ess_tr >= ess_id:
+                cand_flow, log_w, ess_k = cand, log_w_tr, ess_tr
+            else:
+                cand_flow, log_w, ess_k = identity_flow, log_w_id, ess_id
+            imp = ess_k - ess_id  # improvement over identity, always >= 0
+            status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
+                   f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f}; "
+                   f"tau_ess = {p['tau_ess']:.2f})")
             if ess_k >= p["tau_ess"]:
                 accepted = True
                 break
@@ -1256,12 +1452,13 @@ def boltzmann_forward_KLXX_G(
             status(f"[stage {k}] gave up after {p['max_retry']} attempts "
                    f"(last t={t_k:.4f}, ESS = {ess_k:.3f}) — ladder INCOMPLETE")
             break
-        flow = cand                    # warm start of every later stage
+        flow = cand_flow               # warm start (identity if the fallback won)
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
         y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, flow, "G", u_k,
                               mc_step, mc_iters, mc_adjust, chunk)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage, not the next
-        stages.append({"t": t_k, "ess": ess_k, "flow": flow})
+        stages.append({"t": t_k, "ess": ess_k, "flow": flow,
+                       "ess_history": ess_hist, "imp_history": imp})
         status(f"[stage {k}] t={t_k:.4f} ACCEPTED (attempt {attempt}): stage flow saved")
         t_prev = t_k
     if t_prev < 1.0:

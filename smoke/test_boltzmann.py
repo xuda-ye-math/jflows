@@ -133,8 +133,10 @@ def main() -> None:
     # ── per-stage records ──
     log("per-stage records")
     check_true("stage flows saved", all(isinstance(s["flow"], NSF) for s in stages))
-    check_true("record keys are t/ess/flow",
-               all(set(s.keys()) == {"t", "ess", "flow"} for s in stages))
+    check_true("record keys are t/ess/flow/ess_history/imp_history",
+               all(set(s.keys()) == {"t", "ess", "flow", "ess_history", "imp_history"} for s in stages))
+    check_true("imp_history >= 0 (stages)",
+               all(float(s["imp_history"]) >= 0.0 for s in stages))
 
     # ── final output ──
     check_true("particle set full-size and finite",
@@ -186,8 +188,10 @@ def main() -> None:
                f"t = {[round(t, 3) for t in tsf]}")
     check_true("forward stage ESS >= tau_ess", all(s["ess"] >= TAU for s in stages_f),
                f"ESS = {[round(s['ess'], 3) for s in stages_f]}")
-    check_true("forward record keys are t/ess/flow",
-               all(set(s.keys()) == {"t", "ess", "flow"} for s in stages_f))
+    check_true("forward record keys are t/ess/flow/ess_history/imp_history",
+               all(set(s.keys()) == {"t", "ess", "flow", "ess_history", "imp_history"} for s in stages_f))
+    check_true("imp_history >= 0 (stages_f)",
+               all(float(s["imp_history"]) >= 0.0 for s in stages_f))
     check_true("forward particle set full-size and finite",
                yf.shape == x_valid.shape and bool(jnp.isfinite(yf).all()), f"{yf.shape}")
 
@@ -210,8 +214,10 @@ def main() -> None:
                f"t = {[round(t, 3) for t in tsxx]}")
     check_true("KLXX stage ESS >= tau_ess", all(s["ess"] >= TAU for s in stages_xx),
                f"ESS = {[round(s['ess'], 3) for s in stages_xx]}")
-    check_true("KLXX record keys are t/ess/flow",
-               all(set(s.keys()) == {"t", "ess", "flow"} for s in stages_xx))
+    check_true("KLXX record keys are t/ess/flow/ess_history/imp_history",
+               all(set(s.keys()) == {"t", "ess", "flow", "ess_history", "imp_history"} for s in stages_xx))
+    check_true("imp_history >= 0 (stages_xx)",
+               all(float(s["imp_history"]) >= 0.0 for s in stages_xx))
     check_true("KLXX particle set full-size and finite",
                yxx.shape == x_valid.shape and bool(jnp.isfinite(yxx).all()), f"{yxx.shape}")
     check_true("KLXX [select] lines observed", any("[select]" in ln for ln in xx_lines),

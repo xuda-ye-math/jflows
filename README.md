@@ -135,7 +135,10 @@ ADAPTIVE coefficient: the stage flows are connected step by step — each stage
 trains the warm-started flow as the incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$
 on the advancing particle set, accepts on the incremental importance-sampling
 ESS (rejected stages shrink $t_k$ and retry with fresh randomness), and
-advances the set by reweight → resample → Langevin at $U_{t_k}$ (MALA by default; `mc_adjust=False` for plain ULA):
+advances the set by reweight → resample → Langevin at $U_{t_k}$ (MALA by default; `mc_adjust=False` for plain ULA).
+After each stage an identity check keeps whichever of the trained flow and the
+identity map (pure SMC reweighting, computed with no flow inverse) has the higher
+incremental ESS, so a stage is never worse than SMC:
 
 ```python
 from jflows.train import boltzmann_reverse_KL_F
@@ -146,7 +149,10 @@ y_valid, stages = boltzmann_reverse_KL_F(
     bg_param={"t_safe": 0.1, "shrink_factor": 0.7, "enlarge_factor": 1.5, "tau_ess": 0.6},
 )
 # y_valid : the advanced validation set at the target (the generator's sample output)
-# stages  : per-stage records {"t", "ess", "flow"} — the saved incremental maps
+# stages  : per-stage records {"t", "ess", "flow", "ess_history", "imp_history"} —
+#           the coefficient, the accepted incremental ESS (trained or identity),
+#           the saved incremental map, its per-step training-ESS history, and the
+#           improvement over the identity fallback (max(0, trained - identity) ESS)
 ```
 
 The trainer, weight evaluation, and advance are `filter_jit`-compiled once for

@@ -82,10 +82,10 @@ Both ladders reach $t = 1$ in four stages (~8-10 s each on the full 120000-parti
 
 <div align="center">
 
-| reverse KL, stage $k$ |   1   |   2   |   3   |   4   |   5   |
-| :-------------------: | :---: | :---: | :---: | :---: | :---: |
-|         $t_k$         | 0.098 | 0.245 | 0.466 | 0.796 |  1.0  |
-|          ESS          | 0.654 | 0.814 | 0.944 | 0.972 | 0.993 |
+| reverse KL, stage $k$ |   1   |   2   |   3   |   4   |
+| :-------------------: | :---: | :---: | :---: | :---: |
+|         $t_k$         | 0.14  | 0.35  | 0.665 |  1.0  |
+|          ESS          | 0.634 | 0.904 | 0.957 | 0.985 |
 
 </div>
 
@@ -94,9 +94,11 @@ Both ladders reach $t = 1$ in four stages (~8-10 s each on the full 120000-parti
 | forward KL, stage $k$ |   1   |   2   |   3   |   4   |
 | :-------------------: | :---: | :---: | :---: | :---: |
 |         $t_k$         | 0.20  | 0.50  | 0.95  |  1.0  |
-|          ESS          | 0.764 | 0.898 | 0.962 | 0.986 |
+|          ESS          | 0.763 | 0.897 | 0.962 | 0.996 |
 
 </div>
+
+The accepted ESS is per stage the better of the trained flow and the identity map (pure SMC reweighting): after training, each stage keeps whichever has the higher incremental ESS, so a stage is never worse than SMC. Here the trained flow wins every rung except the forward run's last, where the identity fallback edges it ($0.996$ against the trained $0.986$).
 
 <p align="center"><img src="4D_boltzmann.png" alt="4D Boltzmann generator" width="1000px"></p>
 
