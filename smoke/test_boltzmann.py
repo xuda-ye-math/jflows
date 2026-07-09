@@ -51,7 +51,9 @@ from jflows.train import Monitor  # noqa: E402
 from jflows.boltzmann import (  # noqa: E402
     boltzmann_forward_KL_G,
     boltzmann_forward_KLXX_G,
+    boltzmann_forward_KLXX_G_fixed,
     boltzmann_reverse_KL_F,
+    boltzmann_reverse_KL_F_fixed,
 )
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -242,6 +244,63 @@ def main() -> None:
             check_true(f"rejects {name}", False)
         except ValueError:
             check_true(f"rejects {name}", True)
+
+    # ── fixed-schedule variants (_fixed): fixed t_list, no SMC gate, no accept ──
+    log("boltzmann_*_fixed (fixed t_list, bare step-by-step training)")
+    t_list = [0.3, 0.6, 1.0]
+    fx_lines: list[str] = []
+    yfx, stages_fx = boltzmann_reverse_KL_F_fixed(
+        x_valid, u0, u1, flow0,
+        n_batch=N_BATCH, steps=STEPS, lr=LR,
+        mc_step=MC_STEP, mc_iters=MC_ITERS, t_list=t_list,
+        monitor=Monitor(STEPS, "[fx] ", fx_lines.append),
+    )
+    jax.effects_barrier()
+    check_true("fixed: one stage per t_list entry", len(stages_fx) == len(t_list),
+               f"{len(stages_fx)} stages")
+    check_true("fixed: stage ts equal the given t_list",
+               [round(s["t"], 6) for s in stages_fx] == t_list,
+               f"t = {[s['t'] for s in stages_fx]}")
+    check_true("fixed: record keys are the 5 keys",
+               all(set(s.keys()) == {"t", "ess", "flow", "ess_history", "imp_history"}
+                   for s in stages_fx))
+    check_true("fixed: imp_history >= 0",
+               all(float(s["imp_history"]) >= 0.0 for s in stages_fx))
+    check_true("fixed: ess_history length == steps",
+               all(len(s["ess_history"]) == STEPS for s in stages_fx))
+    check_true("fixed: particle set finite and advanced",
+               yfx.shape == x_valid.shape and bool(jnp.isfinite(yfx).all())
+               and float(jnp.abs(yfx - x_valid).max()) > 1.0, f"{yfx.shape}")
+    check_true("fixed: NO SMC [select] lines (bare training)",
+               not any("[select]" in ln for ln in fx_lines))
+
+    # KLXX_fixed exercises the QT-pool path along a fixed schedule
+    yxfx, stages_xfx = boltzmann_forward_KLXX_G_fixed(
+        x_valid, u0, u1, flow0,
+        n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=2,
+        melt=MELT, opt_step=OPT_STEP, opt_iters=OPT_ITERS,
+        mc_step=MC_STEP, mc_iters=MC_ITERS, t_list=[0.5, 1.0],
+        coeff_lambda=COEFF_LAMBDA, coeff_alpha=COEFF_ALPHA, coeff_beta=COEFF_BETA,
+    )
+    check_true("KLXX_fixed: 2 stages, complete, 5-key, imp>=0, finite",
+               len(stages_xfx) == 2 and stages_xfx[-1]["t"] == 1.0
+               and all(set(s.keys()) == {"t", "ess", "flow", "ess_history", "imp_history"}
+                       for s in stages_xfx)
+               and all(float(s["imp_history"]) >= 0.0 for s in stages_xfx)
+               and bool(jnp.isfinite(yxfx).all()),
+               f"t = {[round(s['t'], 3) for s in stages_xfx]}")
+
+    # t_list validation raises on bad schedules; a leading 0 is dropped
+    log("fixed: t_list validation")
+    for name, tl in (("empty", []), ("non-monotone", [0.6, 0.3, 1.0]),
+                     ("out of (0,1]", [0.3, 1.5])):
+        try:
+            boltzmann_reverse_KL_F_fixed(x_valid, u0, u1, flow0, n_batch=N_BATCH,
+                                         steps=1, lr=LR, mc_step=MC_STEP, mc_iters=1,
+                                         t_list=tl)
+            check_true(f"fixed rejects {name} t_list", False)
+        except ValueError:
+            check_true(f"fixed rejects {name} t_list", True)
 
     if FAILURES:
         log(f"DONE — {FAILURES} FAILURE(S)")

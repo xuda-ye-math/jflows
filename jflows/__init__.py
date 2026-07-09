@@ -17,7 +17,8 @@ Public surface:
     jflows.boltzmann : boltzmann_reverse_KL_F, boltzmann_forward_KL_G,
                        boltzmann_forward_KLX_G, boltzmann_forward_KLXX_G
                        (adaptive-ladder Boltzmann generators built on the
-                       stage trainers of jflows.train)
+                       stage trainers of jflows.train), plus the `_fixed`
+                       twins that train along a caller-supplied fixed t_list
     jflows.utils     : metrics / optimization / rejuvenation / anneal / quench
 
 Internals (`jflows.core.*`) are a stripped-down port of zuko's flow/transform
