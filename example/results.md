@@ -54,8 +54,8 @@ Run by [`3D_periodic.py`](3D_periodic.py): its purpose is to show that the **NCS
 
 | objective  | final ESS ($N = 40000$) |
 | :--------: | :---------------------: |
-| reverse KL |         0.8472          |
-| forward KL |         0.9040          |
+| reverse KL |         0.8978          |
+| forward KL |         0.9051          |
 
 </div>
 
