@@ -241,6 +241,14 @@ class NCSF(Flow):
     diffeomorphism with a trainable seam density (Rezende et al.,
     "Normalizing Flows on Tori and Spheres", 2020).
 
+    The autoregressive conditioner is periodic: each conditioning
+    coordinate enters the MLP as its circle embedding (cos, sin),
+    period-matched to the coordinate's own period, so the modeled joint
+    density is continuous across every seam theta_i = +-halfwidth_i and
+    invariant under full-period shifts of the input — a genuine density
+    on the torus, evaluated identically on wrapped and unwrapped angle
+    representatives.
+
     Arguments:
         key: PRNG key (feature orderings + conditioner initialisation).
         a: lower corner of the box, shape (d,) (typically -pi).
@@ -303,6 +311,7 @@ class NCSF(Flow):
                 activation=activation,
                 bound=self.halfwidth,
                 slope=slope,
+                circular=True,
             )
             for i in range(transforms)
         )

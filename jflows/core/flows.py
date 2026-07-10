@@ -104,6 +104,14 @@ class MaskedAutoregressiveTransform(eqx.Module):
         bound:           optional per-coord bound array forwarded to
                          `univariate` (NSF / NCSF spline bound).
         slope:           optional slope float forwarded to `univariate`.
+        circular:        periodic conditioner (the NCSF case). The MLP is
+                         fed the circle embedding (cos, sin) of every
+                         conditioning coordinate, period-matched to
+                         2 * bound per coordinate, so the conditioner —
+                         and hence the modeled density — is continuous
+                         across the seam theta = +-bound and invariant
+                         under full-period shifts of the input (a genuine
+                         density on the torus). Requires `bound`.
     """
 
     hyper: MaskedMLP
@@ -114,6 +122,7 @@ class MaskedAutoregressiveTransform(eqx.Module):
     passes: int = eqx.field(static=True)
     bound: Array | None
     slope: float | None = eqx.field(static=True)
+    circular: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -126,12 +135,15 @@ class MaskedAutoregressiveTransform(eqx.Module):
         activation: Callable[[Array], Array] | None = None,
         bound: Array | None = None,
         slope: float | None = None,
+        circular: bool = False,
     ) -> None:
         self.univariate = univariate
         self.shapes = tuple(tuple(s) for s in shapes)
         self.total = sum(prod(s) for s in self.shapes)
         self.bound = bound
         self.slope = slope
+        self.circular = circular
+        assert not circular or bound is not None, "circular conditioner needs `bound`"
 
         if order is None:
             order = np.arange(features)
@@ -144,6 +156,10 @@ class MaskedAutoregressiveTransform(eqx.Module):
 
         adjacency = order[:, None] > order
         adjacency = np.repeat(adjacency, repeats=self.total, axis=0)
+        if circular:
+            # (cos, sin) embedding: both features of coordinate j inherit
+            # coordinate j's autoregressive order (columns d -> 2d).
+            adjacency = np.repeat(adjacency, repeats=2, axis=1)
 
         self.hyper = MaskedMLP(
             key,
@@ -162,7 +178,15 @@ class MaskedAutoregressiveTransform(eqx.Module):
         return kwargs
 
     def meta(self, x: Array) -> Transform:
-        phi = self.hyper(x)
+        h = x
+        if self.circular:
+            # circle embedding of the conditioning angles, interleaved
+            # [cos t_0, sin t_0, cos t_1, ...] to match the duplicated
+            # mask columns; period-matched to 2 * bound per coordinate.
+            w = jnp.pi * x / jax.lax.stop_gradient(self.bound)
+            h = jnp.stack([jnp.cos(w), jnp.sin(w)], axis=-1)
+            h = h.reshape(*x.shape[:-1], -1)
+        phi = self.hyper(h)
         phi = phi.reshape(*phi.shape[:-1], -1, self.total)
         phi = unpack(phi, self.shapes)
         # DependentTransform reinterprets the last dim as event-dim so
@@ -409,10 +433,17 @@ def CircularRQSTransform(
     learnable seam slope), so each coordinate map is a C¹ circle
     diffeomorphism with a trainable seam density. With `bound` a (d,)
     array, each coordinate gets its own period 2 * bound_i.
+
+    The wrap is applied on BOTH sides of the spline: the outer wrap is
+    the identity on forward outputs (the spline maps into the box) but
+    wraps the INVERSE's input before the spline inverse, so both
+    directions — and their ladj — are invariant under full-period shifts
+    of the input (any angle representative evaluates identically).
     """
     return ComposedTransform(
         CircularShiftTransform(bound=bound),
         MonotonicRQSTransform(*phi, bound=bound, slope=slope, circular=True),
+        CircularShiftTransform(bound=bound),
     )
 
 
