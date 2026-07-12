@@ -30,6 +30,7 @@ from .metrics import (
     coverage,
     importance_weights,
     importance_weights_log,
+    linear_weights_from_log,
     resample,
 )
 from .optimization import (
@@ -75,6 +76,7 @@ __all__ = [
     "hmc_step",
     "importance_weights",
     "importance_weights_log",
+    "linear_weights_from_log",
     "langevin",
     "langevin_step",
     "lbfgs",

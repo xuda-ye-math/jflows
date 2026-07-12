@@ -303,7 +303,7 @@ def boltzmann_reverse_KL_F(
                              — the coefficient; the accepted incremental ESS
                              (see below); the SAVED stage flow
                              (stages[-1]["flow"] is the last incremental map);
-                             the full per-step training-surrogate ESS history
+                             the full per-step proposal-minibatch ESS history
                              of the accepted attempt; and the identity
                              improvement (below). The ladder is complete iff
                              stages[-1]["t"] == 1.

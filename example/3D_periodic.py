@@ -62,7 +62,7 @@ N_VALID: int = 40000   # the fixed source set (training pool + final ESS evaluat
 N_BATCH: int = 2000    # batch drawn from the fixed set per Adam step
 STEPS: int = 200       # Adam steps (one compiled call)
 LR: float = 1e-3       # Adam learning rate
-MONITOR_EVERY: int = 20  # print loss + batch ESS every MONITOR_EVERY steps
+MONITOR_EVERY: int = 20  # print loss + proposal ESS every MONITOR_EVERY steps
 
 # Langevin rejuvenation (training batches + the post-resample refresh)
 LADDER: int = 1        # AIS levels of the forward KL data manufacturing
@@ -133,7 +133,7 @@ def main() -> None:
                                           ladder=LADDER, mc_step=MC_STEP, mc_iters=MC_ITERS,
                                           monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log))
             tp, y = "G", flow.inv(x_valid)            # G's inverse pushes source forward
-        log(f"[{name}] {STEPS} steps done   batch ESS "
+        log(f"[{name}] {STEPS} steps done   proposal ESS "
             f"{float(hist[0]):.3f} -> {float(hist[STEPS // 2]):.3f} -> {float(hist[-1]):.3f}")
 
         # reweighting pipeline: importance weights -> ESS -> resample -> MALA

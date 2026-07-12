@@ -13,7 +13,7 @@ Single-stage flow training on a 2D three-mode target, comparing the reverse KL a
 - **Flow**: NSF on $[-5, 5]^2$, 16 bins, 4 autoregressive transforms, $(64, 64)$ conditioners, identity-initialised (`zeros()`).
 - **Training**: one packed call per method — `N_VALID = 40000` fixed source set, `N_BATCH = 2000` per Adam step, `STEPS = 200`, `LR = 1e-3`, Langevin rejuvenation `MC_STEP = 1e-3`, `MC_ITERS = 100`, single-level AIS (`LADDER = 1`).
 
-Both trainers regenerate their batch inside every Adam step. The reverse KL flow acts as $F$ (source → target, `train_reverse_KL_F`): each step draws an `N_BATCH` subset of the fixed set and freshens it with Langevin steps at the source. The forward KL flow acts as $G$ (target → source, `train_forward_KL_G`): each step manufactures its target batch by single-level AIS through the *current* flow — pushforward, self-normalized reweighting, multinomial resampling, Langevin rejuvenation at the target. Neither objective touches the inverse map during training, and the final ESS is computed on the full fixed set through the flow importance weights.
+Both trainers regenerate their batch inside every Adam step. The reverse KL flow acts as $F$ (source → target, `train_reverse_KL_F`): each step draws an `N_BATCH` subset of the fixed set and freshens it with Langevin steps at the source. The forward KL flow acts as $G$ (target → source, `train_forward_KL_G`): each step manufactures its target batch by single-level AIS through the *current* flow — inverse pushforward, self-normalized reweighting, multinomial resampling, and Langevin rejuvenation at the target. The loss is differentiated only in its native $G$ direction; the detached AIS data-generation path performs the inverse push. The final ESS is computed on the full fixed source set through the flow importance weights.
 
 ### Results
 
@@ -21,20 +21,20 @@ Both trainers regenerate their batch inside every Adam step. The reverse KL flow
 
 | objective  | final ESS ($N = 40000$) | batch ESS along training |
 | :--------: | :---------------------: | :----------------------: |
-| reverse KL |         0.9180          |   0.35 -> 0.88 -> 0.94   |
-| forward KL |         0.9404          |   0.84 -> 0.96 -> 0.97   |
+| reverse KL |         0.8420          |   0.19 -> 0.87 -> 0.86   |
+| forward KL |         0.9499          |   0.19 -> 0.93 -> 0.94   |
 
 </div>
 
 <p align="center"><img src="2D_single.png" alt="2D single-stage training" width="1000px"></p>
 
-The left panel shows the per-step batch-ESS histories returned by the trainers (x-axis exactly $[0, 200]$); the middle and right panels show the `N_VALID` pushforward samples of each method (blue: $y = F(x)$; red: $y = G^{-1}(x)$) over the target energy background, with 5000 source samples in gray for context.
+The left panel shows the per-step proposal-to-target batch-ESS histories returned by the trainers (x-axis exactly $[0, 200]$). For forward KL this is measured on the current proposal immediately before AIS correction, matching the final importance-weight convention. The middle and right panels show the `N_VALID` pushforward samples of each method (blue: $y = F(x)$; red: $y = G^{-1}(x)$) over the target energy background, with 5000 source samples in gray for context.
 
 ### Reading the result
 
-Both flows populate all three modes, and the AIS-fed forward KL ends with the higher ESS: its data pipeline supplies (approximately) target-distributed samples covering every mode from the first step — its batch ESS starts already at $\sim 0.84$ — while the reverse KL starts near $0.35$ and pays its mode-seeking tax as the barriers grow. On a harder target — farther modes, or modes the initial proposal never reaches — the reverse objective can collapse entirely, and the forward objective inherits whatever the AIS chain covers; that regime (and the regularization that addresses it) is the subject of the X-regularization line of work these conventions come from.
+Both identity-initialized proposals begin with low overlap, near $0.19$. The AIS-fed forward loss then raises proposal ESS more rapidly and finishes higher, while both flows populate all three modes. On a harder target — farther modes, or modes the initial proposal never reaches — the reverse objective can collapse entirely, and the forward objective inherits whatever the AIS chain covers; that regime (and the regularization that addresses it) is the subject of the X-regularization line of work these conventions come from.
 
-Two practical notes. First, wall clock: each packed 200-step training compiles in a few seconds and executes in 1.5–2.5 s on an RTX 5070 Ti; the whole script (both trainings, evaluation, figure) runs in about 12 s. Second, reproducibility: the trainers are deterministic within a process (fixed internal seed — two identical calls agree bit for bit), while across separate launches XLA kernel autotuning can introduce last-ulp differences that 200 training steps amplify, so the final ESS varies by a few times $10^{-2}$ between runs (reverse KL $\approx 0.92$–$0.93$, forward KL $\approx 0.95$).
+Two practical notes. First, each packed 200-step training compiles in a few seconds, and the complete script remains a seconds-scale example on a modern CUDA GPU. Second, the trainers are deterministic within a process (fixed internal seed — two identical calls agree bit for bit), while across separate launches XLA kernel autotuning can introduce last-ulp differences that 200 training steps amplify. The representative values above are therefore a current verified run, not bit-level cross-launch targets.
 
 ## 3D_periodic — the NCSF on the torus
 
@@ -54,8 +54,8 @@ Run by [`3D_periodic.py`](3D_periodic.py): its purpose is to show that the **NCS
 
 | objective  | final ESS ($N = 40000$) |
 | :--------: | :---------------------: |
-| reverse KL |         0.8978          |
-| forward KL |         0.9051          |
+| reverse KL |         0.8977          |
+| forward KL |         0.9092          |
 
 </div>
 
@@ -78,8 +78,8 @@ The 4D two-charge target, sampled by [`4D_boltzmann.py`](4D_boltzmann.py) with B
 
 ### Results
 
-Both ladders in the checked-in representative figure reach $t = 1$: the
-reverse run uses five accepted levels and the forward run four. Exact adaptive
+Both ladders in the checked-in representative figure reach $t = 1$ in four
+accepted levels. Exact adaptive
 coefficients and ESS values can move with accelerator kernels and acceptance
 decisions, so the script records them in its log instead of treating one run's
 stage table as canonical. It now refuses to produce a target-labelled figure
@@ -115,8 +115,8 @@ CNF versus OTFlow on a fixed multi-modal target as the dimension grows, run by [
 
 | flow   | $d=4$  | $d=8$  | $d=16$ | $d=32$ | $d=64$ | $d=128$ |
 | :----: | :----: | :----: | :----: | :----: | :----: | :-----: |
-| CNF    | 0.9706 | 0.9578 | 0.9311 | 0.8824 | 0.7412 | 0.4288  |
-| OTFlow | 0.9712 | 0.9595 | 0.9457 | 0.9146 | 0.8597 | 0.6146  |
+| CNF    | 0.9705 | 0.9579 | 0.9311 | 0.8825 | 0.7411 | 0.4294  |
+| OTFlow | 0.9712 | 0.9594 | 0.9454 | 0.9142 | 0.8594 | 0.6162  |
 
 </div>
 
@@ -144,9 +144,9 @@ Forward map, mean ms per call:
 
 | width   |  $d=4$ |  $d=8$ | $d=16$ | $d=32$ | $d=64$ | $d=128$ |
 | :-----: | :----: | :----: | :----: | :----: | :----: | :-----: |
-| 64x64   | 0.153  | 0.165  | 0.177  | 0.219  | 0.287  |  0.414  |
-| 128x128 | 0.156  | 0.176  | 0.196  | 0.237  | 0.312  |  0.472  |
-| 256x256 | 0.173  | 0.191  | 0.222  | 0.260  | 0.363  |  0.569  |
+| 64x64   | 0.165  | 0.157  | 0.181  | 0.209  | 0.274  |  0.392  |
+| 128x128 | 0.163  | 0.171  | 0.217  | 0.266  | 0.297  |  0.448  |
+| 256x256 | 0.174  | 0.188  | 0.210  | 0.259  | 0.353  |  0.564  |
 
 </div>
 
@@ -156,9 +156,9 @@ Inverse map, mean ms per call:
 
 | width   | $d=4$ | $d=8$ | $d=16$ | $d=32$ | $d=64$ | $d=128$ |
 | :-----: | :---: | :---: | :----: | :----: | :----: | :-----: |
-| 64x64   | 0.434 | 0.765 | 1.559  | 4.040  | 11.948 | 40.754  |
-| 128x128 | 0.476 | 0.840 | 1.855  | 4.578  | 13.490 | 46.673  |
-| 256x256 | 0.561 | 1.005 | 2.328  | 5.657  | 17.189 | 60.454  |
+| 64x64   | 0.430 | 0.709 | 1.532  | 3.772  | 11.047 | 38.533  |
+| 128x128 | 0.495 | 0.867 | 1.858  | 4.588  | 13.285 | 44.233  |
+| 256x256 | 0.547 | 1.010 | 2.199  | 5.421  | 17.193 | 58.220  |
 
 </div>
 
@@ -166,4 +166,4 @@ The full grid, with the inv/fwd ratio, is written to [`flow_scaling_law.csv`](fl
 
 ### Reading the result
 
-The forward map is a single parallel pass and stays essentially flat in dimension — at $(64, 64)$ it moves only $0.153 \to 0.414$ ms from $d = 4$ to $d = 128$ ($\sim 3\times$ over a $32\times$ dimension increase). The inverse is autoregressive: a MAF-style flow inverts one coordinate at a time, so it runs $d$ sequential conditioner passes and climbs steeply — $0.434 \to 40.8$ ms at $(64, 64)$, roughly $94\times$, and steepening as $d$ rises. The resulting inv/fwd penalty opens from $\sim 3\times$ at $d = 4$ to $\sim 100\times$ at $d = 128$ across all three widths. Widening the conditioner ($64 \to 256$) raises both maps but far less than dimension does — at $d = 128$ the inverse grows only $41 \to 60$ ms and the forward $0.41 \to 0.57$ ms — so dimension, through the sequential autoregressive inversion, is the dominant cost, not MLP width. This is the intrinsic forward/inverse asymmetry of autoregressive spline flows, and it is exactly why the losses in the other examples are differentiated in each flow's native forward direction and never invert during training. The absolute milliseconds are GPU-specific; the scaling — a near-flat forward and a steeply growing inverse, dominated by dimension — is the reproducible finding.
+The forward map is a single parallel pass and stays essentially flat in dimension — at $(64, 64)$ it moves only $0.165 \to 0.392$ ms from $d = 4$ to $d = 128$ over a $32\times$ dimension increase. The inverse is autoregressive: a MAF-style flow inverts one coordinate at a time, so it runs $d$ sequential conditioner passes and climbs steeply — $0.430 \to 38.5$ ms at $(64, 64)$, roughly $90\times$, and steepening as $d$ rises. The resulting inv/fwd penalty opens from $\sim 3\times$ at $d = 4$ to $\sim 100\times$ at $d = 128$ across all three widths. Widening the conditioner ($64 \to 256$) raises both maps but far less than dimension does — at $d = 128$ the inverse grows from $39$ to $58$ ms and the forward from $0.39$ to $0.56$ ms — so dimension, through the sequential autoregressive inversion, is the dominant cost, not MLP width. This is the intrinsic forward/inverse asymmetry of autoregressive spline flows, and it is why loss differentiation stays in each flow's native direction even when detached data-generation or final evaluation must use the inverse. The absolute milliseconds are GPU-specific; the scaling — a near-flat forward and a steeply growing inverse, dominated by dimension — is the reproducible finding.

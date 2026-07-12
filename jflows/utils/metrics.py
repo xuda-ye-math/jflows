@@ -32,6 +32,7 @@ __all__ = [
     "coverage",
     "importance_weights",
     "importance_weights_log",
+    "linear_weights_from_log",
     "resample",
 ]
 
@@ -56,6 +57,18 @@ def _linear_weights_from_log(log_weights: Array) -> Array:
     weights = jnp.where(has_posinf, posinf.astype(log_weights.dtype), regular)
     valid = ~has_nan & (has_posinf | has_finite)
     return jnp.where(valid, weights, jnp.zeros_like(weights))
+
+
+def linear_weights_from_log(log_weights: Array) -> Array:
+    """Return safe max-shifted linear weights from unnormalized log weights.
+
+    Finite values are shifted before exponentiation, positive infinities share
+    the mass, and an undefined vector (any NaN or all negative infinity)
+    returns zeros. Passing that zero vector to :func:`resample` invokes its
+    documented uniform fallback.
+    """
+
+    return _linear_weights_from_log(log_weights)
 
 
 # ──────────────────────────────────────────────────────────────────────

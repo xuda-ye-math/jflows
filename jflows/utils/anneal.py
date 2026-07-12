@@ -157,7 +157,8 @@ def annealed_importance_sampling(
     taming: float = 0,
     chunk: int = 1,
     trace_key: Array | None = None,
-) -> Array:
+    return_initial_log_weights: bool = False,
+) -> Array | tuple[Array, Array]:
     """
     Flow-proposal annealing surrogate that uses a trained flow as the
     proposal. The source `mu_0 ~ exp(-source)` and target
@@ -227,12 +228,26 @@ def annealed_importance_sampling(
         trace_key: Array | None      optional base key for stochastic CNF
                                      log-Jacobian probes; packed trainers pass
                                      a fresh key automatically
+        return_initial_log_weights: bool
+                              if True, also return the full (not 1/M-scaled)
+                              proposal-to-target log importance weights
+                              evaluated immediately after the initial flow
+                              push and before any AIS resampling or target
+                              rejuvenation. Default False preserves the
+                              established samples-only return.
     Output:
         samples: Array [N, d]      particles in mu_1 (target space),
-                                   approximating exp(-target)
+                                  approximating exp(-target)
+        initial_log_weights: Array [N], optional
+                                  log(mu_1 / F_#mu_0) on the initial proposal
+                                  particles; returned only when requested
     """
     if type not in ("F", "G"):
         raise ValueError(f"annealed_importance_sampling: type must be 'F' or 'G', got {type!r}")
+    if not isinstance(return_initial_log_weights, bool):
+        raise TypeError(
+            "annealed_importance_sampling: return_initial_log_weights must be bool"
+        )
     if ladder < 1:
         raise ValueError(
             f"annealed_importance_sampling: ladder must be positive, got {ladder!r}"
@@ -252,11 +267,13 @@ def annealed_importance_sampling(
     y = jnp.concatenate(
         [push(xc) for xc in jnp.array_split(samples, chunk, axis=0)], axis=0
     )
+    initial_log_weights = None
     for k in range(1, M + 1):
         # (1) incremental weights w(y) ** (1/M): refresh each particle's
         #     latent pre-image x = F^{-1}(y) and reuse the
         #     importance_weights_log rule, scaled by 1/M for one level.
         parts = []
+        initial_parts = [] if k == 1 and return_initial_log_weights else None
         flow_k = flow if trace_key is None else flow.with_trace_key(
             jax.random.fold_in(trace_key, k)
         )
@@ -267,13 +284,22 @@ def annealed_importance_sampling(
             else:
                 xc, ladj_G = flow_k.call_and_ladj(yc)  # x = G(y), log|det J_G(y)|
                 ladj = -ladj_G                       # log|det J_F(x)|
-            parts.append((-target(yc) + source(xc) + ladj) / M)
+            full_log_weight = -target(yc) + source(xc) + ladj
+            parts.append(full_log_weight / M)
+            if initial_parts is not None:
+                initial_parts.append(full_log_weight)
         log_w = jnp.concatenate(parts, axis=0)
+        if initial_parts is not None:
+            initial_log_weights = jnp.concatenate(initial_parts, axis=0)
         w = _linear_weights_from_log(log_w)
         # (2) resample onto high-weight particles, then rejuvenate in mu_1.
         key_r, key_l = jax.random.split(jax.random.fold_in(key, k))
         y = resample(key_r, y, w)
         y = langevin(key_l, y, target, step=step, iters=iters, adjust=adjust, taming=taming, chunk=chunk)
+    if return_initial_log_weights:
+        if initial_log_weights is None:  # unreachable because ladder >= 1
+            raise RuntimeError("initial AIS proposal weights were not constructed")
+        return y, initial_log_weights
     return y
 
 

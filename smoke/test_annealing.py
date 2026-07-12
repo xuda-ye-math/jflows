@@ -41,6 +41,7 @@ from jflows.utils import (  # noqa: E402
     ais,
     annealed_importance_sampling,
     compute_ESS_log,
+    importance_weights_log,
     langevin,
     resample,
     sequential_monte_carlo,
@@ -139,23 +140,92 @@ def main() -> None:
     check_target_match("tamed moments & proportions", x_tamed, m_tol=0.2)
 
     # ── 4. AIS with the identity flow ──
-    log("annealed_importance_sampling (identity flow, ladder=6)")
+    log("annealed_importance_sampling (identity flow, ladder=10)")
     flow_id = RealNVP(jax.random.key(5), dimension=2, transforms=2).zeros()
-    y = annealed_importance_sampling(jax.random.key(6), x0, SOURCE, TARGET, flow_id, type="F",
-                                     ladder=10, step=0.05, iters=150)
+    y, initial_log_weight = annealed_importance_sampling(
+        jax.random.key(6), x0, SOURCE, TARGET, flow_id, type="F",
+        ladder=10, step=0.05, iters=150,
+        return_initial_log_weights=True,
+    )
     check_target_match("AIS (type=F) moments & mode proportions", y)
+    expected_log_weight = importance_weights_log(
+        x0, SOURCE, TARGET, flow_id, type="F"
+    )
+    check(
+        "optional pre-AIS full log weights match proposal weights",
+        initial_log_weight,
+        expected_log_weight,
+        tol=1e-13,
+    )
     y_g = annealed_importance_sampling(jax.random.key(6), x0, SOURCE, TARGET, flow_id, type="G",
                                      ladder=10, step=0.05, iters=150)
     check("F/G agree for the identity flow (same key)", y_g, y, tol=1e-10)
+    check_true(
+        "pre-AIS proposal ESS finite",
+        bool(jnp.isfinite(compute_ESS_log(initial_log_weight))),
+    )
 
-    # weights feed the standard diagnostics
-    log_w = (SOURCE(y) - TARGET(y))
-    check_true("post-AIS ESS diagnostic finite",
-               bool(jnp.isfinite(compute_ESS_log(log_w))))
+    # Nonidentity direction/sign regression: requesting the auxiliary must not
+    # perturb the AIS trajectory, and both F/G conventions must expose the
+    # same full proposal weights as the public importance helper. A ladder
+    # above one catches accidental return of the incremental log weight z/M.
+    log("pre-AIS weights for a nonidentity flow (F/G, ladder=3)")
+    flow_probe = RealNVP(
+        jax.random.key(51), dimension=2, transforms=2
+    )
+    probe_x = x0[:512]
+    for offset, flow_type in enumerate(("F", "G")):
+        probe_key = jax.random.fold_in(jax.random.key(52), offset)
+        y_default = annealed_importance_sampling(
+            probe_key,
+            probe_x,
+            SOURCE,
+            TARGET,
+            flow_probe,
+            type=flow_type,
+            ladder=3,
+            step=0.01,
+            iters=2,
+        )
+        y_optional, proposal_log_weight = annealed_importance_sampling(
+            probe_key,
+            probe_x,
+            SOURCE,
+            TARGET,
+            flow_probe,
+            type=flow_type,
+            ladder=3,
+            step=0.01,
+            iters=2,
+            return_initial_log_weights=True,
+        )
+        expected = importance_weights_log(
+            probe_x, SOURCE, TARGET, flow_probe, type=flow_type
+        )
+        check(
+            f"{flow_type}: optional return preserves samples",
+            y_optional,
+            y_default,
+            tol=0.0,
+        )
+        check(
+            f"{flow_type}: full proposal log weights match helper",
+            proposal_log_weight,
+            expected,
+            tol=1e-12,
+        )
 
     log("aliases")
     check_true("smc is sequential_monte_carlo", smc is sequential_monte_carlo)
     check_true("ais is annealed_importance_sampling", ais is annealed_importance_sampling)
+    try:
+        annealed_importance_sampling(
+            jax.random.key(6), x0[:4], SOURCE, TARGET, flow_id, type="F",
+            return_initial_log_weights=1,
+        )
+        check_true("non-Boolean optional-return flag rejected", False)
+    except TypeError:
+        check_true("non-Boolean optional-return flag rejected", True)
 
     # ── 5. reproducibility ──
     log("reproducibility")

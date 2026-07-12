@@ -69,7 +69,7 @@ N_VALID: int = 40000   # the fixed source set (training pool + final ESS evaluat
 N_BATCH: int = 2000    # batch drawn from the fixed set per Adam step
 STEPS: int = 200       # Adam steps (one compiled call per method)
 LR: float = 1e-3       # Adam learning rate
-MONITOR_EVERY: int = 10  # print loss + batch ESS every MONITOR_EVERY steps
+MONITOR_EVERY: int = 10  # print loss + proposal ESS every MONITOR_EVERY steps
 
 # Langevin rejuvenation (reverse KL batches + the single-level AIS)
 LADDER: int = 1        # one reweight + resample + rejuvenation hop
@@ -114,7 +114,7 @@ def main() -> None:
                                         n_batch=N_BATCH, steps=STEPS, lr=LR,
                                       mc_step=MC_STEP, mc_iters=MC_ITERS,
                                       monitor=Monitor(MONITOR_EVERY, "[reverse KL] ", log))
-    log(f"[reverse KL] {STEPS} steps done   batch ESS "
+    log(f"[reverse KL] {STEPS} steps done   proposal ESS "
         f"{float(hist_F[0]):.3f} -> {float(hist_F[STEPS // 2]):.3f} -> {float(hist_F[-1]):.3f}")
 
     log("[forward KL] training (packed single stage) ...")
@@ -122,7 +122,7 @@ def main() -> None:
                                         n_batch=N_BATCH, steps=STEPS, lr=LR,
                                       ladder=LADDER, mc_step=MC_STEP, mc_iters=MC_ITERS,
                                       monitor=Monitor(MONITOR_EVERY, "[forward KL] ", log))
-    log(f"[forward KL] {STEPS} steps done   batch ESS "
+    log(f"[forward KL] {STEPS} steps done   proposal ESS "
         f"{float(hist_G[0]):.3f} -> {float(hist_G[STEPS // 2]):.3f} -> {float(hist_G[-1]):.3f}")
 
     # final ESS on the full fixed set
@@ -152,7 +152,7 @@ def main() -> None:
     axes[0].set_ylabel("ESS")
     axes[0].set_xlim(0, STEPS)
     axes[0].set_ylim(0.0, 1.0)
-    axes[0].set_title("batch ESS history")
+    axes[0].set_title("proposal ESS history")
     axes[0].legend(loc="lower right")
     axes[0].set_box_aspect(1.0)
 

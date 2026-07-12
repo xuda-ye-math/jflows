@@ -45,7 +45,12 @@ from jflows.train import (  # noqa: E402
     train_forward_KLXX_G,
     train_reverse_KL_F,
 )
-from jflows.utils import compute_ESS, importance_weights  # noqa: E402
+from jflows.utils import (  # noqa: E402
+    compute_ESS,
+    compute_ESS_log,
+    importance_weights,
+    importance_weights_log,
+)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG = os.path.join(HERE, "test_train.log")
@@ -54,7 +59,7 @@ FAILURES = 0
 
 SIGMA = 2.0
 N_VALID, N_BATCH, STEPS, LR = 8000, 1000, 200, 2e-3
-MC_STEP, MC_ITERS, LADDER = 1e-3, 20, 1
+MC_STEP, MC_ITERS, LADDER = 1e-3, 20, 3
 N_POOL, MELT, OPT_STEP, OPT_ITERS = 2000, 2.0, 0.5, 100
 COEFF_LAMBDA, COEFF_ALPHA, COEFF_BETA = 0.7, 0.8, 0.3
 
@@ -89,6 +94,23 @@ def max_param_delta(flow_a, flow_b) -> float:
     la = [x for x in jax.tree.leaves(flow_a) if eqx.is_inexact_array(x)]
     lb = [x for x in jax.tree.leaves(flow_b) if eqx.is_inexact_array(x)]
     return max(float(jnp.abs(a - b).max()) for a, b in zip(la, lb))
+
+
+def first_forward_proposal_ess(
+    x_valid, source, target, flow, driver_key: int, split_count: int
+) -> float:
+    """Reconstruct a forward trainer's first source minibatch exactly."""
+
+    key = jax.random.fold_in(jax.random.key(driver_key), 0)
+    step_key = jax.random.fold_in(key, 1)
+    key_idx = jax.random.split(step_key, split_count)[0]
+    x = x_valid[
+        jax.random.choice(
+            key_idx, x_valid.shape[0], (N_BATCH,), replace=False
+        )
+    ]
+    log_weight = importance_weights_log(x, source, target, flow, type="G")
+    return float(compute_ESS_log(log_weight))
 
 
 def main() -> None:
@@ -146,6 +168,13 @@ def main() -> None:
                                        n_batch=N_BATCH, steps=STEPS, lr=LR,
                                        ladder=LADDER, mc_step=MC_STEP, mc_iters=MC_ITERS)
     check_true("ess history shape", ess_G.shape == (STEPS,), f"{ess_G.shape}")
+    expected_ess_G0 = first_forward_proposal_ess(x_valid, u0, u1, g0, 2, 2)
+    check(
+        "step-1 ESS is pre-AIS proposal ESS",
+        float(ess_G[0]),
+        expected_ess_G0,
+        tol=1e-6,
+    )
     check_true("ess history rises", float(ess_G[-1]) > float(ess_G[0]),
                f"{float(ess_G[0]):.3f} -> {float(ess_G[-1]):.3f}")
     ess_full_G = float(compute_ESS(importance_weights(x_valid, u0, u1, flow_G, type="G")))
@@ -160,6 +189,13 @@ def main() -> None:
                                         mc_iters=MC_ITERS,
                                         coeff_lambda=COEFF_LAMBDA)
     check_true("ess history shape", ess_X.shape == (STEPS,), f"{ess_X.shape}")
+    expected_ess_X0 = first_forward_proposal_ess(x_valid, u0, u1, h0, 5, 3)
+    check(
+        "step-1 ESS is pre-AIS proposal ESS",
+        float(ess_X[0]),
+        expected_ess_X0,
+        tol=1e-6,
+    )
     check_true("ess history in (0, 1]",
                bool(jnp.all((ess_X > 0) & (ess_X <= 1.0))),
                f"min {float(ess_X.min()):.3f} max {float(ess_X.max()):.3f}")
@@ -183,6 +219,13 @@ def main() -> None:
         mc_step=MC_STEP, mc_iters=MC_ITERS, coeff_lambda=COEFF_LAMBDA,
         coeff_alpha=COEFF_ALPHA, coeff_beta=COEFF_BETA)
     check_true("ess history shape", ess_XX.shape == (STEPS,), f"{ess_XX.shape}")
+    expected_ess_XX0 = first_forward_proposal_ess(x_valid, u0, u1, h0, 7, 7)
+    check(
+        "step-1 ESS is pre-AIS proposal ESS",
+        float(ess_XX[0]),
+        expected_ess_XX0,
+        tol=1e-6,
+    )
     check_true("ess history in (0, 1]",
                bool(jnp.all((ess_XX > 0) & (ess_XX <= 1.0))),
                f"min {float(ess_XX.min()):.3f} max {float(ess_XX.max()):.3f}")

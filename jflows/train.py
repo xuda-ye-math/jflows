@@ -348,13 +348,13 @@ def train_forward_KL_G(
     per-step keys are derived internally from a fixed seed. The loop
     runs under a single `lax.scan`, so the whole call compiles once.
 
-    The ESS history evaluates the flow-vs-target overlap on each
-    step's manufactured batch (log w = -target(y) + loss, at no extra
-    flow evaluations). Since y is (approximately) target-distributed,
-    this is the reverse-direction chi^2 overlap — in (0, 1], equal to 1
-    iff proposal == target, a valid convergence monitor — but its value
-    is not numerically comparable to the proposal-side
-    `importance_weights` -> `compute_ESS` on the same flow.
+    The ESS history is the proposal-to-target importance-sampling ESS
+    immediately before each step's AIS correction.  For source samples
+    x and proposal samples y = G^{-1}(x), AIS exposes the full log weight
+    log(mu_target(y) / nu(y)) that it already evaluates before its first
+    resampling.  Computing ESS on that proposal batch matches
+    `importance_weights_log(..., type="G")` and the stage-validation
+    convention, without an additional flow or potential evaluation.
 
     Input:
         x_valid:  Array [N, d]   fixed set of source samples
@@ -412,10 +412,11 @@ def train_forward_KL_G(
         key_trace = jax.random.fold_in(step_key, 101)
         key_trace_ais = jax.random.fold_in(step_key, 102)
         x = x_valid[jax.random.choice(key_idx, N, (n_batch,), replace=False)]
-        y = annealed_importance_sampling(
+        y, proposal_log_weight = annealed_importance_sampling(
             key_ais, x, source, target, eqx.combine(params, static), "G",
             ladder=ladder, step=mc_step, iters=mc_iters, adjust=mc_adjust,
             trace_key=key_trace_ais,
+            return_initial_log_weights=True,
         )
         keep = _mask_keep(target, y, e_clip) if e_clip != float("inf") else None
 
@@ -432,7 +433,7 @@ def train_forward_KL_G(
 
         loss_eval = jax.checkpoint(loss_fn) if checkpoint else loss_fn
         (loss, losses), grads = jax.value_and_grad(loss_eval, has_aux=True)(params)
-        ess = compute_ESS_log(-target(y) + losses)  # log w = -target(y) + source(x) + ladj
+        ess = compute_ESS_log(proposal_log_weight)
         if monitor is not None:
             monitor.report(t, loss, ess)
         params, m, v, updates = _adam_step(
@@ -490,12 +491,11 @@ def train_forward_KLX_G(
     own base stream folded with `seed`. The loop runs under a single
     `lax.scan`, so the whole call compiles once.
 
-    The ESS history is the honest flow-vs-target overlap of each step's
-    manufactured batch, compute_ESS_log(z) with the log-ratio z above (at no
-    extra flow evaluations — z falls out of the loss forward pass), so its
-    value is unaffected by coeff_lambda. Since y is
-    (approximately) target-distributed, this is the reverse-direction chi^2
-    overlap — in (0, 1], equal to 1 iff proposal == target.
+    The ESS history is the proposal-to-target importance-sampling ESS
+    immediately before each step's AIS correction.  AIS exposes its initial
+    full proposal log weights before resampling, so the monitor matches the
+    paper/stage-validation convention without another flow or potential
+    evaluation.  Its value is unaffected by `coeff_lambda`.
 
     Input:
         x_valid:  Array [N, d]   fixed set of source samples
@@ -548,10 +548,11 @@ def train_forward_KLX_G(
         key_trace = jax.random.fold_in(step_key, 101)
         key_trace_ais = jax.random.fold_in(step_key, 102)
         x = x_valid[jax.random.choice(key_idx, N, (n_batch,), replace=False)]
-        y = annealed_importance_sampling(
+        y, proposal_log_weight = annealed_importance_sampling(
             key_ais, x, source, target, eqx.combine(params, static), "G",
             ladder=ladder, step=mc_step, iters=mc_iters, adjust=mc_adjust,
             trace_key=key_trace_ais,
+            return_initial_log_weights=True,
         )
         perm = jax.random.permutation(key_perm, n_batch)
         keep = _mask_keep(target, y, e_clip) if e_clip != float("inf") else None
@@ -575,7 +576,7 @@ def train_forward_KLX_G(
 
         loss_eval = jax.checkpoint(loss_fn) if checkpoint else loss_fn
         (loss, z), grads = jax.value_and_grad(loss_eval, has_aux=True)(params)
-        ess = compute_ESS_log(z)  # log w = -target(y) + source(x) - ladj (no extra flow eval)
+        ess = compute_ESS_log(proposal_log_weight)
         if monitor is not None:
             monitor.report(t, loss, ess)
         params, m, v, updates = _adam_step(
@@ -653,8 +654,10 @@ def train_forward_KLXX_G(
     the call is `filter_jit`-compiled; the quench-and-temper pool is part
     of the same compiled call, ahead of the scan.
 
-    The ESS history is the flow-vs-target overlap of each step's mu batch,
-    compute_ESS_log(z) at no extra flow evaluations, so its value is
+    The ESS history is the proposal-to-target importance-sampling ESS
+    immediately before each step's AIS correction. AIS exposes the full
+    initial proposal log weights that it already evaluates before resampling,
+    so no additional flow or potential evaluation is required. Its value is
     unaffected by all three coefficients.
 
     Input:
@@ -732,10 +735,11 @@ def train_forward_KLXX_G(
         key_trace_ais = jax.random.fold_in(step_key, 103)
         flow_now = eqx.combine(params, static)
         x = x_valid[jax.random.choice(key_idx, N, (n_batch,), replace=False)]
-        y = annealed_importance_sampling(
+        y, proposal_log_weight = annealed_importance_sampling(
             key_ais, x, source, target, flow_now, "G",
             ladder=ladder, step=mc_step, iters=mc_iters, adjust=mc_adjust,
             trace_key=key_trace_ais,
+            return_initial_log_weights=True,
         )
         perm = jax.random.permutation(key_perm, n_batch)
         # mixture batch: freshened hat_mu draw + detached pushforward bar_nu,
@@ -779,7 +783,7 @@ def train_forward_KLXX_G(
 
         loss_eval = jax.checkpoint(loss_fn) if checkpoint else loss_fn
         (loss, z), grads = jax.value_and_grad(loss_eval, has_aux=True)(params)
-        ess = compute_ESS_log(z)  # log w = -target(y) + source(x) - ladj (no extra flow eval)
+        ess = compute_ESS_log(proposal_log_weight)
         if monitor is not None:
             monitor.report(t, loss, ess)
         params, m, v, updates = _adam_step(

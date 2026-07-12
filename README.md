@@ -94,6 +94,7 @@ loss = forward_KL_G(y, source, flow).mean()   # target samples y, flow as G
 ```python
 from jflows.utils import (
     importance_weights, importance_weights_log,   # flow IS weights (type='F'/'G')
+    linear_weights_from_log,                      # safe max-shifted conversion
     compute_ESS, compute_ESS_log,                 # effective sample size
     coverage,                                     # k-NN mode-collapse diagnostic
     resample,                                     # multinomial resampling
@@ -150,7 +151,8 @@ flow, ess = train_forward_KL_G(x_valid, source, target, flow,
 
 Both drivers are deterministic (per-step keys derive from a fixed internal
 seed). Each fixed configuration compiles as one stage call and returns the
-trained flow together with the per-step batch-ESS history. An optional
+trained flow together with the per-step proposal-to-target batch-ESS history
+(measured before AIS correction for the forward trainers). An optional
 `Monitor` reports from inside the compiled scan via `jax.debug.callback`:
 
 ```python

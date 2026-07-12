@@ -73,7 +73,7 @@ N_POOL: int = 24000    # selection-pool size of the tau_smc SMC gate
 N_BATCH: int = 2000    # batch drawn from the fixed set per Adam step
 STEPS: int = 500       # Adam steps per stage attempt (one compiled call)
 LR: float = 1e-4       # Adam learning rate
-MONITOR_EVERY: int = 20  # print loss + batch ESS every MONITOR_EVERY steps
+MONITOR_EVERY: int = 20  # print loss + proposal ESS every MONITOR_EVERY steps
 
 # Langevin rejuvenation (training batches + the per-stage particle refresh)
 LADDER: int = 1        # SMC levels of the tau_smc selection gate

@@ -45,6 +45,7 @@ from jflows.utils import (  # noqa: E402
     coverage,
     importance_weights,
     importance_weights_log,
+    linear_weights_from_log,
     resample,
 )
 
@@ -101,6 +102,8 @@ def main() -> None:
     w = jax.random.uniform(key, (N,)) + 1e-3
     check("scale invariance", compute_ESS(17.3 * w), compute_ESS(w), tol=1e-13)
     check("log == linear", compute_ESS_log(jnp.log(w)), compute_ESS(w), tol=1e-13)
+    check("public log-to-linear conversion", linear_weights_from_log(jnp.log(w)),
+          w / w.max(), tol=1e-13)
     logw_extreme = jax.random.normal(key, (N,)) * 400.0  # exp overflows float64
     ess_ext = compute_ESS_log(logw_extreme)
     check("extreme logs finite & shift-invariant", ess_ext,

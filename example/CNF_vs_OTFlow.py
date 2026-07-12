@@ -55,7 +55,7 @@ N_VALID: int = 40000   # fixed source pool per dimension (subsampled per Adam st
 N_BATCH: int = 512     # source samples per Adam step
 STEPS: int = 1000      # Adam steps per cell (one compiled call)
 LR: float = 2e-3       # Adam learning rate
-MONITOR_EVERY: int = 100  # print loss + batch ESS every MONITOR_EVERY steps
+MONITOR_EVERY: int = 100  # print loss + proposal ESS every MONITOR_EVERY steps
 MC_STEP: float = 1e-3  # Langevin step size (unused: MC_ITERS = 0)
 MC_ITERS: int = 0      # 0 -> no Langevin rejuvenation (plain reverse KL)
 CHECKPOINT: bool = True  # rematerialize the CNF exact-trace forward pass in the backward
