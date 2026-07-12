@@ -41,7 +41,7 @@ __all__ = [
     "optimization",
 ]
 
-_C1, _SHRINK, _K_MAX = 1e-4, 0.5, 6
+_C1, _SHRINK, _K_MAX = 1e-4, 0.5, 7
 
 
 class LBFGS_State(eqx.Module):
@@ -58,6 +58,11 @@ class LBFGS_State(eqx.Module):
                                  `lbfgs_init` and armijo steps (stale
                                  after a non-armijo step; only the armijo
                                  line search reads it)
+        step_scale: Array [N]    per-particle multiplier on the next
+                                 Armijo initial trial. Exhausted rows carry
+                                 the next untested smaller step into the
+                                 following iteration; accepted rows reset
+                                 to 1.
         k:   Array (scalar int)  iteration counter (0 = fresh state)
     """
 
@@ -67,6 +72,7 @@ class LBFGS_State(eqx.Module):
     y: Array
     rho: Array
     U: Array
+    step_scale: Array
     k: Array
 
 
@@ -89,6 +95,7 @@ def lbfgs_init(x: Array, potential: Potential, memory: int = 6) -> LBFGS_State:
         y=jnp.zeros((memory, N, d), dtype=x.dtype),
         rho=jnp.zeros((memory, N), dtype=x.dtype),
         U=potential(x),
+        step_scale=jnp.ones(N, dtype=x.dtype),
         k=jnp.zeros((), dtype=jnp.int32),
     )
 
@@ -110,11 +117,13 @@ def lbfgs_step(
          state).
       2. Update x. With `armijo=False`, a fixed step `x - step * r`.
          With `armijo=True`, per-particle masked Armijo backtracking:
-         start at alpha = step, halve until
+         start at alpha = step * state.step_scale, halve until
             U(x + alpha * d) <= U(x) + C1 * alpha * (d . g),  C1 = 1e-4,
-         all particles running K_MAX = 6 trials in lockstep; particles
-         that never satisfy Armijo take the smallest tested step. Costs
-         one batched grad + K_MAX batched energy evaluations.
+         all particles running K_MAX = 7 trials in lockstep. The last
+         trial evaluates step / 64; particles that never satisfy Armijo
+         stay at their current state and carry the next untested smaller
+         alpha into the following iteration. Costs one batched grad +
+         K_MAX batched energy evaluations.
       3. Evaluate the new gradient and append the curvature pair; pairs
          with s . y <= 1e-10 keep rho = 0 (ignored by the recursion).
 
@@ -155,19 +164,28 @@ def lbfgs_step(
         # run K_MAX trials in lockstep.
         d = -r  # search direction
         dg = (d * g).sum(axis=-1)  # [N], < 0 for a descent direction
-        alpha = jnp.full(x.shape[0], step, dtype=x.dtype)
+        alpha = jnp.asarray(step, dtype=x.dtype) * state.step_scale
         done = jnp.zeros(x.shape[0], dtype=bool)
         for _ in range(_K_MAX):
             x_trial = x + alpha[:, None] * d
             U_trial = potential(x_trial)
-            ok = U_trial <= state.U + _C1 * alpha * dg  # [N] bool
+            finite = jnp.isfinite(U_trial) & jnp.all(jnp.isfinite(x_trial), axis=-1)
+            ok = finite & (U_trial <= state.U + _C1 * alpha * dg)  # [N] bool
             done = done | ok
             alpha = jnp.where(done, alpha, alpha * _SHRINK)
-        # x_trial encodes "accepted alpha" for done particles (alpha was
-        # frozen at acceptance) and "smallest tested alpha" otherwise.
-        x_new, U_new = x_trial, U_trial
+        # Accepted particles keep their alpha, so the final trial repeats
+        # their accepted state. Never accept a failed/uphill fallback: a row
+        # that exhausts the bounded search remains self-consistently at x.
+        x_new = jnp.where(done[:, None], x_trial, x)
+        U_new = jnp.where(done, U_trial, state.U)
+        step_scale_new = jnp.where(
+            done,
+            jnp.ones_like(state.step_scale),
+            state.step_scale * (_SHRINK ** _K_MAX),
+        )
     else:
         x_new, U_new = x - step * r, state.U
+        step_scale_new = jnp.ones_like(state.step_scale)
 
     g_new = potential.grad(x_new)
     s_new = x_new - x
@@ -182,6 +200,7 @@ def lbfgs_step(
         y=jnp.roll(state.y, -1, axis=0).at[-1].set(y_new),
         rho=jnp.roll(state.rho, -1, axis=0).at[-1].set(rho_new),
         U=U_new,
+        step_scale=step_scale_new,
         k=state.k + 1,
     )
 
@@ -227,9 +246,12 @@ def lbfgs(
                                   larger = better Hessian approximation
                                   and more memory (N * d * 2 * memory floats).
         armijo:    bool           if True, enable masked Armijo
-                                  backtracking (K_MAX = 6 extra batched
+                                  backtracking (K_MAX = 7 extra batched
                                   energy evaluations per iteration, but
-                                  guaranteed sufficient decrease). Use it
+                                  every accepted update has sufficient
+                                  decrease; exhausted rows do not move on that
+                                  iteration and retry from the next untested
+                                  smaller step on the following one). Use it
                                   when the line-search-free update is
                                   unstable (first-iter blow-up, very
                                   non-convex landscapes).

@@ -21,8 +21,8 @@ Both trainers regenerate their batch inside every Adam step. The reverse KL flow
 
 | objective  | final ESS ($N = 40000$) | batch ESS along training |
 | :--------: | :---------------------: | :----------------------: |
-| reverse KL |         0.8420          |   0.19 -> 0.87 -> 0.86   |
-| forward KL |         0.9499          |   0.19 -> 0.93 -> 0.94   |
+| reverse KL |         0.8466          |   0.19 -> 0.84 -> 0.94   |
+| forward KL |         0.9410          |   0.19 -> 0.92 -> 0.94   |
 
 </div>
 
@@ -54,8 +54,8 @@ Run by [`3D_periodic.py`](3D_periodic.py): its purpose is to show that the **NCS
 
 | objective  | final ESS ($N = 40000$) |
 | :--------: | :---------------------: |
-| reverse KL |         0.8977          |
-| forward KL |         0.9092          |
+| reverse KL |         0.8976          |
+| forward KL |         0.8991          |
 
 </div>
 
@@ -106,7 +106,7 @@ CNF versus OTFlow on a fixed multi-modal target as the dimension grows, run by [
 - **Source** $\mu_0$: standard Gaussian on $\mathbb R^d$.
 - **Target** $\mu_1 \propto e^{-U_1}$: a factorized multi-well potential whose mode count stays fixed while $d$ is swept,
   $U_1(x) = \sum_{i < 3} \beta_{\mathrm w}\,((x_i / s)^2 - 1)^2 + \sum_{i \ge 3} \tfrac12 x_i^2$, with $s = 1.5$, $\beta_{\mathrm w} = 1.5$. The first three coordinates are symmetric double wells (minima at $\pm s$), giving $2^3 = 8$ modes; the remaining $d - 3$ coordinates are standard Gaussian and only raise the dimension. The barrier is deliberately shallow so mode-seeking reverse KL must cover all eight modes rather than collapse onto a subset.
-- **Flows**: `CNF` (FFJORD, free-form MLP velocity, exact $O(d)$ augmented-Jacobian trace) with `frequency = 4`; `OTFlow` (velocity $= -\nabla\Phi$ with a closed-form Hessian trace) with `hidden = 64`, `layer = 3`, `rank = min(10, d+1)`. Both integrate with the same fixed-step RK4 (`nt = 12`) and $(64, 64)$-width ODE nets, identity-initialised.
+- **Flows**: `CNF` (FFJORD, free-form MLP velocity, exact $O(d)$ augmented-Jacobian trace) with `frequency = 4`; `OTFlow` (velocity $= -\nabla\Phi$ with a closed-form Hessian trace) with `hidden = 64`, `layer = 3`, `rank = min(10, d+1)`. Both integrate with the same fixed-step RK4 (`nt = 12`) and width-64 networks. CNF starts at the exact identity; OTFlow uses `near_identity()`, whose $10^{-6}$ PSD-factor seed is a numerical identity in float32 while keeping its full quadratic head trainable.
 - **Training**: one packed `train_reverse_KL_F` call per cell — plain reverse KL with no rejuvenation (`MC_ITERS = 0`), `N_VALID = 40000` fixed source pool, `N_BATCH = 512` per Adam step, `STEPS = 1000`, `LR = 2e-3`, `checkpoint = True` (the CNF exact-trace path). The final ESS is the proposal importance-sampling ESS on a held-out $N = 20000$ source set.
 
 ### Results
@@ -115,8 +115,8 @@ CNF versus OTFlow on a fixed multi-modal target as the dimension grows, run by [
 
 | flow   | $d=4$  | $d=8$  | $d=16$ | $d=32$ | $d=64$ | $d=128$ |
 | :----: | :----: | :----: | :----: | :----: | :----: | :-----: |
-| CNF    | 0.9705 | 0.9579 | 0.9311 | 0.8825 | 0.7411 | 0.4294  |
-| OTFlow | 0.9712 | 0.9594 | 0.9454 | 0.9142 | 0.8594 | 0.6162  |
+| CNF    | 0.9705 | 0.9579 | 0.9311 | 0.8824 | 0.7411 | 0.4289  |
+| OTFlow | 0.9694 | 0.9638 | 0.9458 | 0.9141 | 0.8476 | 0.5916  |
 
 </div>
 
@@ -124,7 +124,7 @@ The tidy numbers are also written to [`CNF_vs_OTFlow.csv`](CNF_vs_OTFlow.csv) (`
 
 ### Reading the result
 
-Pushed out to $d = 128$, the two flows start nearly tied at low dimension ($\approx 0.97$ at $d = 4$) and then separate: OTFlow stays consistently above the CNF, and while both lose ESS as the dimension climbs, the CNF falls faster — from $0.97$ down to $0.43$ at $d = 128$, versus OTFlow's $0.97 \to 0.62$. The gap widens monotonically with $d$ (already $0.74$ vs $0.86$ at $d = 64$), so OTFlow's closed-form-trace / potential-gradient parameterisation is markedly more dimension-robust than the CNF's free-form velocity — the mode-seeking CNF's importance weights spike sooner as the ambient dimension grows. The high-dimensional cells converge slowly and use the full $1000$-step budget; per-cell wall time is tens of seconds and grows with $d$, the CNF's $O(d)$ exact trace closing most of the cost gap to OTFlow by $d = 128$. As with the other examples these are single-seed numbers that shift by a few times $10^{-2}$ between launches, so the reproducible finding is the widening OTFlow-over-CNF ordering, not the third decimal.
+Pushed out to $d = 128$, the two flows start essentially tied at low dimension ($\approx 0.97$ at $d = 4$) and then separate: from $d = 8$ onward OTFlow stays above the CNF, and while both lose ESS as the dimension climbs, the CNF falls faster — from $0.97$ down to $0.43$ at $d = 128$, versus OTFlow's $0.97 \to 0.59$. The advantage grows with dimension (already $0.74$ vs $0.85$ at $d = 64$), so OTFlow's closed-form-trace / potential-gradient parameterisation is markedly more dimension-robust than the CNF's free-form velocity — the mode-seeking CNF's importance weights spike sooner as the ambient dimension grows. The high-dimensional cells converge slowly and use the full $1000$-step budget; per-cell wall time is tens of seconds and grows with $d$, the CNF's $O(d)$ exact trace closing most of the cost gap to OTFlow by $d = 128$. As with the other examples these are single-seed numbers that shift by a few times $10^{-2}$ between launches, so the reproducible finding is the widening high-dimensional OTFlow-over-CNF ordering, not the third decimal.
 
 ## flow_scaling_law — forward vs inverse map latency
 

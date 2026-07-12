@@ -120,6 +120,46 @@ def main() -> None:
     k1, k2, k3, k4 = jax.random.split(kf, 4)
     box = jnp.asarray([BOX, BOX])
 
+    # Exact OTFlow.zeros() is a true identity, but A=0 is necessarily an
+    # absorbing point for the PSD factor A.T@A. near_identity() preserves the
+    # same pytree/checkpoint layout while seeding a numerically invisible,
+    # trainable quadratic head.
+    ot_base = OTFlow(k4, dimension=2, hidden=32, layer=3, rank=3, nt=8)
+    ot_zero = ot_base.zeros()
+    ot_near = ot_base.near_identity()
+    x_probe = sample_normal(jax.random.key(41))
+    grad_zero = eqx.filter_grad(
+        lambda f: reverse_KL_F(x_probe, TARGET, f).mean()
+    )(ot_zero)
+    grad_near = eqx.filter_grad(
+        lambda f: reverse_KL_F(x_probe, TARGET, f).mean()
+    )(ot_near)
+    check_true(
+        "OTFlow exact identity has the documented dormant A head",
+        float(jnp.linalg.norm(grad_zero._ot.phi.A)) == 0.0,
+    )
+    check_true(
+        "OTFlow near identity wakes the A head",
+        float(jnp.linalg.norm(grad_near._ot.phi.A)) > 0.0,
+        f"|grad A| = {float(jnp.linalg.norm(grad_near._ot.phi.A)):.3e}",
+    )
+    check_true(
+        "OTFlow near identity is numerically the identity",
+        float(jnp.max(jnp.abs(ot_near(x_probe) - x_probe))) < 1e-5,
+        f"max move {float(jnp.max(jnp.abs(ot_near(x_probe) - x_probe))):.3e}",
+    )
+    check_true(
+        "OTFlow near identity preserves checkpoint leaf shapes",
+        [x.shape for x in jax.tree.leaves(ot_near)]
+        == [x.shape for x in jax.tree.leaves(ot_base)],
+    )
+    for bad_eps in (0.0, -1e-6, float("nan"), float("inf")):
+        try:
+            ot_base.near_identity(bad_eps)
+            check_true(f"OTFlow rejects quadratic_eps={bad_eps!r}", False)
+        except ValueError:
+            check_true(f"OTFlow rejects quadratic_eps={bad_eps!r}", True)
+
     flows = [
         ("NSF", NSF(k1, -box, box, bins=8, transforms=3, hidden_features=(48, 48)),
          sample_uniform),
@@ -127,8 +167,7 @@ def main() -> None:
                                  hidden_features=(48, 48)), sample_normal),
         ("CNF", CNF(k3, dimension=2, frequency=3, nt=8, hidden_features=(48, 48)),
          sample_normal),
-        ("OTFlow", OTFlow(k4, dimension=2, hidden=32, layer=3, rank=3, nt=8),
-         sample_normal),
+        ("OTFlow", ot_near, sample_normal),
     ]
 
     curves: dict[str, np.ndarray] = {}

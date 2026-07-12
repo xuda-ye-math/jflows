@@ -580,7 +580,13 @@ class OTFlow(Flow):
 
         Zeros every head of the potential: the ResNet output weight `w`, the
         quadratic factor `A` (so AᵀA = 0), and the linear head `c`.
-        Returns a new flow (flows are immutable)."""
+        Returns a new flow (flows are immutable).
+
+        Because the PSD quadratic term is parameterized as AᵀA, exact A = 0
+        is an absorbing state for that one head. Use :meth:`near_identity`
+        for trainable OTFlow initialization; keep ``zeros()`` when an exact
+        identity map is required (for example, a Boltzmann fallback).
+        """
         return eqx.tree_at(
             lambda f: (
                 f._ot.phi.w.weight,
@@ -589,6 +595,46 @@ class OTFlow(Flow):
             ),
             self,
             replace_fn=jnp.zeros_like,
+        )
+
+    def near_identity(self, quadratic_eps: float = 1e-6) -> "OTFlow":
+        """Numerical identity with every OTFlow head able to train.
+
+        The ResNet and linear heads are zeroed as in :meth:`zeros`, while
+        the PSD factor keeps its constructor direction with Frobenius norm
+        ``quadratic_eps``. Thus AᵀA is of order ``quadratic_eps**2`` (below
+        ordinary float32 map resolution at the default) but its gradient is
+        nonzero. No pytree leaves or checkpoint shapes change.
+
+        Use this initializer for energy training of the full OTFlow model.
+        ``quadratic_eps`` must be finite and strictly positive.
+        """
+        if not (0.0 < quadratic_eps < float("inf")):
+            raise ValueError(
+                "OTFlow.near_identity: quadratic_eps must be finite and positive"
+            )
+        A = self._ot.phi.A
+        norm = jnp.linalg.norm(A)
+        valid = jnp.isfinite(norm) & (norm > 0)
+        direction = A / jnp.where(valid, norm, jnp.ones_like(norm))
+        fallback = jnp.eye(A.shape[0], A.shape[1], dtype=A.dtype)
+        fallback = fallback / jnp.linalg.norm(fallback)
+        direction = jnp.where(valid, direction, fallback)
+        A_seed = jax.lax.stop_gradient(
+            jnp.asarray(quadratic_eps, dtype=A.dtype) * direction
+        )
+        return eqx.tree_at(
+            lambda f: (
+                f._ot.phi.w.weight,
+                f._ot.phi.A,
+                f._ot.phi.c.weight,
+            ),
+            self,
+            (
+                jnp.zeros_like(self._ot.phi.w.weight),
+                A_seed,
+                jnp.zeros_like(self._ot.phi.c.weight),
+            ),
         )
 
 

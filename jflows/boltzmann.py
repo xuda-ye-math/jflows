@@ -77,6 +77,18 @@ def _iw_log_identity(samples, source, target, chunk=1):
     ], axis=0)
 
 
+def _trainable_identity(flow: Flow) -> Flow:
+    """Identity-like warm start after an exact identity fallback.
+
+    Ordinary flow families train normally from ``zeros()``. OTFlow's exact
+    zero PSD factor is absorbing, so its public ``near_identity()`` keeps the
+    next stage trainable while the selected stage map itself remains the exact
+    identity used for weighting, advancement, and records.
+    """
+    near_identity = getattr(flow, "near_identity", None)
+    return flow.zeros() if near_identity is None else near_identity()
+
+
 _smc_jit = eqx.filter_jit(sequential_monte_carlo)
 _langevin_jit = eqx.filter_jit(langevin)   # per-stage selection-pool rejuvenation
 
@@ -397,9 +409,11 @@ def boltzmann_reverse_KL_F(
             # identity check: keep the better of the trained flow and the
             # identity map (pure SMC), so a stage is never worse than SMC
             if ess_tr >= ess_id:
-                cand_flow, log_w, ess_k = cand, log_w_tr, ess_tr
+                stage_flow, next_flow, log_w, ess_k = cand, cand, log_w_tr, ess_tr
             else:
-                cand_flow, log_w, ess_k = identity_flow, log_w_id, ess_id
+                stage_flow, next_flow, log_w, ess_k = (
+                    identity_flow, _trainable_identity(flow), log_w_id, ess_id
+                )
             imp = ess_k - ess_id  # improvement over identity, always >= 0
             status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
                    f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f}; "
@@ -413,15 +427,15 @@ def boltzmann_reverse_KL_F(
             status(f"[stage {k}] gave up after {p['max_retry']} attempts "
                    f"(last t={t_k:.4f}, ESS = {ess_k:.3f}) — ladder INCOMPLETE")
             break
-        flow = cand_flow               # warm start (identity if the fallback won)
         # advance the particle set: push through the increment, reweight,
         # resample, and freshen with Langevin (MALA when mc_adjust) at U_{t_k}
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
-        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, flow, "F", u_k,
+        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, stage_flow, "F", u_k,
                               mc_step, mc_iters, mc_adjust, chunk)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage, not the next
-        stages.append({"t": t_k, "ess": ess_k, "flow": flow,
+        stages.append({"t": t_k, "ess": ess_k, "flow": stage_flow,
                        "ess_history": ess_hist, "imp_history": imp})
+        flow = next_flow
         status(f"[stage {k}] t={t_k:.4f} ACCEPTED (attempt {attempt}): "
                f"stage flow saved; particle set advanced")
         t_prev = t_k
@@ -577,9 +591,11 @@ def boltzmann_forward_KL_G(
             # identity check: keep the better of the trained flow and the
             # identity map (pure SMC), so a stage is never worse than SMC
             if ess_tr >= ess_id:
-                cand_flow, log_w, ess_k = cand, log_w_tr, ess_tr
+                stage_flow, next_flow, log_w, ess_k = cand, cand, log_w_tr, ess_tr
             else:
-                cand_flow, log_w, ess_k = identity_flow, log_w_id, ess_id
+                stage_flow, next_flow, log_w, ess_k = (
+                    identity_flow, _trainable_identity(flow), log_w_id, ess_id
+                )
             imp = ess_k - ess_id  # improvement over identity, always >= 0
             status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
                    f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f}; "
@@ -593,13 +609,13 @@ def boltzmann_forward_KL_G(
             status(f"[stage {k}] gave up after {p['max_retry']} attempts "
                    f"(last t={t_k:.4f}, ESS = {ess_k:.3f}) — ladder INCOMPLETE")
             break
-        flow = cand_flow               # warm start (identity if the fallback won)
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
-        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, flow, "G", u_k,
+        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, stage_flow, "G", u_k,
                               mc_step, mc_iters, mc_adjust, chunk)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage, not the next
-        stages.append({"t": t_k, "ess": ess_k, "flow": flow,
+        stages.append({"t": t_k, "ess": ess_k, "flow": stage_flow,
                        "ess_history": ess_hist, "imp_history": imp})
+        flow = next_flow
         status(f"[stage {k}] t={t_k:.4f} ACCEPTED (attempt {attempt}): stage flow saved")
         t_prev = t_k
     if t_prev < 1.0:
@@ -723,9 +739,11 @@ def boltzmann_forward_KLX_G(
             # identity check: keep the better of the trained flow and the
             # identity map (pure SMC), so a stage is never worse than SMC
             if ess_tr >= ess_id:
-                cand_flow, log_w, ess_k = cand, log_w_tr, ess_tr
+                stage_flow, next_flow, log_w, ess_k = cand, cand, log_w_tr, ess_tr
             else:
-                cand_flow, log_w, ess_k = identity_flow, log_w_id, ess_id
+                stage_flow, next_flow, log_w, ess_k = (
+                    identity_flow, _trainable_identity(flow), log_w_id, ess_id
+                )
             imp = ess_k - ess_id  # improvement over identity, always >= 0
             status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
                    f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f}; "
@@ -739,13 +757,13 @@ def boltzmann_forward_KLX_G(
             status(f"[stage {k}] gave up after {p['max_retry']} attempts "
                    f"(last t={t_k:.4f}, ESS = {ess_k:.3f}) — ladder INCOMPLETE")
             break
-        flow = cand_flow               # warm start (identity if the fallback won)
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
-        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, flow, "G", u_k,
+        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, stage_flow, "G", u_k,
                               mc_step, mc_iters, mc_adjust, chunk)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage, not the next
-        stages.append({"t": t_k, "ess": ess_k, "flow": flow,
+        stages.append({"t": t_k, "ess": ess_k, "flow": stage_flow,
                        "ess_history": ess_hist, "imp_history": imp})
+        flow = next_flow
         status(f"[stage {k}] t={t_k:.4f} ACCEPTED (attempt {attempt}): stage flow saved")
         t_prev = t_k
     if t_prev < 1.0:
@@ -810,6 +828,14 @@ def boltzmann_forward_KLXX_G(
     Output: as `boltzmann_forward_KL_G` — (y_valid, stages) with per-stage
             records {"t", "ess", "flow", "ess_history", "imp_history"}.
     """
+    if not (0.0 <= coeff_alpha < float("inf")):
+        raise ValueError(
+            "boltzmann_forward_KLXX_G: coeff_alpha must be finite and non-negative"
+        )
+    if not (0.0 <= coeff_beta < float("inf")):
+        raise ValueError(
+            "boltzmann_forward_KLXX_G: coeff_beta must be finite and non-negative"
+        )
     p = _bg_parameters("boltzmann_forward_KLXX_G", bg_param)
 
     status = monitor.printer if monitor is not None else print
@@ -885,9 +911,11 @@ def boltzmann_forward_KLXX_G(
             # identity check: keep the better of the trained flow and the
             # identity map (pure SMC), so a stage is never worse than SMC
             if ess_tr >= ess_id:
-                cand_flow, log_w, ess_k = cand, log_w_tr, ess_tr
+                stage_flow, next_flow, log_w, ess_k = cand, cand, log_w_tr, ess_tr
             else:
-                cand_flow, log_w, ess_k = identity_flow, log_w_id, ess_id
+                stage_flow, next_flow, log_w, ess_k = (
+                    identity_flow, _trainable_identity(flow), log_w_id, ess_id
+                )
             imp = ess_k - ess_id  # improvement over identity, always >= 0
             status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
                    f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f}; "
@@ -901,13 +929,13 @@ def boltzmann_forward_KLXX_G(
             status(f"[stage {k}] gave up after {p['max_retry']} attempts "
                    f"(last t={t_k:.4f}, ESS = {ess_k:.3f}) — ladder INCOMPLETE")
             break
-        flow = cand_flow               # warm start (identity if the fallback won)
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
-        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, flow, "G", u_k,
+        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, stage_flow, "G", u_k,
                               mc_step, mc_iters, mc_adjust, chunk)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage, not the next
-        stages.append({"t": t_k, "ess": ess_k, "flow": flow,
+        stages.append({"t": t_k, "ess": ess_k, "flow": stage_flow,
                        "ess_history": ess_hist, "imp_history": imp})
+        flow = next_flow
         status(f"[stage {k}] t={t_k:.4f} ACCEPTED (attempt {attempt}): stage flow saved")
         t_prev = t_k
     if t_prev < 1.0:
@@ -980,19 +1008,21 @@ def boltzmann_reverse_KL_F_fixed(
         # identity check: keep the better of the trained flow and the
         # identity map (pure SMC), so a stage is never worse than SMC
         if ess_tr >= ess_id:
-            cand_flow, log_w, ess_k = cand, log_w_tr, ess_tr
+            stage_flow, next_flow, log_w, ess_k = cand, cand, log_w_tr, ess_tr
         else:
-            cand_flow, log_w, ess_k = identity_flow, log_w_id, ess_id
+            stage_flow, next_flow, log_w, ess_k = (
+                identity_flow, _trainable_identity(flow), log_w_id, ess_id
+            )
         imp = ess_k - ess_id  # improvement over identity, always >= 0
         status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
                f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f})")
-        flow = cand_flow               # warm start (identity if the fallback won)
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
-        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, flow, "F", u_k,
+        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, stage_flow, "F", u_k,
                               mc_step, mc_iters, mc_adjust, chunk)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage
-        stages.append({"t": t_k, "ess": ess_k, "flow": flow,
+        stages.append({"t": t_k, "ess": ess_k, "flow": stage_flow,
                        "ess_history": ess_hist, "imp_history": imp})
+        flow = next_flow
         status(f"[stage {k}] t={t_k:.4f} DONE: stage flow saved; particle set advanced")
         t_prev = t_k
     status(f"boltzmann_reverse_KL_F_fixed: fixed ladder DONE "
@@ -1062,19 +1092,21 @@ def boltzmann_forward_KL_G_fixed(
         # identity check: keep the better of the trained flow and the
         # identity map (pure SMC), so a stage is never worse than SMC
         if ess_tr >= ess_id:
-            cand_flow, log_w, ess_k = cand, log_w_tr, ess_tr
+            stage_flow, next_flow, log_w, ess_k = cand, cand, log_w_tr, ess_tr
         else:
-            cand_flow, log_w, ess_k = identity_flow, log_w_id, ess_id
+            stage_flow, next_flow, log_w, ess_k = (
+                identity_flow, _trainable_identity(flow), log_w_id, ess_id
+            )
         imp = ess_k - ess_id  # improvement over identity, always >= 0
         status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
                f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f})")
-        flow = cand_flow               # warm start (identity if the fallback won)
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
-        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, flow, "G", u_k,
+        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, stage_flow, "G", u_k,
                               mc_step, mc_iters, mc_adjust, chunk)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage
-        stages.append({"t": t_k, "ess": ess_k, "flow": flow,
+        stages.append({"t": t_k, "ess": ess_k, "flow": stage_flow,
                        "ess_history": ess_hist, "imp_history": imp})
+        flow = next_flow
         status(f"[stage {k}] t={t_k:.4f} DONE: stage flow saved; particle set advanced")
         t_prev = t_k
     status(f"boltzmann_forward_KL_G_fixed: fixed ladder DONE "
@@ -1143,19 +1175,21 @@ def boltzmann_forward_KLX_G_fixed(
         # identity check: keep the better of the trained flow and the
         # identity map (pure SMC), so a stage is never worse than SMC
         if ess_tr >= ess_id:
-            cand_flow, log_w, ess_k = cand, log_w_tr, ess_tr
+            stage_flow, next_flow, log_w, ess_k = cand, cand, log_w_tr, ess_tr
         else:
-            cand_flow, log_w, ess_k = identity_flow, log_w_id, ess_id
+            stage_flow, next_flow, log_w, ess_k = (
+                identity_flow, _trainable_identity(flow), log_w_id, ess_id
+            )
         imp = ess_k - ess_id  # improvement over identity, always >= 0
         status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
                f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f})")
-        flow = cand_flow               # warm start (identity if the fallback won)
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
-        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, flow, "G", u_k,
+        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, stage_flow, "G", u_k,
                               mc_step, mc_iters, mc_adjust, chunk)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage
-        stages.append({"t": t_k, "ess": ess_k, "flow": flow,
+        stages.append({"t": t_k, "ess": ess_k, "flow": stage_flow,
                        "ess_history": ess_hist, "imp_history": imp})
+        flow = next_flow
         status(f"[stage {k}] t={t_k:.4f} DONE: stage flow saved; particle set advanced")
         t_prev = t_k
     status(f"boltzmann_forward_KLX_G_fixed: fixed ladder DONE "
@@ -1201,6 +1235,14 @@ def boltzmann_forward_KLXX_G_fixed(
             (strictly increasing in (0, 1], ideally ending at 1.0).
     Output: as `boltzmann_forward_KLXX_G` — (y_valid, stages).
     """
+    if not (0.0 <= coeff_alpha < float("inf")):
+        raise ValueError(
+            "boltzmann_forward_KLXX_G_fixed: coeff_alpha must be finite and non-negative"
+        )
+    if not (0.0 <= coeff_beta < float("inf")):
+        raise ValueError(
+            "boltzmann_forward_KLXX_G_fixed: coeff_beta must be finite and non-negative"
+        )
     t_list = _fixed_schedule("boltzmann_forward_KLXX_G_fixed", t_list)
 
     status = monitor.printer if monitor is not None else print
@@ -1233,19 +1275,21 @@ def boltzmann_forward_KLXX_G_fixed(
         # identity check: keep the better of the trained flow and the
         # identity map (pure SMC), so a stage is never worse than SMC
         if ess_tr >= ess_id:
-            cand_flow, log_w, ess_k = cand, log_w_tr, ess_tr
+            stage_flow, next_flow, log_w, ess_k = cand, cand, log_w_tr, ess_tr
         else:
-            cand_flow, log_w, ess_k = identity_flow, log_w_id, ess_id
+            stage_flow, next_flow, log_w, ess_k = (
+                identity_flow, _trainable_identity(flow), log_w_id, ess_id
+            )
         imp = ess_k - ess_id  # improvement over identity, always >= 0
         status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
                f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f})")
-        flow = cand_flow               # warm start (identity if the fallback won)
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
-        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, flow, "G", u_k,
+        y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, stage_flow, "G", u_k,
                               mc_step, mc_iters, mc_adjust, chunk)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage
-        stages.append({"t": t_k, "ess": ess_k, "flow": flow,
+        stages.append({"t": t_k, "ess": ess_k, "flow": stage_flow,
                        "ess_history": ess_hist, "imp_history": imp})
+        flow = next_flow
         status(f"[stage {k}] t={t_k:.4f} DONE: stage flow saved; particle set advanced")
         t_prev = t_k
     status(f"boltzmann_forward_KLXX_G_fixed: fixed ladder DONE "

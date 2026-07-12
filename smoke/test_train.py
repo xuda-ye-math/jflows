@@ -35,7 +35,7 @@ import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
 import numpy as np  # noqa: E402
 
-from jflows.flow import NSF  # noqa: E402
+from jflows.flow import NSF, OTFlow  # noqa: E402
 from jflows.loss import forward_KL_G, reverse_KL_F  # noqa: E402
 from jflows.potential import Nlog_Gaussian, Nlog_Gaussian_Mixture  # noqa: E402
 from jflows.train import (  # noqa: E402
@@ -180,6 +180,25 @@ def main() -> None:
     ess_full_G = float(compute_ESS(importance_weights(x_valid, u0, u1, flow_G, type="G")))
     check_true("final full-set ESS > 0.5", ess_full_G > 0.5, f"ESS = {ess_full_G:.4f}")
 
+    # Nonidentity finite-step warm start: the trainer must report the direct
+    # proposal ESS, not a weight reconstructed after an approximate ODE
+    # inverse round trip.
+    log("train_forward_KL_G direct ESS from an OTFlow warm start")
+    ode0 = OTFlow(
+        jax.random.key(21), dimension=2, hidden=16, layer=2, rank=3, nt=4
+    )
+    _, ess_ode = train_forward_KL_G(
+        x_valid, u0, u1, ode0, n_batch=N_BATCH, steps=1, lr=0.0,
+        ladder=3, mc_step=MC_STEP, mc_iters=0,
+    )
+    expected_ode0 = first_forward_proposal_ess(
+        x_valid, u0, u1, ode0, 2, 2
+    )
+    check(
+        "OTFlow step-1 ESS is the direct proposal ESS",
+        float(ess_ode[0]), expected_ode0, tol=1e-6,
+    )
+
     # ── train_forward_KLX_G ──
     log(f"train_forward_KLX_G (coeff_lambda = {COEFF_LAMBDA})")
     h0 = new_flow(jax.random.key(3))
@@ -262,6 +281,38 @@ def main() -> None:
                                     n_batch=N_BATCH, steps=20, lr=LR,
                                     mc_step=MC_STEP, mc_iters=MC_ITERS)
     check("monitor does not change training", max_param_delta(flow_M, flow_M0), 0.0, tol=0)
+
+    # coeff_alpha/beta are nonnegative resampling masses, not unrestricted
+    # loss scalars. Invalid values must fail before constructing the QT pool.
+    log("KLXX mixture-coefficient validation")
+    tiny = dict(
+        n_pool=32, n_batch=16, steps=1, lr=0.0, ladder=1,
+        melt=0.0, opt_step=0.1, opt_iters=0, mc_step=MC_STEP, mc_iters=0,
+    )
+    for name, alpha, beta in (
+        ("negative alpha", -0.1, 0.5),
+        ("negative beta", 0.5, -0.1),
+        ("NaN alpha", float("nan"), 0.5),
+        ("NaN beta", 0.5, float("nan")),
+        ("infinite alpha", float("inf"), 0.5),
+        ("infinite beta", 0.5, float("inf")),
+    ):
+        try:
+            train_forward_KLXX_G(
+                x_valid[:64], u0, u1, h0,
+                coeff_alpha=alpha, coeff_beta=beta, **tiny,
+            )
+            check_true(f"rejects {name}", False)
+        except ValueError:
+            check_true(f"rejects {name}", True)
+    _, ess_zero_mix = train_forward_KLXX_G(
+        x_valid[:64], u0, u1, h0,
+        coeff_alpha=0.0, coeff_beta=0.0, **tiny,
+    )
+    check_true(
+        "zero/zero mixture remains finite",
+        ess_zero_mix.shape == (1,) and bool(jnp.isfinite(ess_zero_mix).all()),
+    )
 
     if FAILURES:
         log(f"DONE — {FAILURES} FAILURE(S)")

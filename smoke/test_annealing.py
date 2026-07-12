@@ -28,6 +28,7 @@ import time
 
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
+import equinox as eqx  # noqa: E402
 import jax  # noqa: E402
 
 jax.config.update("jax_enable_x64", True)
@@ -35,7 +36,7 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 import numpy as np  # noqa: E402
 
-from jflows.flow import RealNVP  # noqa: E402
+from jflows.flow import CNF, OTFlow, RealNVP  # noqa: E402
 from jflows.potential import Nlog_Gaussian, Nlog_Gaussian_Mixture  # noqa: E402
 from jflows.utils import (  # noqa: E402
     ais,
@@ -97,6 +98,14 @@ def check_target_match(name: str, x, m_tol: float = 0.15) -> None:
     check_true(name, ok,
                f"|mean err| {m_err:.3f}, |var rel err| {v_err:.3f}, "
                f"mode-2 fraction {frac:.3f} (true {float(WEIGHTS[1]):.2f})")
+
+
+def as_float32(tree):
+    """Cast array parameters only; keep static architecture fields intact."""
+    return jax.tree.map(
+        lambda x: x.astype(jnp.float32) if eqx.is_inexact_array(x) else x,
+        tree,
+    )
 
 
 def main() -> None:
@@ -214,6 +223,113 @@ def main() -> None:
             expected,
             tol=1e-12,
         )
+
+    # Fixed-step continuous maps are only numerically invertible. Their
+    # level-one correction must therefore retain the ORIGINAL source sample
+    # and direct push Jacobian; a push -> inverse -> push round trip gives a
+    # different proposal weight. Exercise both directions in float32, an
+    # uneven chunk split, and a ladder above one.
+    log("direct first-level weights for finite-step flows (float32)")
+    source32 = Nlog_Gaussian(
+        jnp.asarray([0.0, 0.0], dtype=jnp.float32),
+        jnp.asarray([1.0, 1.0], dtype=jnp.float32),
+    )
+    target32 = Nlog_Gaussian(
+        jnp.asarray([0.5, -0.3], dtype=jnp.float32),
+        jnp.asarray([0.7, 1.4], dtype=jnp.float32),
+    )
+    probe32 = source32.samples(jax.random.key(61), 257)
+    otflow = as_float32(
+        OTFlow(
+            jax.random.key(62), dimension=2, hidden=16, layer=2,
+            rank=3, nt=4,
+        )
+    )
+    for offset, flow_type in enumerate(("F", "G")):
+        probe_key = jax.random.fold_in(jax.random.key(63), offset)
+        y_default = annealed_importance_sampling(
+            probe_key, probe32, source32, target32, otflow, flow_type,
+            ladder=3, iters=0, chunk=3,
+        )
+        y_optional, log_weight = annealed_importance_sampling(
+            probe_key, probe32, source32, target32, otflow, flow_type,
+            ladder=3, iters=0, chunk=3, return_initial_log_weights=True,
+        )
+        expected = importance_weights_log(
+            probe32, source32, target32, otflow, flow_type, chunk=3
+        )
+        check(
+            f"OTFlow {flow_type}: optional return preserves samples",
+            y_optional, y_default, tol=0.0,
+        )
+        check(
+            f"OTFlow {flow_type}: direct full proposal weights",
+            log_weight, expected, tol=2e-6,
+        )
+        check_true(
+            f"OTFlow {flow_type}: weights and ESS finite",
+            bool(jnp.isfinite(log_weight).all())
+            and bool(jnp.isfinite(compute_ESS_log(log_weight))),
+        )
+
+    # A stochastic CNF must use the level-one folded trace key in both the
+    # sampler and the independent importance-weight oracle.
+    cnf = as_float32(
+        CNF(
+            jax.random.key(64), dimension=2, frequency=2, nt=4,
+            exact=False, hidden_features=(12, 12),
+        )
+    )
+    trace_base = jax.random.key(65)
+    trace_level_1 = jax.random.fold_in(trace_base, 1)
+    for offset, flow_type in enumerate(("F", "G")):
+        probe_key = jax.random.fold_in(jax.random.key(66), offset)
+        y_default = annealed_importance_sampling(
+            probe_key, probe32, source32, target32, cnf, flow_type,
+            ladder=3, iters=0, chunk=3, trace_key=trace_base,
+        )
+        y_optional, log_weight = annealed_importance_sampling(
+            probe_key, probe32, source32, target32, cnf, flow_type,
+            ladder=3, iters=0, chunk=3, trace_key=trace_base,
+            return_initial_log_weights=True,
+        )
+        expected = importance_weights_log(
+            probe32, source32, target32, cnf, flow_type, chunk=3,
+            trace_key=trace_level_1,
+        )
+        check(
+            f"approx CNF {flow_type}: optional return preserves samples",
+            y_optional, y_default, tol=0.0,
+        )
+        check(
+            f"approx CNF {flow_type}: level-one trace-key weights",
+            log_weight, expected, tol=2e-6,
+        )
+
+    # Manual three-level composition gates the later-level refresh: level one
+    # uses direct weights, while levels two and three recompute the latent of
+    # the already resampled/rejuvenated particles.
+    manual_key = jax.random.key(67)
+    y_manual, ladj = otflow.call_and_ladj(probe32)
+    initial_weight = -target32(y_manual) + source32(probe32) + ladj
+    for k in range(1, 4):
+        if k == 1:
+            full_weight = initial_weight
+        else:
+            parts = []
+            for yc in jnp.array_split(y_manual, 3, axis=0):
+                xc = otflow.inv(yc)
+                _, ladj = otflow.call_and_ladj(xc)
+                parts.append(-target32(yc) + source32(xc) + ladj)
+            full_weight = jnp.concatenate(parts, axis=0)
+        key_r, key_l = jax.random.split(jax.random.fold_in(manual_key, k))
+        y_manual = resample(key_r, y_manual, jnp.exp(full_weight / 3 - jnp.max(full_weight / 3)))
+        y_manual = langevin(key_l, y_manual, target32, iters=0, chunk=3)
+    y_public = annealed_importance_sampling(
+        manual_key, probe32, source32, target32, otflow, "F",
+        ladder=3, iters=0, chunk=3,
+    )
+    check("OTFlow three-level manual composition", y_public, y_manual, tol=0.0)
 
     log("aliases")
     check_true("smc is sequential_monte_carlo", smc is sequential_monte_carlo)

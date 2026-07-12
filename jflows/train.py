@@ -708,6 +708,14 @@ def train_forward_KLXX_G(
         raise ValueError(f"train_forward_KLXX_G: g_clip must be non-negative, got {g_clip!r}")
     if e_clip != e_clip:
         raise ValueError("train_forward_KLXX_G: e_clip must not be NaN")
+    if not (0.0 <= coeff_alpha < float("inf")):
+        raise ValueError(
+            "train_forward_KLXX_G: coeff_alpha must be finite and non-negative"
+        )
+    if not (0.0 <= coeff_beta < float("inf")):
+        raise ValueError(
+            "train_forward_KLXX_G: coeff_beta must be finite and non-negative"
+        )
     key = jax.random.fold_in(jax.random.key(7), seed)  # driver-specific base stream
     N = x_valid.shape[0]
     params, static = eqx.partition(flow, eqx.is_inexact_array)

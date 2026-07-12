@@ -41,7 +41,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
-from jflows.potential import Nlog_Gaussian_Mixture, Nlog_Uniform  # noqa: E402
+from jflows.potential import (  # noqa: E402
+    Nlog_Gaussian_Mixture,
+    Nlog_Uniform,
+    linear_combination,
+    potential_from,
+)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG = os.path.join(HERE, "test_linear_combination.log")
@@ -116,6 +121,44 @@ def main() -> None:
     q_gmm = np.array(jnp.exp(-u1(grid)).reshape(n, n))
     q_gmm /= np.trapezoid(np.trapezoid(q_gmm, np.asarray(g), axis=1), np.asarray(g))
     check("endpoint c=1 == mixture", densities[-1], q_gmm, tol=1e-14)
+
+    # Exact zero coefficients remain in the pytree so a bridge can retune
+    # without recompilation. They must neutralize nonfinite hard-wall values
+    # without changing ordinary differentiation with respect to the scalar
+    # coefficient.
+    log("zero-coefficient nonfinite safety")
+    hard_wall = potential_from(
+        lambda x: jnp.where(x[:, 0] > 0.0, jnp.inf, x[:, 0] ** 2)
+    )
+    hard_x = jnp.asarray([[1.0, 0.0], [-1.0, 0.0]])
+    cancelled = hard_wall - hard_wall
+    check("hard-wall cancellation U - U", cancelled(hard_x), jnp.zeros(2), tol=0.0)
+    check(
+        "hard-wall cancellation under jit",
+        jax.jit(lambda x: cancelled(x))(hard_x), jnp.zeros(2), tol=0.0,
+    )
+    endpoint = linear_combination([hard_wall, u1], [0.0, 1.0])
+    check("hard-wall bridge endpoint", endpoint(hard_x), u1(hard_x), tol=1e-14)
+    active = linear_combination([hard_wall], [1.0])(hard_x)
+    check_true(
+        "nonzero hard-wall coefficient still propagates infinity",
+        bool(jnp.isposinf(active[0])) and bool(jnp.isfinite(active[1])),
+    )
+    finite_term = potential_from(lambda x: 2.0 + x[:, 0])
+    finite_value = finite_term(hard_x).sum()
+    coeff_grad = jax.grad(
+        lambda c: linear_combination([finite_term], [c])(hard_x).sum()
+    )(jnp.asarray(0.0))
+    check(
+        "finite zero-coefficient derivative is preserved",
+        coeff_grad, finite_value, tol=0.0,
+    )
+    check_true(
+        "cancellation keeps one merged zero-coefficient term",
+        len(cancelled.terms) == 1
+        and cancelled.terms[0] is hard_wall
+        and float(cancelled.coeffs[0]) == 0.0,
+    )
 
     log(f"rendering heatmaps -> {PNG}")
     vmax = max(q.max() for q in densities)

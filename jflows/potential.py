@@ -170,6 +170,20 @@ class _Linear_Combination(Potential):
         self.terms = tuple(terms)
         self.coeffs = coeffs
 
+    @staticmethod
+    def _scale(coeff: Array, value: Array) -> Array:
+        """Scale one term without allowing an exact zero times infinity.
+
+        Bridge endpoints and algebraic cancellations legitimately retain
+        zero coefficient leaves so their pytree structure stays fixed under
+        jit. Mask only a nonfinite value under an inactive coefficient; this
+        keeps hard-wall terms neutral without changing the derivative with
+        respect to a zero coefficient when the term value is finite.
+        """
+        inactive_nonfinite = (coeff == 0) & ~jnp.isfinite(value)
+        safe_value = jnp.where(inactive_nonfinite, jnp.zeros_like(value), value)
+        return coeff * safe_value
+
     def __call__(self, x: Array) -> Array:
         """
         Input:
@@ -177,9 +191,9 @@ class _Linear_Combination(Potential):
         Output:
             U(x): Array [N]
         """
-        out = self.coeffs[0] * self.terms[0](x)
+        out = self._scale(self.coeffs[0], self.terms[0](x))
         for k in range(1, len(self.terms)):
-            out = out + self.coeffs[k] * self.terms[k](x)
+            out = out + self._scale(self.coeffs[k], self.terms[k](x))
         return out
 
     def grad(self, x: Array) -> Array:
@@ -192,9 +206,9 @@ class _Linear_Combination(Potential):
         Output:
             grad U(x): Array [N, d]
         """
-        out = self.coeffs[0] * self.terms[0].grad(x)
+        out = self._scale(self.coeffs[0], self.terms[0].grad(x))
         for k in range(1, len(self.terms)):
-            out = out + self.coeffs[k] * self.terms[k].grad(x)
+            out = out + self._scale(self.coeffs[k], self.terms[k].grad(x))
         return out
 
 

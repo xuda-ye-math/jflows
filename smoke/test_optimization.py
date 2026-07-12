@@ -36,7 +36,11 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 import numpy as np  # noqa: E402
 
-from jflows.potential import Nlog_Gaussian, Nlog_Gaussian_Mixture  # noqa: E402
+from jflows.potential import (  # noqa: E402
+    Nlog_Gaussian,
+    Nlog_Gaussian_Mixture,
+    potential_from,
+)
 from jflows.utils import (  # noqa: E402
     adamw,
     adamw_init,
@@ -113,6 +117,75 @@ def main() -> None:
     check_true("armijo: mean energy non-increasing",
                all(b <= a + 1e-10 for a, b in zip(energies, energies[1:])),
                f"{energies[0]:.3f} -> {energies[-1]:.3f}")
+
+    # ── 2b. bounded Armijo exhaustion is a rejection, never an uphill step ──
+    log("strict bounded Armijo fallback")
+    quartic = potential_from(lambda x: (x ** 4).sum(axis=-1))
+    mixed0 = jnp.asarray([[0.1], [10.0]])
+    mixed_state = lbfgs_init(mixed0, quartic, memory=3)
+    mixed_next = lbfgs_step(mixed_state, quartic, step=1.0, armijo=True)
+    check_true(
+        "mixed acceptance: easy row moves",
+        bool(jnp.abs(mixed_next.x[0] - mixed0[0]).max() > 0),
+    )
+    check(
+        "mixed acceptance: exhausted row stays put",
+        mixed_next.x[1], mixed0[1], tol=0.0,
+    )
+    check_true(
+        "every accepted/fallback row is non-increasing",
+        bool(jnp.all(mixed_next.U <= mixed_state.U)),
+        f"U {np.asarray(mixed_state.U)} -> {np.asarray(mixed_next.U)}",
+    )
+    check("cached energy matches state", mixed_next.U, quartic(mixed_next.x), tol=0.0)
+    check_true(
+        "strict fallback state finite",
+        bool(jnp.isfinite(mixed_next.x).all())
+        and bool(jnp.isfinite(mixed_next.g).all()),
+    )
+
+    # The seventh trial is step/64. It rescues a moderately stiff row that
+    # fails every formerly evaluated trial through step/32.
+    stiff = potential_from(lambda x: 50.0 * (x ** 2).sum(axis=-1))
+    stiff0 = jnp.asarray([[1.0]])
+    stiff_state = lbfgs_init(stiff0, stiff, memory=3)
+    stiff_next = lbfgs_step(stiff_state, stiff, step=1.0, armijo=True)
+    check(
+        "seventh trial step/64 is evaluated and accepted",
+        stiff_next.x, jnp.asarray([[-0.5625]]), tol=1e-15,
+    )
+    check_true(
+        "seventh-trial recovery decreases energy",
+        bool(jnp.all(stiff_next.U < stiff_state.U)),
+    )
+
+    extreme = potential_from(lambda x: 500.0 * (x ** 2).sum(axis=-1))
+    extreme0 = jnp.asarray([[1.0]])
+    extreme_state = lbfgs_init(extreme0, extreme, memory=3)
+    extreme_next = lbfgs_step(extreme_state, extreme, step=1.0, armijo=True)
+    check(
+        "extreme exhaustion leaves particle unchanged",
+        extreme_next.x, extreme0, tol=0.0,
+    )
+    check(
+        "extreme exhaustion carries next untested step/128",
+        extreme_next.step_scale, jnp.asarray([1.0 / 128.0]), tol=0.0,
+    )
+    check("extreme cached energy remains consistent",
+          extreme_next.U, extreme(extreme_next.x), tol=0.0)
+    extreme_retry = lbfgs_step(extreme_next, extreme, step=1.0, armijo=True)
+    check_true(
+        "extreme row progresses on its next iteration",
+        bool(jnp.abs(extreme_retry.x - extreme_next.x).max() > 0),
+    )
+    check_true(
+        "extreme retry decreases energy",
+        bool(jnp.all(extreme_retry.U < extreme_next.U)),
+    )
+    check(
+        "accepted extreme retry resets Armijo scale",
+        extreme_retry.step_scale, jnp.ones(1), tol=0.0,
+    )
 
     # ── 3. loop == manual composition ──
     log("loop == lbfgs_init + lbfgs_step composition")

@@ -47,7 +47,8 @@ import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
 import numpy as np  # noqa: E402
 
-from jflows.flow import NSF  # noqa: E402
+import jflows.boltzmann as boltzmann_module  # noqa: E402
+from jflows.flow import NSF, OTFlow  # noqa: E402
 from jflows.potential import Nlog_Gaussian, Nlog_Gaussian_Mixture  # noqa: E402
 from jflows.train import Monitor  # noqa: E402
 from jflows.boltzmann import (  # noqa: E402
@@ -259,6 +260,52 @@ def main() -> None:
                    and set(s_probe[-1]) == {"t", "ess", "flow", "ess_history", "imp_history"}
                    and bool(jnp.isfinite(y_probe).all()))
 
+    # ── OTFlow identity fallback remains exact but the next warm start trains ──
+    log("OTFlow forced identity fallback warm start")
+    ot_inputs: list[float] = []
+    original_train = boltzmann_module.train_forward_KL_G
+    original_iw = boltzmann_module._iw_log_jit
+
+    def fake_train(*args, **kwargs):
+        flow_arg = args[3]
+        ot_inputs.append(float(jnp.linalg.norm(flow_arg._ot.phi.A)))
+        return flow_arg, jnp.zeros((int(args[5]),))
+
+    def force_bad_trained_weights(samples, source, target, flow, type, chunk=1):
+        del source, target, flow, type, chunk
+        return jnp.linspace(-20.0, 20.0, samples.shape[0])
+
+    try:
+        boltzmann_module.train_forward_KL_G = fake_train
+        boltzmann_module._iw_log_jit = force_bad_trained_weights
+        ot0 = OTFlow(jax.random.key(91), dimension=2, hidden=8,
+                     layer=2, rank=2, nt=2).near_identity()
+        ot_x = u0.samples(jax.random.key(92), 64)
+        _, ot_stages = boltzmann_module.boltzmann_forward_KL_G_fixed(
+            ot_x, u0, u0, ot0,
+            n_batch=16, steps=1, lr=0.0, ladder=1,
+            mc_step=MC_STEP, mc_iters=0, t_list=[0.5, 1.0],
+        )
+    finally:
+        boltzmann_module.train_forward_KL_G = original_train
+        boltzmann_module._iw_log_jit = original_iw
+
+    check_true(
+        "both OTFlow stage trainers receive a live quadratic head",
+        len(ot_inputs) == 2 and all(v > 0.0 for v in ot_inputs),
+        f"A norms = {ot_inputs}",
+    )
+    probe = jnp.asarray([[0.3, -0.7], [1.1, 0.2]])
+    exact_records = True
+    for record in ot_stages:
+        pushed, ladj = record["flow"].call_and_ladj(probe)
+        exact_records = exact_records and bool(jnp.array_equal(pushed, probe))
+        exact_records = exact_records and bool(jnp.array_equal(ladj, jnp.zeros(2)))
+    check_true(
+        "forced fallback records and advances with exact identities",
+        len(ot_stages) == 2 and exact_records,
+    )
+
     # ── monitoring ──
     log("monitoring")
     check_true("training lines observed", any("loss =" in ln for ln in lines))
@@ -275,6 +322,29 @@ def main() -> None:
             boltzmann_reverse_KL_F(x_valid, u0, u1, flow0,
                                    n_pool=N_POOL, n_batch=N_BATCH, steps=1, lr=LR,
                                    ladder=1, mc_step=MC_STEP, mc_iters=1, bg_param=bg)
+            check_true(f"rejects {name}", False)
+        except ValueError:
+            check_true(f"rejects {name}", True)
+
+    klxx_args = dict(
+        n_pool=32, n_batch=16, steps=1, lr=0.0, ladder=1,
+        melt=0.0, opt_step=0.1, opt_iters=0,
+        mc_step=MC_STEP, mc_iters=0,
+    )
+    for name, fn, extra in (
+        (
+            "adaptive KLXX negative mixture weight",
+            boltzmann_forward_KLXX_G,
+            {"coeff_alpha": -0.1, "bg_param": {"t_safe": 1.0}},
+        ),
+        (
+            "fixed KLXX infinite mixture weight",
+            boltzmann_forward_KLXX_G_fixed,
+            {"coeff_beta": float("inf"), "t_list": [1.0]},
+        ),
+    ):
+        try:
+            fn(x_valid[:64], u0, u1, flow0, **klxx_args, **extra)
             check_true(f"rejects {name}", False)
         except ValueError:
             check_true(f"rejects {name}", True)

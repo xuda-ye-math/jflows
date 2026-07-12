@@ -184,10 +184,13 @@ def annealed_importance_sampling(
     log|det J_F(x)| = -log|det J_G(y)|.
 
     Steps:
-      (0) y <- F(samples)                # push source samples to pi_0 = F_# mu_0
+      (0) (y, log|J_F|) <- F(samples)    # push source samples to pi_0
+          log w_full <- -target(y) + source(samples) + log|J_F|
       (1) for k = 1, ..., M:
-            x     <- F^{-1}(y)           # refresh the latent pre-images
-            log w <- (1/M) * (-target(y) + source(x) + log|det J_F(x)|)
+            if k > 1:
+                x <- F^{-1}(y)           # refresh after the previous move
+                log w_full <- -target(y) + source(x) + log|det J_F(x)|
+            log w <- (1/M) * log w_full
             y     <- resample(y, self-normalised w)
             y     <- langevin(y, target, ...)   # rejuvenate in mu_1
 
@@ -262,43 +265,53 @@ def annealed_importance_sampling(
             f"for N={samples.shape[0]}"
         )
     M = ladder
-    # (0) push the source samples through F to obtain pi_0 = F_# mu_0.
-    push = flow.__call__ if type == "F" else flow.inv
-    y = jnp.concatenate(
-        [push(xc) for xc in jnp.array_split(samples, chunk, axis=0)], axis=0
-    )
-    initial_log_weights = None
-    for k in range(1, M + 1):
-        # (1) incremental weights w(y) ** (1/M): refresh each particle's
-        #     latent pre-image x = F^{-1}(y) and reuse the
-        #     importance_weights_log rule, scaled by 1/M for one level.
-        parts = []
-        initial_parts = [] if k == 1 and return_initial_log_weights else None
-        flow_k = flow if trace_key is None else flow.with_trace_key(
+
+    def level_flow(k: int) -> Flow:
+        return flow if trace_key is None else flow.with_trace_key(
             jax.random.fold_in(trace_key, k)
         )
-        for yc in jnp.array_split(y, chunk, axis=0):
-            if type == "F":
-                xc = flow_k.inv(yc)                 # x = F^{-1}(y)
-                _, ladj = flow_k.call_and_ladj(xc)  # log|det J_F(x)|
-            else:
-                xc, ladj_G = flow_k.call_and_ladj(yc)  # x = G(y), log|det J_G(y)|
-                ladj = -ladj_G                       # log|det J_F(x)|
-            full_log_weight = -target(yc) + source(xc) + ladj
-            parts.append(full_log_weight / M)
-            if initial_parts is not None:
-                initial_parts.append(full_log_weight)
-        log_w = jnp.concatenate(parts, axis=0)
-        if initial_parts is not None:
-            initial_log_weights = jnp.concatenate(initial_parts, axis=0)
+
+    # (0) Push the ORIGINAL source particles and retain the matching
+    # Jacobian.  For finite-step continuous flows, numerically inverting y
+    # and pushing it again is not equivalent to evaluating the actual
+    # proposal F_#mu_0.  Level one therefore uses this direct pair both for
+    # its incremental correction and for the optional proposal diagnostic.
+    flow_1 = level_flow(1)
+    y_parts = []
+    initial_parts = []
+    for xc in jnp.array_split(samples, chunk, axis=0):
+        push = flow_1.call_and_ladj if type == "F" else flow_1.inv_and_ladj
+        yc, ladj = push(xc)
+        y_parts.append(yc)
+        initial_parts.append(-target(yc) + source(xc) + ladj)
+    y = jnp.concatenate(y_parts, axis=0)
+    initial_log_weights = jnp.concatenate(initial_parts, axis=0)
+
+    for k in range(1, M + 1):
+        # (1) Incremental weights w(y) ** (1/M). Level one reuses the
+        # direct proposal weights above. Later levels refresh each moved
+        # particle's latent pre-image and use that level's trace key.
+        if k == 1:
+            full_log_weight = initial_log_weights
+        else:
+            parts = []
+            flow_k = level_flow(k)
+            for yc in jnp.array_split(y, chunk, axis=0):
+                if type == "F":
+                    xc = flow_k.inv(yc)                 # x = F^{-1}(y)
+                    _, ladj = flow_k.call_and_ladj(xc)  # log|det J_F(x)|
+                else:
+                    xc, ladj_G = flow_k.call_and_ladj(yc)  # x = G(y), log|det J_G(y)|
+                    ladj = -ladj_G                       # log|det J_F(x)|
+                parts.append(-target(yc) + source(xc) + ladj)
+            full_log_weight = jnp.concatenate(parts, axis=0)
+        log_w = full_log_weight / M
         w = _linear_weights_from_log(log_w)
         # (2) resample onto high-weight particles, then rejuvenate in mu_1.
         key_r, key_l = jax.random.split(jax.random.fold_in(key, k))
         y = resample(key_r, y, w)
         y = langevin(key_l, y, target, step=step, iters=iters, adjust=adjust, taming=taming, chunk=chunk)
     if return_initial_log_weights:
-        if initial_log_weights is None:  # unreachable because ladder >= 1
-            raise RuntimeError("initial AIS proposal weights were not constructed")
         return y, initial_log_weights
     return y
 

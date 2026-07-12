@@ -51,6 +51,14 @@ x, ladj = flow.inv_and_ladj(y)    # inverse map & its log|det J|
 
 Because modules are immutable pytrees, `flow.zeros()` (and every training step) returns a new instance rather than mutating in place, and flows jit / vmap / grad like any other JAX value. `flow.t()` remains available as the advanced composition layer (it returns the underlying `ComposedTransform` for chaining transforms and custom pipelines); the high-level API never needs it.
 
+`OTFlow` has one special initialization constraint: its positive-semidefinite
+quadratic head is parameterized as $A^\top A$, so the exact identity
+`OTFlow.zeros()` necessarily leaves that head at the absorbing point $A=0$.
+Use `OTFlow(...).near_identity()` for energy training of the full model. It
+keeps the same pytree/checkpoint layout and seeds $\lVert A\rVert=10^{-6}$,
+making the map a numerical identity in float32 while preserving a nonzero
+gradient. Keep `zeros()` when an exact identity map is required.
+
 **Explicit PRNG keys.** There is no global seed in JAX: every random entry point — flow constructors, `Potential.samples`, `resample`, `langevin`, `hamiltonian_monte_carlo`, `sequential_monte_carlo`, `annealed_importance_sampling` — takes a `key` as its first argument.
 
 **Unified `Potential` class with a vector-space algebra.** Every energy function subclasses one `Potential` base (potentials are energies of $\mu \propto e^{-U}$; there are no temperature arguments). Define a custom potential by subclassing `Potential` and implementing `__call__`:
@@ -116,6 +124,10 @@ the matching intermediate bridge at each level. Flow-proposal
 weight per level but rejuvenates at the final target every time. This avoids
 flow-density derivatives inside MCMC, so it is a deliberately biased,
 score-free target surrogate rather than exact AIS/SMC.
+Its first correction is evaluated directly during the original source-to-target
+push (including the matching Jacobian); later levels refresh latent pre-images
+after resampling/rejuvenation. This distinction matters for fixed-step CNF and
+OTFlow maps, whose numerical inverse is approximate.
 
 `chunk` splits batches along dim 0 (statistically equivalent to `chunk=1`). The
 standalone importance-weight helper and the full-set weight evaluation used by
@@ -193,6 +205,34 @@ stage advancement, and fixed-shape flow operations retain the committed
 `filter_jit` treatment; retuned bridge coefficients are array leaves. The
 full-set importance-weight helper evaluates `chunk` partitions sequentially to
 bound peak memory.
+
+## Compatibility with zflows
+
+`jflows` is a mathematical JAX port, not a drop-in replacement for `zflows`.
+The main migration points are:
+
+- random operations take explicit key-first JAX PRNG arguments;
+- Equinox flows are immutable, so identity initialization must be rebound as
+  `flow = flow.zeros()`;
+- public losses, importance weights, and AIS take a `Flow`, not `flow.t()`;
+- losses return per-sample vectors and callers apply reductions explicitly;
+- temperature is represented by scaling potentials rather than by a `beta`
+  argument;
+- potential names, F/G dispatch, and checkpoint formats differ;
+- MCMC defaults to adjusted MALA, while zflows historically defaulted to ULA;
+- NCSF is a genuine torus flow with periodic conditioning and a shared seam
+  derivative, rather than the legacy raw-coordinate circular spline.
+
+Forward-trainer `ess_history` means proposal-to-target importance ESS on the
+source minibatch immediately before AIS correction. Histories from jflows
+before commit `f090ffa` used a post-AIS target-batch concentration statistic;
+commit `f090ffa` (still package version 0.1.0) instead reconstructed the
+pre-AIS proposal through a numerical inverse/forward round trip. Version 0.2.0
+evaluates that proposal directly during the original push, avoiding inverse
+integration error for CNF and OTFlow. These histories are not numerically
+interchangeable. Experiment artifacts should record the package version and
+commit and, for version 0.2.0 histories, the semantic tag
+`proposal_pre_ais_v1`.
 
 **Package layout.**
 

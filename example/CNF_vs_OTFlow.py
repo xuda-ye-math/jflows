@@ -103,9 +103,9 @@ def new_cnf(key, d):
 
 
 def new_otflow(key, d):
-    """OT-Flow at the identity map (closed-form trace; rank clamped to d + 1)."""
+    """OT-Flow near identity, with its PSD quadratic head trainable."""
     return OTFlow(key, dimension=d, hidden=HIDDEN, layer=LAYER,
-                  rank=min(RANK, d + 1), nt=NT).zeros()
+                  rank=min(RANK, d + 1), nt=NT).near_identity()
 
 
 def log(msg: str) -> None:
