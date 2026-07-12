@@ -12,7 +12,8 @@ separately from the generic flow properties (test_flow.py):
        identity-tail convention, unchanged);
     3. CircularRQSTransform (fixed parameters): 2B-periodicity,
        value continuity across the seam (mod 2B), and C¹ seam
-       continuity — slope/log-det limits agree from both sides;
+       continuity — including the exact left-endpoint value, derivative,
+       inverse derivative, and arbitrary-period representatives;
     4. full NCSF: domain preservation, circle round-trip, ladj vs
        autodiff slogdet, trainable (unpinned) seam density, and
        pushforward-density normalisation over the torus.
@@ -109,10 +110,36 @@ def main() -> None:
     check_true("circular: knot-derivative count == K + 1",
                rqs_circ.derivatives.shape[-1] == K + 1,
                f"shape {rqs_circ.derivatives.shape}")
+    index_probes = jnp.asarray([
+        rqs_circ.horizontal[0] - 1.0,
+        rqs_circ.horizontal[0],
+        rqs_circ.horizontal[3],
+        rqs_circ.horizontal[-1],
+        rqs_circ.horizontal[-1] + 1.0,
+    ])
+    check("first-knot fix preserves every other bin convention",
+          rqs_circ.searchsorted(rqs_circ.horizontal, index_probes),
+          jnp.asarray([0, 1, 3, K, K + 1]), tol=0)
     rqs_lin = MonotonicRQSTransform(w, h, dl[: K - 1], bound=PI, circular=False)
     check("non-circular: d_0 == d_K == 1 (NSF tails unchanged)",
           jnp.stack([rqs_lin.derivatives[0], rqs_lin.derivatives[-1]]),
           jnp.ones(2), tol=0)
+    left = jnp.asarray([-PI])
+    left_y, left_ladj = rqs_circ.call_and_ladj(left)
+    left_x, left_inverse_ladj = rqs_circ.inv.call_and_ladj(left_y)
+    check("circular: exact left endpoint value", left_y, left, tol=0)
+    check("circular: exact left endpoint log-slope", left_ladj,
+          jnp.log(rqs_circ.derivatives[:1]), tol=1e-12)
+    check("circular: exact left endpoint inverse", left_x, left, tol=0)
+    check("circular: exact inverse log-slope", left_inverse_ladj,
+          -left_ladj, tol=1e-12)
+    linear_edge_y, linear_edge_ladj = rqs_lin.call_and_ladj(
+        jnp.asarray([-PI, PI])
+    )
+    check("non-circular: exact boundary values unchanged", linear_edge_y,
+          jnp.asarray([-PI, PI]), tol=1e-12)
+    check("non-circular: exact boundary log-slopes remain zero",
+          linear_edge_ladj, jnp.zeros(2), tol=0)
 
     # ── 3. CircularRQSTransform with fixed parameters ──
     log("CircularRQSTransform (fixed parameters)")
@@ -132,6 +159,40 @@ def main() -> None:
     _, l_seam = T.call_and_ladj(jnp.asarray([PI - 1e-9]))
     check("seam log-slope == log d_0 (shared, learnable)",
           l_seam, jnp.log(rqs_circ.derivatives[..., :1]), tol=1e-6)
+    seam_representatives = jnp.asarray([-3 * PI, -PI, PI, 3 * PI])
+    seam_y, seam_ladj = T.call_and_ladj(seam_representatives)
+    seam_x, seam_inverse_ladj = T.inv.call_and_ladj(seam_y)
+    expected_seam_ladj = jnp.full_like(
+        seam_ladj, jnp.log(rqs_circ.derivatives[0])
+    )
+    check("exact seam representatives have one value", seam_y,
+          jnp.full_like(seam_y, -PI), tol=1e-12)
+    check("exact seam representatives have learned log-slope", seam_ladj,
+          expected_seam_ladj, tol=1e-12)
+    check("exact seam inverse returns canonical representative", seam_x,
+          jnp.full_like(seam_x, -PI), tol=1e-12)
+    check("exact seam inverse log-slope", seam_inverse_ladj,
+          -expected_seam_ladj, tol=1e-12)
+    seam_derivative = jax.grad(lambda value: T(value[None])[0])(jnp.asarray(-PI))
+    check("exact seam autodiff slope", seam_derivative,
+          rqs_circ.derivatives[0], tol=1e-12)
+    bound32 = jnp.asarray(np.pi, dtype=jnp.float32)
+    T32 = CircularRQSTransform(
+        w.astype(jnp.float32),
+        h.astype(jnp.float32),
+        dl.astype(jnp.float32),
+        bound=bound32,
+        slope=1e-3,
+    )
+    seam32 = jnp.asarray([-bound32, bound32], dtype=jnp.float32)
+    seam_y32, seam_ladj32 = T32.call_and_ladj(seam32)
+    expected_ladj32 = jnp.full_like(
+        seam_ladj32, jnp.log(T32.transforms[1].derivatives[0])
+    )
+    check("float32 exact seam values", seam_y32,
+          jnp.full_like(seam_y32, -bound32), tol=0)
+    check("float32 exact seam learned log-slope", seam_ladj32,
+          expected_ladj32, tol=1e-6)
 
     # ── 4. full NCSF ──
     log("NCSF (d=3, randmask=True)")
@@ -147,15 +208,27 @@ def main() -> None:
     _, logdet = jnp.linalg.slogdet(J)
     check("ladj vs slogdet", ladj, logdet, tol=1e-9)
 
-    # The exact points ±pi are a measure-zero searchsorted edge (identity by
-    # the out-of-domain mask), so the trainability statement is about the
-    # limit approaching the seam.
     eps = 1e-9
     seam = jnp.asarray([[PI - eps] * 3, [-PI + eps] * 3])
     _, ladj_seam = F.call_and_ladj(seam)
     check_true("seam density is trainable (lim ladj != 0 at seam)",
                bool(jnp.abs(ladj_seam).min() > 1e-3),
                f"ladj(seam∓eps) = {np.asarray(ladj_seam).round(4)}")
+    exact_seam = jnp.asarray(
+        [[-PI] * 3, [PI] * 3, [-3 * PI] * 3, [3 * PI] * 3]
+    )
+    exact_y, exact_ladj = F.call_and_ladj(exact_seam)
+    check("NCSF exact seam representative invariance",
+          wrap(exact_y - exact_y[:1]), jnp.zeros_like(exact_y), tol=1e-12)
+    check("NCSF exact seam log-density invariance", exact_ladj,
+          jnp.full_like(exact_ladj, exact_ladj[0]), tol=1e-12)
+    check("NCSF exact seam agrees with left limit", exact_ladj[:1],
+          ladj_seam[1:2], tol=1e-7)
+    exact_x, exact_inverse_ladj = F.inv.call_and_ladj(exact_y)
+    check("NCSF exact seam circle round-trip", wrap(exact_x - exact_seam),
+          jnp.zeros_like(exact_x), tol=1e-9)
+    check("NCSF exact seam inverse ladj", exact_inverse_ladj,
+          -exact_ladj, tol=1e-9)
 
     log("NCSF pushforward normalisation on the torus (d=2, 400x400 grid)")
     flow2 = NCSF(jax.random.key(9), [-float(PI)] * 2, [float(PI)] * 2, bins=K,

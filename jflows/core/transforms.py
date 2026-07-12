@@ -401,7 +401,13 @@ class MonotonicRQSTransform(Transform):
 
     @staticmethod
     def searchsorted(seq: Array, value: Array) -> Array:
-        return jnp.sum(seq < value[..., None], axis=-1)
+        # Strict comparison deliberately assigns an exact interior knot to
+        # its left bin.  At the first knot only, that convention would return
+        # zero and hence the out-of-domain sentinel bin -1.  Include exactly
+        # that valid left endpoint in bin 0 without changing interior-knot
+        # selection, the upper endpoint, or either identity tail.
+        index = jnp.sum(seq < value[..., None], axis=-1)
+        return jnp.where(value == seq[..., 0], 1, index)
 
     def __call__(self, x: Array) -> Array:
         k = self.searchsorted(self.horizontal, x) - 1
