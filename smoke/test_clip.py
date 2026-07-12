@@ -1,5 +1,5 @@
-"""Standalone energy/gradient clipping smoke test (jflows only) — run from
-the repo root as `conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m smoke.test_clip`.
+"""Standalone energy/gradient clipping smoke test (jflows only) — run after
+installation from the repo root as `python -m smoke.test_clip`.
 
 For the `e_clip` (energy screen) and `g_clip` (global gradient-norm clip)
 parameters of the forward training drivers (`train_forward_KL_G`,

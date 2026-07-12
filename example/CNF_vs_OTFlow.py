@@ -15,7 +15,7 @@ N_WELL independent double wells give 2**N_WELL modes; the Gaussian tail only
 raises the dimension. The wells are deliberately shallow (a low barrier) so
 mode-seeking reverse KL does not collapse onto a subset of the modes.
 
-Run from the repo root:  conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m example.CNF_vs_OTFlow
+Run after installation from the repo root:  python -m example.CNF_vs_OTFlow
 """
 
 import csv

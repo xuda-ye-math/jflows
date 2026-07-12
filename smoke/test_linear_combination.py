@@ -1,6 +1,6 @@
 """Standalone linear_combination test with a visual bridge (jflows only) —
-run from the repo root as
-`conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m smoke.test_linear_combination`.
+run after installation from the repo root as
+`python -m smoke.test_linear_combination`.
 
 Builds the annealing bridge U_c = (1 - c) * U_uniform + c * U_gmm in 2D
 with the potential algebra, checks it quantitatively at every level, and

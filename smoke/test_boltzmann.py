@@ -1,5 +1,5 @@
-"""Standalone Boltzmann-generator smoke test (jflows only) — run from
-the repo root as `conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m smoke.test_boltzmann`.
+"""Standalone Boltzmann-generator smoke test (jflows only) — run after
+installation from the repo root as `python -m smoke.test_boltzmann`.
 
 For boltzmann_reverse_KL_F (the adaptive-ladder annealed BG):
 

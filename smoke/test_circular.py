@@ -1,5 +1,5 @@
-"""Standalone circular-boundary test (jflows only) —
-run from the repo root as `conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m smoke.test_circular`.
+"""Standalone circular-boundary test (jflows only) — run after installation
+from the repo root as `python -m smoke.test_circular`.
 
 Tests the periodic boundary conditions of the circular machinery
 separately from the generic flow properties (test_flow.py):

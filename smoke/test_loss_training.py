@@ -1,5 +1,5 @@
-"""Standalone loss-training smoke test (jflows only) — run from the repo
-root as `conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m smoke.test_loss_training`.
+"""Standalone loss-training smoke test (jflows only) — run after installation
+from the repo root as `python -m smoke.test_loss_training`.
 
 Trains four flow architectures on the SAME 2D three-mode Gaussian-mixture
 target with the per-sample `reverse_KL_F` loss (mean-reduced at the call

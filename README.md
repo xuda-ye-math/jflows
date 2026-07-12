@@ -220,27 +220,17 @@ cd "$HOME/src/jflows"
 pip install -e .
 ```
 
-### Maintainer live-source runs
-
-On the project workstation, do not perform the editable installation above.
-Development and test runs use the canonical checkout directly through
-`PYTHONPATH`; local edits then take effect on the next Python process:
+Verify the editable source provenance explicitly:
 
 ```bash
-PYTHONPATH=/mnt/projects/jflows python your_script.py
-```
-
-Verify the live-source provenance explicitly:
-
-```bash
-PYTHONPATH=/mnt/projects/jflows python -c \
+python -c \
   "from pathlib import Path; import jflows; print(Path(jflows.__file__).resolve())"
 ```
 
 Repository examples and smoke modules use the same pattern:
 
 ```bash
-PYTHONPATH=/mnt/projects/jflows python -m smoke.test_flow
+python -m smoke.test_flow
 ```
 
 **Importing.** Use the public submodules `flow`, `potential`, `loss`, `train`,

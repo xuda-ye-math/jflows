@@ -1,5 +1,5 @@
-"""Standalone potential smoke test (jflows only) —
-run from the repo root as `conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m smoke.test_potential`.
+"""Standalone potential smoke test (jflows only) — run after installation
+from the repo root as `python -m smoke.test_potential`.
 
 For Nlog_Uniform, Nlog_Gaussian, Nlog_Gaussian_Mixture, and potential_from:
 

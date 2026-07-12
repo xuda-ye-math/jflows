@@ -22,7 +22,7 @@ c_k = k / 12 schedule of the original:
 Both advance the particle set by reweight -> resample -> MALA and are
 compared row by row in the figure (top: reverse KL; bottom: forward KL).
 
-Run from the repo root:  conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m example.4D_boltzmann
+Run after installation from the repo root:  python -m example.4D_boltzmann
 """
 
 import os

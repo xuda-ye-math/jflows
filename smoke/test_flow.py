@@ -1,5 +1,5 @@
-"""Standalone flow smoke test (jflows only) —
-run with conda activate jflows && PYTHONPATH=/mnt/projects/jflows python.
+"""Standalone flow smoke test (jflows only) — run after installation from
+the repo root as `python -m smoke.test_flow`.
 
 For every public flow class (NSF, NCSF, CNF, OTFlow, RealNVP incl. both
 mixing kinds), on random inputs:

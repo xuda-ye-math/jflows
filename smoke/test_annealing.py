@@ -1,5 +1,5 @@
-"""Standalone annealing smoke test (jflows only) — run from the repo
-root as `conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m smoke.test_annealing`.
+"""Standalone annealing smoke test (jflows only) — run after installation
+from the repo root as `python -m smoke.test_annealing`.
 
 For sequential_monte_carlo / annealed_importance_sampling (type='F'/'G'):
 

@@ -1,5 +1,5 @@
-"""Standalone optimization smoke test (jflows only) — run from the repo
-root as `conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m smoke.test_optimization`.
+"""Standalone optimization smoke test (jflows only) — run after installation
+from the repo root as `python -m smoke.test_optimization`.
 
 For lbfgs / lbfgs_init / lbfgs_step / LBFGS_State (and the adamw
 counterparts, section 7):

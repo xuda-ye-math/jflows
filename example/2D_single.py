@@ -22,7 +22,7 @@ N_BATCH training data inside every Adam step, so no frozen batch is ever
 reused; the final ESS is computed on the full N_VALID set through the
 flow importance weights.
 
-Run from the repo root:  conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m example.2D_single
+Run after installation from the repo root:  python -m example.2D_single
 """
 
 import os
