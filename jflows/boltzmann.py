@@ -134,12 +134,12 @@ def boltzmann_reverse_KL_F(
     distribution mu_{t_{k-1}} to the next bridge mu_{t_k} — each stage
     only ever learns a small deformation. Stage k runs
 
-        1. selection:       when tau_smc > 0, a `ladder`-rung SMC check
+        1. selection:       when tau_smc > 0, a `ladder`-level SMC check
                             from U_{t_{k-1}} to the candidate bridge on an
                             `n_pool`-sized selection pool — drawn with
                             replacement from the particle set and
                             Langevin-rejuvenated at U_{t_{k-1}} — shrinks
-                            t_k until its MINIMUM per-rung ESS clears
+                            t_k until its MINIMUM per-level ESS clears
                             tau_smc (at most 60 shrinks, as in the
                             reference adaptive_step) — SMC is far cheaper
                             than a training attempt, so the gate filters
@@ -195,8 +195,8 @@ def boltzmann_reverse_KL_F(
         n_batch:  int            samples drawn from the particle set per Adam step
         steps:    int            Adam steps per stage attempt
         lr:       float          Adam learning rate
-        ladder:   int            SMC rungs of the tau_smc selection gate (the
-                                 gate accepts on the minimum per-rung ESS)
+        ladder:   int            SMC levels of the tau_smc selection gate (the
+                                 gate accepts on the minimum per-level ESS)
         mc_step:  float          Langevin step size (batch rejuvenation inside
                                  training, the SMC gate, AND the particle-set
                                  advance)
@@ -280,7 +280,7 @@ def boltzmann_reverse_KL_F(
         # adaptive_step): the gate runs on an n_pool-sized pool drawn with
         # replacement from the particle set and rejuvenated at U_{t_{k-1}}
         # (the set is exact mu_0 at t = 0); shrink t_k until the pool's
-        # minimum per-rung SMC ESS clears tau_smc
+        # minimum per-level SMC ESS clears tau_smc
         if p["tau_smc"] > 0.0:
             key_pool, key_mc_pool = jax.random.split(jax.random.fold_in(key, 20_000 + k))
             pool = y_valid[jax.random.randint(key_pool, (n_pool,), 0, y_valid.shape[0])]
@@ -387,16 +387,16 @@ def boltzmann_forward_KL_G(
     warm-started flow as the INCREMENTAL map from the current particle
     distribution mu_{t_{k-1}} to the next bridge mu_{t_k}. Stage k runs
 
-        1. selection:       when tau_smc > 0, a `ladder`-rung SMC check
+        1. selection:       when tau_smc > 0, a `ladder`-level SMC check
                             from U_{t_{k-1}} to the candidate bridge on an
                             `n_pool`-sized selection pool drawn from the
                             particle set shrinks t_k until its MINIMUM
-                            per-rung ESS clears tau_smc (at most 60 shrinks);
+                            per-level ESS clears tau_smc (at most 60 shrinks);
         2. training:        `train_forward_KL_G(y, U_{t_{k-1}}, U_{t_k},
                             flow, ...)` — each Adam step draws an
                             `n_batch` subset of the particle set and
                             manufactures its target batch by
-                            `ladder`-rung AIS through the CURRENT flow
+                            `ladder`-level AIS through the CURRENT flow
                             (SMC gate and AIS share the same `ladder`);
         3. ESS evaluation:  incremental importance-sampling ESS of the
                             trained increment over the full particle

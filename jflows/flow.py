@@ -8,6 +8,8 @@ Public API:
     OTFlow            — Optimal-transport continuous flow on R^d (closed-form trace)
     RealNVP           — affine-coupling flow on R^d
     ComposedTransform — re-exported from .core.transforms
+    Transform / MonotonicRQSTransform / CircularRQSTransform — stable
+                        primitives used by companion flow packages
 
 All flows assume context = 0, i.e. one fixed target. NSF and NCSF
 parameterise their inner spline on per-coordinate
@@ -43,10 +45,22 @@ from .core.transforms import (
     AdditiveTransform,
     ComposedTransform,
     MonotonicRQSTransform,
+    Transform,
 )
 
 
-__all__ = ["CNF", "ComposedTransform", "Flow", "NCSF", "NSF", "OTFlow", "RealNVP"]
+__all__ = [
+    "CNF",
+    "CircularRQSTransform",
+    "ComposedTransform",
+    "Flow",
+    "MonotonicRQSTransform",
+    "NCSF",
+    "NSF",
+    "OTFlow",
+    "RealNVP",
+    "Transform",
+]
 
 
 class Flow(eqx.Module):

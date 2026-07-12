@@ -69,7 +69,7 @@ u = linear_combination([u1, u0], [t, 1.0 - t])   # U_t = (1-t) U0 + t U1
 
 Coefficients are a plain array leaf, so retuning `t` along an annealing ladder never triggers recompilation.
 
-**A strict interface hierarchy.** The API has three levels. The LOW level is the building blocks — per-sample losses and the SMC toolkit — for assembling custom pipelines. The MEDIUM level — the packed training drivers — composes those blocks into one-call stage trainers. The HIGH level — the annealed Boltzmann generator — chains the stage trainers into the full adaptive-ladder pipeline. Everything below is organized in that order.
+**A strict interface hierarchy.** The API has three levels. The LOW level is the building blocks — per-sample losses and the SMC toolkit — for assembling custom pipelines. The MEDIUM level — the stage-training drivers — composes those blocks into one-call trainers. The HIGH level — the annealed Boltzmann generator — chains the stage trainers into the full adaptive-ladder pipeline. Everything below is organized in that order.
 
 **Low level: per-sample KL losses.** Each loss fixes the flow direction its suffix names — `reverse_KL_F` applies the flow as the forward map F (source → target), `forward_KL_G` as the inverse map G (target → source) — so every loss is differentiated in its native direction and no inverse map ever enters training. Every loss returns the full per-sample vector, shape `[N]`, for post-hoc reweighting / clipping; reduce with `.mean()`:
 
@@ -80,7 +80,7 @@ loss = reverse_KL_F(x, target, flow).mean()   # source samples x, flow as F
 loss = forward_KL_G(y, source, flow).mean()   # target samples y, flow as G
 ```
 
-**Low level: the SMC toolkit.** `jflows.utils` provides the *propose → reweight → resample → rejuvenate* building blocks, each at two granularities — a packed loop for direct use and a per-step kernel for custom schedules:
+**Low level: the SMC toolkit.** `jflows.utils` provides the *propose → reweight → resample → rejuvenate* building blocks, with complete routines for direct use and per-step kernels for custom schedules:
 
 ```python
 from jflows.utils import (
@@ -100,9 +100,24 @@ ess   = compute_ESS_log(log_w)
 y     = ais(key, samples, source, target, flow, type="G", ladder=1, step=1e-3, iters=100)
 ```
 
-`chunk` splits batches along dim 0 to bound peak VRAM (statistically equivalent to `chunk=1`). There is no compile machinery to manage: everything is jit-friendly by construction, and `jax.jit` at the call site covers the rest.
+`sequential_monte_carlo` is classical potential-space SMC and rejuvenates at
+the matching intermediate bridge at each level. Flow-proposal
+`annealed_importance_sampling` uses one fraction of the proposal-to-target log
+weight per level but rejuvenates at the final target every time. This avoids
+flow-density derivatives inside MCMC, so it is a deliberately biased,
+score-free target surrogate rather than exact AIS/SMC.
 
-**Medium level: packed training drivers.** `jflows.train` packs a whole training stage — Adam on the flow's parameters, the full step loop under one `lax.scan` — into a single compiled call that regenerates its batch *inside every Adam step* (the X-regularization data pipeline: no frozen batch is ever reused, so a fixed sample set does not get memorized):
+`chunk` splits batches along dim 0 to bound peak VRAM (statistically equivalent
+to `chunk=1`). The full-set importance-weight helper used by the Boltzmann
+drivers evaluates those chunks sequentially so they do not all live in one XLA
+graph. Rejuvenation and optimizer routines retain their original compiled-scan
+implementations.
+
+**Medium level: training drivers.** Every `jflows.train` stage driver is
+`eqx.filter_jit`-compiled and runs all Adam steps in one `lax.scan`. Sampling,
+loss/gradient evaluation, and the Adam update remain in that compiled stage.
+Every step draws a new subset and regenerates its training data, so no frozen
+batch is reused:
 
 ```python
 from jflows.train import train_reverse_KL_F, train_forward_KL_G, Monitor
@@ -113,7 +128,7 @@ flow, ess = train_reverse_KL_F(x_valid, source, target, flow,
                                n_batch=2000, steps=200, lr=1e-3,
                                mc_step=1e-3, mc_iters=100)
 
-# forward KL: each step manufactures its target batch by single-rung AIS
+# forward KL: each step manufactures its target batch by one-level AIS
 # through the CURRENT flow (pushforward -> reweight -> resample -> Langevin;
 # flow fixed as G)
 flow, ess = train_forward_KL_G(x_valid, source, target, flow,
@@ -121,7 +136,10 @@ flow, ess = train_forward_KL_G(x_valid, source, target, flow,
                                ladder=1, mc_step=1e-3, mc_iters=100)
 ```
 
-Both drivers are deterministic (per-step keys derive from a fixed internal seed), compile once regardless of `steps`, and return the trained flow together with the per-step batch-ESS history. An optional `Monitor` reports live from inside the compiled loop:
+Both drivers are deterministic (per-step keys derive from a fixed internal
+seed). Each fixed configuration compiles as one stage call and returns the
+trained flow together with the per-step batch-ESS history. An optional
+`Monitor` reports from inside the compiled scan via `jax.debug.callback`:
 
 ```python
 flow, ess = train_reverse_KL_F(..., monitor=Monitor(every=10, prefix="[reverse KL] "))
@@ -155,10 +173,12 @@ y_valid, stages = boltzmann_reverse_KL_F(
 #           improvement over the identity fallback (max(0, trained - identity) ESS)
 ```
 
-The trainer, weight evaluation, and advance are `filter_jit`-compiled once for
-the whole ladder (retuned bridge coefficients are array leaves, so no
-recompilation), and a `chunk` argument bounds the full-set stage operations at
-large particle counts.
+The adaptive coefficient/retry loop stays in Python, while every accepted or
+rejected training attempt invokes one compiled stage scan. Selection SMC,
+stage advancement, and fixed-shape flow operations retain the committed
+`filter_jit` treatment; retuned bridge coefficients are array leaves. The
+full-set importance-weight helper evaluates `chunk` partitions sequentially to
+bound peak memory.
 
 **Package layout.**
 
@@ -187,34 +207,63 @@ jflows
 
 ## Installation
 
-`jflows` is pure Python; the runtime dependencies are [`jax`](https://docs.jax.dev) (install the CUDA build for GPU support, e.g. `pip install "jax[cuda13]"`), [`equinox`](https://github.com/patrick-kidger/equinox), and `numpy`.
+`jflows` is pure Python. The project convention uses one Conda environment:
+the molecular-science stack comes from conda-forge, while the current CUDA 13
+JAX stack comes from pip inside that environment.
 
 **1. Clone the repository.**
 
 ```bash
-git clone https://github.com/xuda-ye-math/jflows.git
-cd jflows
+mkdir -p "$HOME/src"
+git clone https://github.com/xuda-ye-math/jflows.git "$HOME/src/jflows"
+git clone https://github.com/xuda-ye-math/jflows_md.git "$HOME/src/jflows_md"
 ```
 
-**2. Install in editable mode.** Local edits take effect immediately:
+**2. Create the dependency environment.**
 
 ```bash
-pip install -e .
+conda create -n jflows -c conda-forge \
+  python=3.11 pip openmm parmed cuda-version=13.3
+conda activate jflows
+python -m pip install --upgrade \
+  "jax[cuda13]" equinox matplotlib
 ```
 
-**3. Verify the install.**
+**3. Register the live ML packages with Conda.** `conda develop` is provided
+by `conda-build`; it keeps imports connected to the source trees, so local
+edits take effect immediately:
 
 ```bash
-python -c "import jflows; print(jflows.__doc__)"
+conda activate jflows
+conda develop -n jflows "$HOME/src/jflows" "$HOME/src/jflows_md"
 ```
 
-**Importing.** Use the five submodules `flow`, `potential`, `loss`, `train`, `utils`, and call `help(foo_name)` to read the documents. For example:
+**4. Verify the live source trees.**
+
+```bash
+conda activate jflows
+python -c \
+  "from pathlib import Path; import jflows, jflows_md; print(Path(jflows.__file__).resolve()); print(Path(jflows_md.__file__).resolve())"
+```
+
+To leave an environment package-free, unregister both paths and use explicit
+`PYTHONPATH` only for individual experiment commands:
+
+```bash
+conda develop -u -n jflows "$HOME/src/jflows" "$HOME/src/jflows_md"
+PYTHONPATH="$HOME/src/jflows:$HOME/src/jflows_md" python molecular_driver.py
+```
+
+**Importing.** Use the public submodules `flow`, `potential`, `loss`, `train`,
+`boltzmann`, and `utils`, and call `help(foo_name)` to read the documents. For
+example:
 
 ```python
 from jflows.flow import NSF, RealNVP
 from jflows.potential import Potential, Nlog_Gaussian
 from jflows.loss import reverse_KL_F, forward_KL_G
 from jflows.train import train_reverse_KL_F, train_forward_KL_G, Monitor
+from jflows.boltzmann import boltzmann_reverse_KL_F
 from jflows.utils import importance_weights, compute_ESS, resample, langevin
 
 help(NSF)

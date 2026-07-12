@@ -1,5 +1,5 @@
 """Standalone rejuvenation smoke test (jflows only) — run from the repo
-root as `~/.envs/jax/bin/python -m smoke.test_rejuvenation`.
+root as `conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m smoke.test_rejuvenation`.
 
 For langevin / stochastic_heun / hamiltonian_monte_carlo and their
 low-level kernels:

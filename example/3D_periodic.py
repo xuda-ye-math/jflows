@@ -8,13 +8,13 @@ A von Mises ridge mixture on the 3-torus [-NCSF_LIM, NCSF_LIM]^3,
 sampled from the uniform source with BOTH objectives, each in one
 packed stage — reverse KL (`train_reverse_KL_F`) and forward KL
 (`train_forward_KL_G`, target data manufactured per Adam step
-by single-rung AIS) — followed by the same reweighting pipeline:
+by single-level AIS) — followed by the same reweighting pipeline:
 importance weights -> ESS -> multinomial resampling -> MALA
 rejuvenation at the target. The figure compares them side by side
 (left: reverse KL; right: forward KL). The periodic domain requires
 the NCSF (Neural Circular Spline Flow).
 
-Run from the repo root:  ~/.envs/jax/bin/python -m example.3D_periodic
+Run from the repo root:  conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m example.3D_periodic
 """
 
 import math
@@ -65,7 +65,7 @@ LR: float = 1e-3       # Adam learning rate
 MONITOR_EVERY: int = 20  # print loss + batch ESS every MONITOR_EVERY steps
 
 # Langevin rejuvenation (training batches + the post-resample refresh)
-LADDER: int = 1        # AIS rungs of the forward KL data manufacturing
+LADDER: int = 1        # AIS levels of the forward KL data manufacturing
 MC_STEP: float = 1e-3  # Langevin step size
 MC_ITERS: int = 100    # Langevin steps
 

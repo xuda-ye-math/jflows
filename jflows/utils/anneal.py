@@ -5,7 +5,7 @@ importance reweighting + `resample` (metrics) alternating with Langevin
 rejuvenation (rejuvenation), whose `taming` stabilizer is exposed here
 as well.
 
-Key convention: rung k (1-indexed) uses `fold_in(key, k)`, split into
+Key convention: level k (1-indexed) uses `fold_in(key, k)`, split into
 one resampling key and one rejuvenation key — so a manual composition of
 `resample` + `langevin` with the same derivation reproduces the loops.
 
@@ -56,13 +56,13 @@ def sequential_monte_carlo(
     `mu_1 ~ exp(-target)` (both on the SAME space, no flow) through a
     ladder of M = `ladder` linearly-interpolated bridge potentials,
     alternating importance reweighting (with multinomial resampling) and
-    Langevin rejuvenation **on each bridge** at every rung.
+    Langevin rejuvenation **on each bridge** at every level.
 
-    The bridge at rung k is the linear combination
+    The bridge at level k is the linear combination
         u_k(x) = (1 - k/M) * source(x) + (k/M) * target(x),   k = 0, ..., M,
     so u_0 = source (the distribution `samples` follow) and u_M = target.
     Built via `linear_combination([target, source], [k/M, 1 - k/M])`,
-    rebuilt each rung (same pytree structure — no recompile).
+    rebuilt each level (same pytree structure — no recompile).
 
     For each k = 1, ..., M, starting from particles x ~ exp(-u_{k-1}):
       1. Incremental self-normalised importance weights from u_{k-1} to u_k:
@@ -72,7 +72,7 @@ def sequential_monte_carlo(
       3. Langevin rejuvenation targeting exp(-u_k) — i.e. ON THE
          BRIDGE POTENTIAL u_k itself — for `iters` steps, with the tamed
          drift when `taming > 0`.
-    After the final rung the particles approximate exp(-target).
+    After the final level the particles approximate exp(-target).
 
     Contrast with `annealed_importance_sampling`, which uses a
     trained flow as the proposal and rejuvenates only in the final target
@@ -80,17 +80,17 @@ def sequential_monte_carlo(
     potential space, and Langevin runs on each intermediate `u_k`.
 
     Input:
-        key:     PRNG key (rung k uses fold_in(key, k), split into the
+        key:     PRNG key (level k uses fold_in(key, k), split into the
                  resampling and rejuvenation keys)
         samples: Array [N, d]   particles drawn from exp(-source)
         source:  Potential      source potential
         target:  Potential      target potential
-        ladder:  int            number of annealing rungs M (>= 1). M=1 is a
+        ladder:  int            number of annealing levels M (>= 1). M=1 is a
                                 single reweight + resample + Langevin hop
                                 straight from source to target; larger M
                                 bridges low-overlap source/target pairs.
-        step:    float          Langevin step size, shared across rungs
-        iters:   int            Langevin steps per rung
+        step:    float          Langevin step size, shared across levels
+        iters:   int            Langevin steps per level
         adjust:  bool           if True, MALA rejuvenation on each bridge
                                 (unbiased); if False, ULA (see `langevin`)
         taming:  float          if > 0, tamed Langevin drift
@@ -102,7 +102,7 @@ def sequential_monte_carlo(
                                 memory (statistically equivalent to chunk=1)
     Output:
         samples: Array [N, d]   particles approximating exp(-target)
-        ess:     Array [M]      per-rung effective sample size (in [0, 1]) of
+        ess:     Array [M]      per-level effective sample size (in [0, 1]) of
                                 the incremental importance weights, computed
                                 *before* resampling — a diagnostic of how well
                                 consecutive bridges overlap (close to 1 =
@@ -110,7 +110,7 @@ def sequential_monte_carlo(
     """
     M = ladder
     x = samples
-    ess = []  # per-rung effective sample size of the incremental weights
+    ess = []  # per-level effective sample size of the incremental weights
     for k in range(1, M + 1):
         c = k / M
         u_k = linear_combination([target, source], [c, 1.0 - c])
@@ -188,7 +188,7 @@ def annealed_importance_sampling(
     path, the `mu_1` kernel introduces no essential deviation.
 
     Input:
-        key:       PRNG key (rung k uses fold_in(key, k), split into the
+        key:       PRNG key (level k uses fold_in(key, k), split into the
                    resampling and rejuvenation keys)
         samples:   Array [N, d]      particles drawn from mu_0 (source space)
         source:    Potential         source potential U_0 = -log mu_0
@@ -196,11 +196,11 @@ def annealed_importance_sampling(
         flow:    Flow            the trained normalizing flow
         type:    str             'F' if the flow maps source -> target;
                                  'G' if it maps target -> source
-        ladder:    int               number of annealing rungs M (>= 1). M=1 is
+        ladder:    int               number of annealing levels M (>= 1). M=1 is
                                      a single reweight + resample + Langevin hop
                                      from the flow proposal to the target.
-        step:      float             Langevin step size, shared across rungs
-        iters:     int               Langevin steps per rung
+        step:      float             Langevin step size, shared across levels
+        iters:     int               Langevin steps per level
         adjust:    bool              if True, MALA rejuvenation in mu_1
                                      (unbiased); if False, ULA (see `langevin`)
         taming:    float             if > 0, tamed Langevin drift on the target
@@ -225,7 +225,7 @@ def annealed_importance_sampling(
     for k in range(1, M + 1):
         # (1) incremental weights w(y) ** (1/M): refresh each particle's
         #     latent pre-image x = F^{-1}(y) and reuse the
-        #     importance_weights_log rule, scaled by 1/M for one rung.
+        #     importance_weights_log rule, scaled by 1/M for one level.
         parts = []
         for yc in jnp.array_split(y, chunk, axis=0):
             if type == "F":

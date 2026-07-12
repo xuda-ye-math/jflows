@@ -1,19 +1,19 @@
 """Standalone linear_combination test with a visual bridge (jflows only) —
 run from the repo root as
-`~/.envs/jax/bin/python -m smoke_tests.test_linear_combination`.
+`conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m smoke.test_linear_combination`.
 
 Builds the annealing bridge U_c = (1 - c) * U_uniform + c * U_gmm in 2D
-with the potential algebra, checks it quantitatively at every rung, and
+with the potential algebra, checks it quantitatively at every level, and
 renders the normalized densities exp(-U_c) as a sequence of heatmaps
 (smoke_tests/test_linear_combination.png) so the uniform -> Gaussian-
 mixture transition is visible as a smooth concentration of mass.
 
 This is the standard temperature-annealed Boltzmann-generator setting:
 SMC / AIS anneal along exactly such a linear bridge of potentials, with
-the rung coefficient c retuned per rung (no recompile — the coefficients
+the level coefficient c retuned per level (no recompile — the coefficients
 are an array leaf).
 
-Checks per rung:
+Checks per level:
     1. algebra: U_c(x) == (1 - c) * U_uniform(x) + c * U_gmm(x);
     2. structure: two identity-merged terms, coeffs (1 - c, c);
     3. endpoints reproduce the pure potentials exactly;
@@ -49,7 +49,7 @@ PNG = os.path.join(HERE, "test_linear_combination.png")
 
 FAILURES = 0
 BOX = 4.0
-RUNGS = [0.0, 1 / 7, 2 / 7, 3 / 7, 4 / 7, 5 / 7, 6 / 7, 1.0]
+LEVELS = [0.0, 1 / 7, 2 / 7, 3 / 7, 4 / 7, 5 / 7, 6 / 7, 1.0]
 
 
 def log(msg: str) -> None:
@@ -92,9 +92,9 @@ def main() -> None:
     grid = jnp.stack(jnp.meshgrid(g, g, indexing="xy"), axis=-1).reshape(-1, 2)
     xs = jax.random.uniform(jax.random.key(0), (64, 2), minval=-BOX, maxval=BOX)
 
-    log(f"bridge U_c = (1 - c) * U_uniform + c * U_gmm, rungs c = {np.round(RUNGS, 3)}")
+    log(f"bridge U_c = (1 - c) * U_uniform + c * U_gmm, levels c = {np.round(LEVELS, 3)}")
     densities = []
-    for c in RUNGS:
+    for c in LEVELS:
         bridge = (1.0 - c) * u0 + c * u1
         check(f"c={c:.3f} algebra", bridge(xs), (1.0 - c) * u0(xs) + c * u1(xs), tol=1e-14)
         check_true(
@@ -120,7 +120,7 @@ def main() -> None:
     log(f"rendering heatmaps -> {PNG}")
     vmax = max(q.max() for q in densities)
     fig, axes = plt.subplots(2, 4, figsize=(14.5, 7.2), constrained_layout=True)
-    for ax, c, q in zip(axes.ravel(), RUNGS, densities):
+    for ax, c, q in zip(axes.ravel(), LEVELS, densities):
         im = ax.imshow(
             q, origin="lower", extent=[-BOX, BOX, -BOX, BOX],
             cmap="magma", vmin=0.0, vmax=vmax, interpolation="bilinear",

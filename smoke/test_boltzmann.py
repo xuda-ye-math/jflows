@@ -1,5 +1,5 @@
 """Standalone Boltzmann-generator smoke test (jflows only) — run from
-the repo root as `~/.envs/jax/bin/python -m smoke.test_boltzmann`.
+the repo root as `conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m smoke.test_boltzmann`.
 
 For boltzmann_reverse_KL_F (the adaptive-ladder annealed BG):
 
@@ -17,7 +17,7 @@ For boltzmann_reverse_KL_F (the adaptive-ladder annealed BG):
     6. validation and monitoring: the stage printer receives training,
        validation, and acceptance lines;
     7. tau_smc pre-selection: a gated ladder (tau_smc > 0, MALA,
-       ladder = 2) shrinks over-aggressive t_k via the multi-rung SMC
+       ladder = 2) shrinks over-aggressive t_k via the multi-level SMC
        check on an n_pool-sized selection pool and still completes,
        with [select] lines reported;
     8. boltzmann_forward_KL_G: the forward KL twin (per-step AIS through

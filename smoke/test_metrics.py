@@ -1,5 +1,5 @@
 """Standalone metrics smoke test (jflows only) — run from the repo root
-as `~/.envs/jax/bin/python -m smoke.test_metrics`.
+as `conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m smoke.test_metrics`.
 
 For compute_ESS / compute_ESS_log / importance_weights_* / resample:
 

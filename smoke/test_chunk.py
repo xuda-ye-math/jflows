@@ -1,5 +1,5 @@
 """Standalone chunking smoke test (jflows only) — run from the repo root
-as `~/.envs/jax/bin/python -m smoke.test_chunk`.
+as `conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m smoke.test_chunk`.
 
 For the chunked full-set evaluations (`importance_weights_log` and the
 eager per-chunk wrapper `_iw_log_jit` used by the Boltzmann drivers):

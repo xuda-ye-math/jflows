@@ -1,5 +1,5 @@
 """Standalone training-driver smoke test (jflows only) — run from the
-repo root as `~/.envs/jax/bin/python -m smoke.test_train`.
+repo root as `conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m smoke.test_train`.
 
 For train_reverse_KL_F / train_forward_KL_G / Monitor:
 
@@ -10,7 +10,7 @@ For train_reverse_KL_F / train_forward_KL_G / Monitor:
        deterministic (two identical calls agree bit-for-bit); the
        mc_adjust=True (MALA) path trains to finite parameters;
     3. train_forward_KL_G: same contract with the target batches
-       manufactured internally by single-rung AIS through the CURRENT
+       manufactured internally by single-level AIS through the CURRENT
        flow;
     4. train_forward_KLX_G: the X-regularized forward KL at a general
        coeff_lambda — same contract, deterministic;

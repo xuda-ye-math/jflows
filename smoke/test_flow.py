@@ -1,5 +1,5 @@
 """Standalone flow smoke test (jflows only) —
-run with ~/.envs/jax/bin/python.
+run with conda activate jflows && PYTHONPATH=/mnt/projects/jflows python.
 
 For every public flow class (NSF, NCSF, CNF, OTFlow, RealNVP incl. both
 mixing kinds), on random inputs:

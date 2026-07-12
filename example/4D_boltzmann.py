@@ -22,7 +22,7 @@ c_k = k / 12 schedule of the original:
 Both advance the particle set by reweight -> resample -> MALA and are
 compared row by row in the figure (top: reverse KL; bottom: forward KL).
 
-Run from the repo root:  ~/.envs/jax/bin/python -m example.4D_boltzmann
+Run from the repo root:  conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m example.4D_boltzmann
 """
 
 import os
@@ -76,7 +76,7 @@ LR: float = 1e-4       # Adam learning rate
 MONITOR_EVERY: int = 20  # print loss + batch ESS every MONITOR_EVERY steps
 
 # Langevin rejuvenation (training batches + the per-stage particle refresh)
-LADDER: int = 1        # SMC rungs of the tau_smc selection gate
+LADDER: int = 1        # SMC levels of the tau_smc selection gate
 MC_STEP: float = 1e-3  # Langevin rejuvenation step size
 MC_ITERS: int = 100    # Langevin rejuvenation steps (MALA default: rejects Coulomb-wall proposals)
 

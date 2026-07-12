@@ -1,11 +1,11 @@
 """Standalone annealing smoke test (jflows only) — run from the repo
-root as `~/.envs/jax/bin/python -m smoke.test_annealing`.
+root as `conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m smoke.test_annealing`.
 
 For sequential_monte_carlo / annealed_importance_sampling (type='F'/'G'):
 
     1. SMC transports a wide Gaussian onto a two-mode mixture: moments
        and mode proportions match the analytic target within Monte-Carlo
-       error; the per-rung ESS diagnostic lies in (0, 1] with a
+       error; the per-level ESS diagnostic lies in (0, 1] with a
        well-spaced ladder;
     2. loop == composition: SMC equals the manual
        reweight -> resample -> langevin chain with the documented key

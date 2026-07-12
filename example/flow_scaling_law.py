@@ -12,7 +12,7 @@ is autoregressive — d sequential coordinate solves — while the forward is a
 single parallel pass, so the inverse latency grows with dimension where the
 forward stays flat; this sweep traces that scaling from d = 4 to d = 128.
 
-Run from the repo root:  ~/.envs/jax/bin/python -m example.flow_scaling_law
+Run from the repo root:  conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m example.flow_scaling_law
 """
 
 import csv

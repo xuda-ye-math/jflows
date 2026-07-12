@@ -236,7 +236,7 @@ def linear_combination(
                     the plain average U(x) = (1/N) * sum_k U_k(x).
 
     Annealing bridges: retune by rebuilding
-    `linear_combination([u0, u1], [1 - c, c])` per rung, or replace the
+    `linear_combination([u0, u1], [1 - c, c])` per level, or replace the
     `.coeffs` leaf via `eqx.tree_at` with an array of the same dtype
     (plain `jnp.asarray([...])` matches — coefficients are stored with
     the default float dtype). Either way the pytree leaves keep the same

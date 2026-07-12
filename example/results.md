@@ -11,9 +11,9 @@ Single-stage flow training on a 2D three-mode target, comparing the reverse KL a
 - **Source** $\mu_0 \propto e^{-U_0}$: isotropic Gaussian, $U_0(x) = \lVert x\rVert^2 / (2\sigma^2)$, $\sigma = 2$.
 - **Target** $\mu_1 \propto e^{-U_1}$: three-mode Gaussian mixture placed like the Julia three-dot sign — equal weights, means $(0, 2.4)$, $(-2.2, -1.4)$, $(2.2, -1.4)$, per-coordinate variance $0.3$. The modes are separated by $\sim 8$ standard deviations, so a mode-seeking objective can lose mass while a mass-covering one should not.
 - **Flow**: NSF on $[-5, 5]^2$, 16 bins, 4 autoregressive transforms, $(64, 64)$ conditioners, identity-initialised (`zeros()`).
-- **Training**: one packed call per method — `N_VALID = 40000` fixed source set, `N_BATCH = 2000` per Adam step, `STEPS = 200`, `LR = 1e-3`, Langevin rejuvenation `MC_STEP = 1e-3`, `MC_ITERS = 100`, single-rung AIS (`LADDER = 1`).
+- **Training**: one packed call per method — `N_VALID = 40000` fixed source set, `N_BATCH = 2000` per Adam step, `STEPS = 200`, `LR = 1e-3`, Langevin rejuvenation `MC_STEP = 1e-3`, `MC_ITERS = 100`, single-level AIS (`LADDER = 1`).
 
-Both trainers regenerate their batch inside every Adam step. The reverse KL flow acts as $F$ (source → target, `train_reverse_KL_F`): each step draws an `N_BATCH` subset of the fixed set and freshens it with Langevin steps at the source. The forward KL flow acts as $G$ (target → source, `train_forward_KL_G`): each step manufactures its target batch by single-rung AIS through the *current* flow — pushforward, self-normalized reweighting, multinomial resampling, Langevin rejuvenation at the target. Neither objective touches the inverse map during training, and the final ESS is computed on the full fixed set through the flow importance weights.
+Both trainers regenerate their batch inside every Adam step. The reverse KL flow acts as $F$ (source → target, `train_reverse_KL_F`): each step draws an `N_BATCH` subset of the fixed set and freshens it with Langevin steps at the source. The forward KL flow acts as $G$ (target → source, `train_forward_KL_G`): each step manufactures its target batch by single-level AIS through the *current* flow — pushforward, self-normalized reweighting, multinomial resampling, Langevin rejuvenation at the target. Neither objective touches the inverse map during training, and the final ESS is computed on the full fixed set through the flow importance weights.
 
 ### Results
 
@@ -74,7 +74,7 @@ The 4D two-charge target, sampled by [`4D_boltzmann.py`](4D_boltzmann.py) with B
   $U_1(x) = a\,[(\lVert x_1\rVert^2 - r_0^2)^2 + (\lVert x_2\rVert^2 - r_0^2)^2] + q^2 / \sqrt{\lVert x_1 - x_2\rVert^2 + \varepsilon^2}$
   with $r_0 = 2$, $a = 1$, $q^2 = 4$, $\varepsilon = 10^{-3}$ (identical to the original).
 - **Flow**: NSF on $[-3, 3]^4$, 8 bins, 6 autoregressive transforms, $(64, 64)$ conditioners, identity-initialised.
-- **Boltzmann generators**: the stage flows are connected step by step — stage $k$ selects $t_k$ through the SMC gate (`tau_smc`, `LADDER = 1` rung, on an `N_POOL`-sized selection pool drawn from the particle set), trains the warm-started flow as the incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$ on the advancing particle set, accepts on the incremental importance-sampling ESS (`tau_ess`), and advances the set by reweight → resample → MALA at $U_{t_k}$ (`mc_adjust = True`; the Metropolis gate keeps the near-singular Coulomb tail out of the particle set). The reverse KL stages train on Langevin-freshened batches of the set; the forward KL stages train on target batches manufactured per Adam step by AIS through the current flow (SMC gate and AIS share `LADDER`). Parameters: `N_VALID = 120000`, `N_POOL = 24000`, `N_BATCH = 2000`, `STEPS = 500`, `LR = 1e-4`, MALA `1e-3 × 100`; ladder `t_safe = 0.2`, `shrink_factor = 0.7`, `enlarge_factor = 1.5`, `tau_smc = 0.2`, `tau_ess = 0.6`.
+- **Boltzmann generators**: the stage flows are connected step by step — stage $k$ selects $t_k$ through the SMC gate (`tau_smc`, `LADDER = 1` level, on an `N_POOL`-sized selection pool drawn from the particle set), trains the warm-started flow as the incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$ on the advancing particle set, accepts on the incremental importance-sampling ESS (`tau_ess`), and advances the set by reweight → resample → MALA at $U_{t_k}$ (`mc_adjust = True`; the Metropolis gate keeps the near-singular Coulomb tail out of the particle set). The reverse KL stages train on Langevin-freshened batches of the set; the forward KL stages train on target batches manufactured per Adam step by AIS through the current flow (SMC gate and AIS share `LADDER`). Parameters: `N_VALID = 120000`, `N_POOL = 24000`, `N_BATCH = 2000`, `STEPS = 500`, `LR = 1e-4`, MALA `1e-3 × 100`; ladder `t_safe = 0.2`, `shrink_factor = 0.7`, `enlarge_factor = 1.5`, `tau_smc = 0.2`, `tau_ess = 0.6`.
 
 ### Results
 
@@ -98,7 +98,7 @@ Both ladders reach $t = 1$ in four stages (~8-10 s each on the full 120000-parti
 
 </div>
 
-The accepted ESS is per stage the better of the trained flow and the identity map (pure SMC reweighting): after training, each stage keeps whichever has the higher incremental ESS, so a stage is never worse than SMC. Here the trained flow wins every rung except the forward run's last, where the identity fallback edges it ($0.996$ against the trained $0.986$).
+The accepted ESS is per stage the better of the trained flow and the identity map (pure SMC reweighting): after training, each stage keeps whichever has the higher incremental ESS, so a stage is never worse than SMC. Here the trained flow wins every level except the forward run's last, where the identity fallback edges it ($0.996$ against the trained $0.986$).
 
 <p align="center"><img src="4D_boltzmann.png" alt="4D Boltzmann generator" width="1000px"></p>
 
@@ -106,7 +106,7 @@ Each row (top: reverse KL; bottom: forward KL) shows the adaptive ladder ($t_k$ 
 
 ### Reading the result
 
-The ESS trace follows the reference behaviour of the original fixed-ladder run — a lower leading rung, then a high plateau — while the ESS-gated selection compresses the schedule: the leading increment is small (`t_safe`), the accepted step then grows by the enlarge factor, and the final extrapolation snaps to $t = 1$, so four or five stages cover what the fixed schedule spent twelve rungs on. The generator's sample output is the advanced particle set; the per-stage incremental flows and their acceptance ESS are returned in the stage records.
+The ESS trace follows the reference behaviour of the original fixed-ladder run — a lower leading level, then a high plateau — while the ESS-gated selection compresses the schedule: the leading increment is small (`t_safe`), the accepted step then grows by the enlarge factor, and the final extrapolation snaps to $t = 1$, so four or five stages cover what the fixed schedule spent twelve levels on. The generator's sample output is the advanced particle set; the per-stage incremental flows and their acceptance ESS are returned in the stage records.
 
 ## CNF_vs_OTFlow — continuous flows across dimension
 

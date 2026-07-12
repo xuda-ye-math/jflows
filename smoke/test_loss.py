@@ -1,5 +1,5 @@
 """Standalone loss smoke test (jflows only) —
-run from the repo root as `~/.envs/jax/bin/python -m smoke.test_loss`.
+run from the repo root as `conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m smoke.test_loss`.
 
 For reverse_KL_F / forward_KL_G and forward_KLX_G / forward_X_G:
 

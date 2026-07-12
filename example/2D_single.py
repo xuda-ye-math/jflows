@@ -11,7 +11,7 @@ differentiated in its native direction only):
                             source.
     forward KL            : the flow acts as G (target -> source);
                             `train_forward_KL_G` manufactures its target
-                            batch every Adam step by single-rung AIS
+                            batch every Adam step by single-level AIS
                             through the CURRENT flow (pushforward ->
                             reweight -> resample -> Langevin rejuvenation
                             at the target).
@@ -22,7 +22,7 @@ N_BATCH training data inside every Adam step, so no frozen batch is ever
 reused; the final ESS is computed on the full N_VALID set through the
 flow importance weights.
 
-Run from the repo root:  ~/.envs/jax/bin/python -m example.2D_single
+Run from the repo root:  conda activate jflows && PYTHONPATH=/mnt/projects/jflows python -m example.2D_single
 """
 
 import os
@@ -71,7 +71,7 @@ STEPS: int = 200       # Adam steps (one compiled call per method)
 LR: float = 1e-3       # Adam learning rate
 MONITOR_EVERY: int = 10  # print loss + batch ESS every MONITOR_EVERY steps
 
-# Langevin rejuvenation (reverse KL batches + the single-rung AIS)
+# Langevin rejuvenation (reverse KL batches + the single-level AIS)
 LADDER: int = 1        # one reweight + resample + rejuvenation hop
 MC_STEP: float = 1e-3  # Langevin rejuvenation step size
 MC_ITERS: int = 100    # Langevin rejuvenation steps per batch / AIS call

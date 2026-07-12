@@ -263,7 +263,7 @@ def train_forward_KL_G(
     The target samples y ~ mu_1 are manufactured internally: every Adam
     iteration draws a fresh `n_batch`-sized subset of `x_valid` (without
     replacement) and runs annealed importance sampling through the
-    CURRENT flow (`ladder` rungs, Langevin rejuvenation at the target
+    CURRENT flow (`ladder` levels, Langevin rejuvenation at the target
     with `mc_iters` steps of size `mc_step`). No gradient flows through
     the data generation; the flow is differentiated in its native G
     direction only (see `forward_KL_G`). Deterministic (no PRNG key): the
@@ -287,9 +287,9 @@ def train_forward_KL_G(
         n_batch:  int            samples drawn from the fixed set per Adam step
         steps:    int            number of Adam optimization steps
         lr:       float          Adam learning rate
-        ladder:   int            AIS rungs per manufactured batch
+        ladder:   int            AIS levels per manufactured batch
         mc_step:  float          Langevin rejuvenation step size
-        mc_iters: int            Langevin rejuvenation steps per rung
+        mc_iters: int            Langevin rejuvenation steps per level
         mc_adjust: bool          False: unadjusted ULA in the AIS
                                  rejuvenation; True: MALA (the Metropolis
                                  gate for near-singular targets)
@@ -396,7 +396,7 @@ def train_forward_KLX_G(
     The target samples y ~ mu_1 are manufactured internally: every Adam
     iteration draws a fresh `n_batch`-sized subset of `x_valid` (without
     replacement) and runs annealed importance sampling through the CURRENT
-    flow (`ladder` rungs, Langevin rejuvenation at the target with `mc_iters`
+    flow (`ladder` levels, Langevin rejuvenation at the target with `mc_iters`
     steps of size `mc_step`). No gradient flows through the data generation;
     the flow is differentiated in its native G direction only. Deterministic:
     the per-step keys (batch draw, AIS, permutation) derive from this driver's
@@ -418,9 +418,9 @@ def train_forward_KLX_G(
         n_batch:  int            samples drawn from the fixed set per Adam step
         steps:    int            number of Adam optimization steps
         lr:       float          Adam learning rate
-        ladder:   int            AIS rungs per manufactured batch
+        ladder:   int            AIS levels per manufactured batch
         mc_step:  float          Langevin rejuvenation step size
-        mc_iters: int            Langevin rejuvenation steps per rung
+        mc_iters: int            Langevin rejuvenation steps per level
         coeff_lambda: float      weight of the X functional term
         mc_adjust: bool          False: unadjusted ULA in the AIS
                                  rejuvenation; True: MALA (the Metropolis
@@ -537,7 +537,7 @@ def train_forward_KLXX_G(
 
     The three sampling measures are supplied as follows. The mu batch is
     manufactured per step exactly as in `train_forward_KLX_G`: a fresh
-    `n_batch`-sized subset of `x_valid` pushed by `ladder`-rung AIS through
+    `n_batch`-sized subset of `x_valid` pushed by `ladder`-level AIS through
     the CURRENT flow. The wide-coverage measure hat_mu is an `n_pool`-sized
     pool built ONCE per call by `quench_and_temper` on `n_pool` source
     samples (melt scale `melt`, armijo L-BFGS quench `opt_step` x
@@ -572,7 +572,7 @@ def train_forward_KLXX_G(
                                  batch alike)
         steps:    int            number of Adam optimization steps
         lr:       float          Adam learning rate
-        ladder:   int            AIS rungs per manufactured mu batch
+        ladder:   int            AIS levels per manufactured mu batch
         melt:     float          quench-and-temper melt scale (std of the
                                  Gaussian scatter)
         opt_step: float          L-BFGS trial alpha of the quench (armijo)
@@ -680,5 +680,4 @@ def train_forward_KLXX_G(
     ts = jnp.arange(1, steps + 1)  # traced step counter (per-step keys + bias correction)
     (params, _, _), ess = lax.scan(body, (params, m0, v0), ts)
     return eqx.combine(params, static), ess
-
 
