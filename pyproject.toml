@@ -41,6 +41,9 @@ dependencies = [
     "numpy>=2.0.0",
 ]
 
+[project.optional-dependencies]
+examples = ["matplotlib>=3.8"]
+
 [project.urls]
 Homepage = "https://github.com/xuda-ye-math/jflows"
 

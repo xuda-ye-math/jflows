@@ -163,6 +163,11 @@ def main() -> None:
         log(f"[{name}] ladder done in {time.time() - t0:.1f}s: "
             f"t = {[round(t, 4) for t in ts]}  ESS = {[round(s['ess'], 3) for s in stages]}  "
             f"({'COMPLETE' if ts and ts[-1] == 1.0 else 'INCOMPLETE'})")
+        if not ts or ts[-1] != 1.0:
+            raise RuntimeError(
+                f"{name} ladder stopped before the target; refusing to label or plot "
+                f"the particles as t=1 (last t={ts[-1] if ts else 0.0:.4f})"
+            )
         if stages:
             log(f"[{name}] stage ESS: min = {min(s['ess'] for s in stages):.4f}   "
                 f"last = {stages[-1]['ess']:.4f}   (N_VALID = {N_VALID})")

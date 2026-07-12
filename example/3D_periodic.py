@@ -1,4 +1,4 @@
-"""3D periodic target — single-stage reverse KL with reweighting.
+"""3D periodic target — single-stage reverse and forward KL with reweighting.
 
 A von Mises ridge mixture on the 3-torus [-NCSF_LIM, NCSF_LIM]^3,
 
@@ -151,7 +151,8 @@ def main() -> None:
     for col, (name, color) in enumerate((("reverse KL", "#1F77B4"),
                                          ("forward KL", "#D62728")), start=1):
         y, ess = results[name]
-        idx = jax.random.choice(jax.random.key(4), y.shape[0], (N_PLOT,), replace=False)
+        plot_key = jax.random.fold_in(jax.random.key(4), col)
+        idx = jax.random.choice(plot_key, y.shape[0], (N_PLOT,), replace=False)
         y_np = np.asarray(y[idx])
         ax = fig.add_subplot(1, 2, col, projection="3d")
         ax.scatter(y_np[:, 0], y_np[:, 1], y_np[:, 2], s=0.8, alpha=0.6, color=color)

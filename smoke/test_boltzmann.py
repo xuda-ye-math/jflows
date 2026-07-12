@@ -27,8 +27,10 @@ For boltzmann_reverse_KL_F (the adaptive-ladder annealed BG):
        (coeff_lambda, coeff_alpha, coeff_beta) — per-stage quench-and-
        temper pool, gated ladder — completes with the same record
        contract;
-    10. rejection of bad arguments: unknown bg_param keys, invalid
-       shrink_factor.
+    10. adaptive KLX plus fixed-schedule KL, KLX, reverse KL, and KLXX
+        interfaces all satisfy the same five-key stage-record contract;
+    11. rejection of bad arguments: unknown bg_param keys, invalid
+        shrink_factor.
 
 Default JAX backend (GPU); GPU memory preallocation is disabled.
 Exits nonzero on any failure.
@@ -50,6 +52,9 @@ from jflows.potential import Nlog_Gaussian, Nlog_Gaussian_Mixture  # noqa: E402
 from jflows.train import Monitor  # noqa: E402
 from jflows.boltzmann import (  # noqa: E402
     boltzmann_forward_KL_G,
+    boltzmann_forward_KL_G_fixed,
+    boltzmann_forward_KLX_G,
+    boltzmann_forward_KLX_G_fixed,
     boltzmann_forward_KLXX_G,
     boltzmann_forward_KLXX_G_fixed,
     boltzmann_reverse_KL_F,
@@ -224,6 +229,35 @@ def main() -> None:
                yxx.shape == x_valid.shape and bool(jnp.isfinite(yxx).all()), f"{yxx.shape}")
     check_true("KLXX [select] lines observed", any("[select]" in ln for ln in xx_lines),
                next((ln for ln in xx_lines if "[select]" in ln), "(none)"))
+
+    # ── remaining public adaptive/fixed interfaces, tiny one-level probes ──
+    # These are API/logic checks rather than convergence tests. t_safe=1 and
+    # tau_ess=0 make the adaptive call take exactly one accepted level.
+    log("KLX adaptive and KL/KLX fixed interface probes")
+    x_small = x_valid[:128]
+    small = dict(n_batch=64, steps=2, lr=LR, ladder=1,
+                 mc_step=MC_STEP, mc_iters=0)
+    y_kx, s_kx = boltzmann_forward_KLX_G(
+        x_small, u0, u1, flow0, n_pool=64, coeff_lambda=COEFF_LAMBDA,
+        bg_param={"t_safe": 1.0, "tau_ess": 0.0, "max_stages": 1},
+        **small,
+    )
+    check_true("KLX adaptive: complete 5-key finite output",
+               len(s_kx) == 1 and s_kx[-1]["t"] == 1.0
+               and set(s_kx[-1]) == {"t", "ess", "flow", "ess_history", "imp_history"}
+               and bool(jnp.isfinite(y_kx).all()))
+    for name, fn, extra in (
+        ("KL fixed", boltzmann_forward_KL_G_fixed, {}),
+        ("KLX fixed", boltzmann_forward_KLX_G_fixed,
+         {"coeff_lambda": COEFF_LAMBDA}),
+    ):
+        y_probe, s_probe = fn(
+            x_small, u0, u1, flow0, t_list=[1.0], **small, **extra
+        )
+        check_true(f"{name}: complete 5-key finite output",
+                   len(s_probe) == 1 and s_probe[-1]["t"] == 1.0
+                   and set(s_probe[-1]) == {"t", "ess", "flow", "ess_history", "imp_history"}
+                   and bool(jnp.isfinite(y_probe).all()))
 
     # ── monitoring ──
     log("monitoring")

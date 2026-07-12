@@ -5,7 +5,7 @@ run after installation from the repo root as
 Builds the annealing bridge U_c = (1 - c) * U_uniform + c * U_gmm in 2D
 with the potential algebra, checks it quantitatively at every level, and
 renders the normalized densities exp(-U_c) as a sequence of heatmaps
-(smoke_tests/test_linear_combination.png) so the uniform -> Gaussian-
+(smoke/test_linear_combination.png) so the uniform -> Gaussian-
 mixture transition is visible as a smooth concentration of mass.
 
 This is the standard temperature-annealed Boltzmann-generator setting:

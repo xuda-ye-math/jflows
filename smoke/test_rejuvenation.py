@@ -97,7 +97,8 @@ def main() -> None:
     # ── 1. loop == manual step composition (documented key derivation) ──
     log("loop == step composition")
     for name, loop_fn, step_fn, kw_loop, kw_step in [
-        ("langevin/ULA", langevin, langevin_step, dict(step=0.05, iters=7), dict(step=0.05)),
+        ("langevin/ULA", langevin, langevin_step,
+         dict(step=0.05, iters=7, adjust=False), dict(step=0.05, adjust=False)),
         ("langevin/MALA", langevin, langevin_step,
          dict(step=0.05, iters=7, adjust=True), dict(step=0.05, adjust=True)),
         ("stochastic_heun", stochastic_heun, stochastic_heun_step,

@@ -70,30 +70,107 @@ def _mask_keep(target: Potential, y: Array, e_clip: float) -> Array:
     """Per-sample keep mask of the energy screen: True where the target
     energy is admissible (target(y) <= e_clip), stop-gradient. Screened
     samples are the near-singular particles the loss must not see."""
-    return lax.stop_gradient(target(y) <= e_clip)
+    energy = target(y)
+    return lax.stop_gradient(jnp.isfinite(energy) & (energy <= e_clip))
 
 
 def _masked_mean(v: Array, keep: Array) -> Array:
     """Mean of `v` over the kept samples only (screened entries drop from
     numerator and denominator); an all-screened batch yields 0."""
     kf = keep.astype(v.dtype)
-    return (kf * v).sum() / jnp.maximum(kf.sum(), 1.0)
+    safe = jnp.where(keep, v, jnp.zeros_like(v))
+    return safe.sum() / jnp.maximum(kf.sum(), 1.0)
 
 
 def _masked_pair_mean(diff: Array, keep: Array, perm: Array) -> Array:
     """Mean of a permutation-paired term |z - z[perm]| over pairs whose
     BOTH members are kept, so a screened sample contributes to neither its
     own nor its partner's term."""
-    kf = keep.astype(diff.dtype)
-    pk = kf * kf[perm]
-    return (pk * diff).sum() / jnp.maximum(pk.sum(), 1.0)
+    pair_keep = keep & keep[perm]
+    pk = pair_keep.astype(diff.dtype)
+    safe = jnp.where(pair_keep, diff, jnp.zeros_like(diff))
+    return safe.sum() / jnp.maximum(pk.sum(), 1.0)
 
 
 def _clip_global(grads, g_clip: float):
     """Scale the whole gradient pytree so its global L2 norm is at most
     g_clip (no-op when the norm is already below the ceiling)."""
-    gnorm = jnp.sqrt(sum(jnp.sum(jnp.square(g)) for g in jax.tree.leaves(grads)))
-    return jax.tree.map(lambda g: g * jnp.minimum(1.0, g_clip / (gnorm + _EPS)), grads)
+    clean = jax.tree.map(
+        lambda g: jnp.where(jnp.isfinite(g), g, jnp.zeros_like(g)), grads
+    )
+    clean_leaves = jax.tree.leaves(clean)
+    nonempty = [g for g in clean_leaves if g.size > 0]
+    if not nonempty:
+        return clean
+    square = sum(jnp.sum(jnp.square(g)) for g in nonempty)
+    direct = jnp.sqrt(square)
+
+    # The ordinary norm preserves established finite-input behaviour. Only
+    # if its sum-of-squares overflows do we use a scale-normalized equivalent.
+    scale = jnp.max(jnp.stack([jnp.max(jnp.abs(g)) for g in nonempty]))
+    def scale_leaf(g):
+        return jnp.where(
+            g != 0,
+            jnp.sign(g) * jnp.exp(jnp.log(jnp.abs(g)) - jnp.log(scale)),
+            0.0,
+        )
+
+    scaled = jax.tree.map(scale_leaf, clean)
+    scaled_leaves = [g for g in jax.tree.leaves(scaled) if g.size > 0]
+    scaled_norm = jnp.sqrt(sum(jnp.sum(jnp.square(g)) for g in scaled_leaves))
+    direct_factor = jnp.minimum(1.0, g_clip / (direct + _EPS))
+    stable_factor = g_clip / (scaled_norm + _EPS)
+    log_norm = jnp.log(scale) + jnp.log(scaled_norm)
+    needs_stable_clip = log_norm > jnp.log(g_clip)
+    return jax.tree.map(
+        lambda g, gs: jnp.where(
+            jnp.isfinite(direct),
+            g * direct_factor,
+            jnp.where(needs_stable_clip, gs * stable_factor, g),
+        ),
+        clean,
+        scaled,
+    )
+
+
+def _adam_step(params, m, v, grads, loss, updates, lr: float, g_clip: float):
+    """One Adam update with an all-or-nothing non-finite guard.
+
+    Finite steps use the original equations. If the loss or any gradient
+    leaf is non-finite, parameters and moments are retained so one singular
+    batch cannot permanently poison the training state.
+    """
+    finite = jnp.isfinite(loss)
+    for g in jax.tree.leaves(grads):
+        finite = finite & jnp.all(jnp.isfinite(g))
+    clean = jax.tree.map(
+        lambda g: jnp.where(jnp.isfinite(g), g, jnp.zeros_like(g)), grads
+    )
+    if g_clip != float("inf"):
+        clean = _clip_global(clean, g_clip)
+    candidate_updates = updates + finite.astype(updates.dtype)
+    # The denominator is evaluated only for the candidate update. max(1, .)
+    # keeps the invalid branch numerically defined while `where` retains the
+    # old state; the next valid step then uses the number of *actual* updates,
+    # not the outer scan index.
+    bias_t = jnp.maximum(candidate_updates, 1)
+    m_new = jax.tree.map(lambda m_, g: _BETA1 * m_ + (1 - _BETA1) * g, m, clean)
+    v_new = jax.tree.map(lambda v_, g: _BETA2 * v_ + (1 - _BETA2) * g * g, v, clean)
+    m_hat = jax.tree.map(lambda a: a / (1 - _BETA1 ** bias_t.astype(a.dtype)), m_new)
+    v_hat = jax.tree.map(lambda a: a / (1 - _BETA2 ** bias_t.astype(a.dtype)), v_new)
+    params_new = jax.tree.map(
+        lambda p, mh, vh: p - lr * mh / (jnp.sqrt(vh) + _EPS),
+        params, m_hat, v_hat,
+    )
+    commit = finite
+    for tree in (params_new, m_new, v_new):
+        for leaf in jax.tree.leaves(tree):
+            commit = commit & jnp.all(jnp.isfinite(leaf))
+    params = jax.tree.map(lambda new, old: jnp.where(commit, new, old), params_new, params)
+    m = jax.tree.map(lambda new, old: jnp.where(commit, new, old), m_new, m)
+    v = jax.tree.map(lambda new, old: jnp.where(commit, new, old), v_new, v)
+    updates = updates + commit.astype(updates.dtype)
+    return params, m, v, updates
 
 
 class Monitor:
@@ -205,15 +282,20 @@ def train_reverse_KL_F(
     params, static = eqx.partition(flow, eqx.is_inexact_array)
     m0 = jax.tree.map(jnp.zeros_like, params)
     v0 = jax.tree.map(jnp.zeros_like, params)
+    updates0 = jnp.asarray(0, dtype=jnp.int32)
 
     def body(carry, t):
-        params, m, v = carry
-        key_idx, key_mc = jax.random.split(jax.random.fold_in(key, t))
+        params, m, v, updates = carry
+        step_key = jax.random.fold_in(key, t)
+        key_idx, key_mc = jax.random.split(step_key)
+        key_trace = jax.random.fold_in(step_key, 101)
         x = x_valid[jax.random.choice(key_idx, N, (n_batch,), replace=False)]
         x = langevin(key_mc, x, source, step=mc_step, iters=mc_iters, adjust=mc_adjust)
 
         def loss_fn(p):
-            losses = reverse_KL_F(x, target, eqx.combine(p, static))
+            losses = reverse_KL_F(
+                x, target, eqx.combine(p, static), trace_key=key_trace
+            )
             return losses.mean(), losses
 
         loss_eval = jax.checkpoint(loss_fn) if checkpoint else loss_fn
@@ -221,17 +303,13 @@ def train_reverse_KL_F(
         ess = compute_ESS_log(source(x) - losses)  # log w = -target(y) + source(x) + ladj
         if monitor is not None:
             monitor.report(t, loss, ess)
-        m = jax.tree.map(lambda m_, g: _BETA1 * m_ + (1 - _BETA1) * g, m, grads)
-        v = jax.tree.map(lambda v_, g: _BETA2 * v_ + (1 - _BETA2) * g * g, v, grads)
-        m_hat = jax.tree.map(lambda a: a / (1 - _BETA1 ** t.astype(a.dtype)), m)
-        v_hat = jax.tree.map(lambda a: a / (1 - _BETA2 ** t.astype(a.dtype)), v)
-        params = jax.tree.map(
-            lambda p, mh, vh: p - lr * mh / (jnp.sqrt(vh) + _EPS), params, m_hat, v_hat
+        params, m, v, updates = _adam_step(
+            params, m, v, grads, loss, updates, lr, float("inf")
         )
-        return (params, m, v), ess
+        return (params, m, v, updates), ess
 
-    ts = jnp.arange(1, steps + 1)  # traced step counter (per-step keys + bias correction)
-    (params, _, _), ess = lax.scan(body, (params, m0, v0), ts)
+    ts = jnp.arange(1, steps + 1)  # traced outer-step counter for per-step keys
+    (params, _, _, _), ess = lax.scan(body, (params, m0, v0, updates0), ts)
     return eqx.combine(params, static), ess
 
 
@@ -316,45 +394,54 @@ def train_forward_KL_G(
         flow: Flow          the trained flow
         ess:  Array [steps] per-step batch ESS (before that step's update)
     """
+    if not (g_clip >= 0):
+        raise ValueError(f"train_forward_KL_G: g_clip must be non-negative, got {g_clip!r}")
+    if e_clip != e_clip:
+        raise ValueError("train_forward_KL_G: e_clip must not be NaN")
     key = jax.random.fold_in(jax.random.key(2), seed)  # driver-specific base stream
     N = x_valid.shape[0]
     params, static = eqx.partition(flow, eqx.is_inexact_array)
     m0 = jax.tree.map(jnp.zeros_like, params)
     v0 = jax.tree.map(jnp.zeros_like, params)
+    updates0 = jnp.asarray(0, dtype=jnp.int32)
 
     def body(carry, t):
-        params, m, v = carry
-        key_idx, key_ais = jax.random.split(jax.random.fold_in(key, t))
+        params, m, v, updates = carry
+        step_key = jax.random.fold_in(key, t)
+        key_idx, key_ais = jax.random.split(step_key)
+        key_trace = jax.random.fold_in(step_key, 101)
+        key_trace_ais = jax.random.fold_in(step_key, 102)
         x = x_valid[jax.random.choice(key_idx, N, (n_batch,), replace=False)]
         y = annealed_importance_sampling(
             key_ais, x, source, target, eqx.combine(params, static), "G",
             ladder=ladder, step=mc_step, iters=mc_iters, adjust=mc_adjust,
+            trace_key=key_trace_ais,
         )
         keep = _mask_keep(target, y, e_clip) if e_clip != float("inf") else None
 
         def loss_fn(p):
-            losses = forward_KL_G(y, source, eqx.combine(p, static))
-            loss = losses.mean() if keep is None else _masked_mean(losses, keep)
+            losses = forward_KL_G(
+                y, source, eqx.combine(p, static), trace_key=key_trace
+            )
+            if keep is None:
+                loss = losses.mean()
+            else:
+                keep_loss = keep & lax.stop_gradient(jnp.isfinite(losses))
+                loss = _masked_mean(losses, keep_loss)
             return loss, losses
 
         loss_eval = jax.checkpoint(loss_fn) if checkpoint else loss_fn
         (loss, losses), grads = jax.value_and_grad(loss_eval, has_aux=True)(params)
-        if g_clip != float("inf"):
-            grads = _clip_global(grads, g_clip)
         ess = compute_ESS_log(-target(y) + losses)  # log w = -target(y) + source(x) + ladj
         if monitor is not None:
             monitor.report(t, loss, ess)
-        m = jax.tree.map(lambda m_, g: _BETA1 * m_ + (1 - _BETA1) * g, m, grads)
-        v = jax.tree.map(lambda v_, g: _BETA2 * v_ + (1 - _BETA2) * g * g, v, grads)
-        m_hat = jax.tree.map(lambda a: a / (1 - _BETA1 ** t.astype(a.dtype)), m)
-        v_hat = jax.tree.map(lambda a: a / (1 - _BETA2 ** t.astype(a.dtype)), v)
-        params = jax.tree.map(
-            lambda p, mh, vh: p - lr * mh / (jnp.sqrt(vh) + _EPS), params, m_hat, v_hat
+        params, m, v, updates = _adam_step(
+            params, m, v, grads, loss, updates, lr, g_clip
         )
-        return (params, m, v), ess
+        return (params, m, v, updates), ess
 
-    ts = jnp.arange(1, steps + 1)  # traced step counter (per-step keys + bias correction)
-    (params, _, _), ess = lax.scan(body, (params, m0, v0), ts)
+    ts = jnp.arange(1, steps + 1)  # traced outer-step counter for per-step keys
+    (params, _, _, _), ess = lax.scan(body, (params, m0, v0, updates0), ts)
     return eqx.combine(params, static), ess
 
 
@@ -443,19 +530,28 @@ def train_forward_KLX_G(
         flow: Flow          the trained flow
         ess:  Array [steps] per-step batch ESS (before that step's update)
     """
+    if not (g_clip >= 0):
+        raise ValueError(f"train_forward_KLX_G: g_clip must be non-negative, got {g_clip!r}")
+    if e_clip != e_clip:
+        raise ValueError("train_forward_KLX_G: e_clip must not be NaN")
     key = jax.random.fold_in(jax.random.key(5), seed)  # driver-specific base stream
     N = x_valid.shape[0]
     params, static = eqx.partition(flow, eqx.is_inexact_array)
     m0 = jax.tree.map(jnp.zeros_like, params)
     v0 = jax.tree.map(jnp.zeros_like, params)
+    updates0 = jnp.asarray(0, dtype=jnp.int32)
 
     def body(carry, t):
-        params, m, v = carry
-        key_idx, key_ais, key_perm = jax.random.split(jax.random.fold_in(key, t), 3)
+        params, m, v, updates = carry
+        step_key = jax.random.fold_in(key, t)
+        key_idx, key_ais, key_perm = jax.random.split(step_key, 3)
+        key_trace = jax.random.fold_in(step_key, 101)
+        key_trace_ais = jax.random.fold_in(step_key, 102)
         x = x_valid[jax.random.choice(key_idx, N, (n_batch,), replace=False)]
         y = annealed_importance_sampling(
             key_ais, x, source, target, eqx.combine(params, static), "G",
             ladder=ladder, step=mc_step, iters=mc_iters, adjust=mc_adjust,
+            trace_key=key_trace_ais,
         )
         perm = jax.random.permutation(key_perm, n_batch)
         keep = _mask_keep(target, y, e_clip) if e_clip != float("inf") else None
@@ -463,32 +559,32 @@ def train_forward_KLX_G(
         def loss_fn(p):
             # z: per-sample log-ratio log(mu/nu); the returned vector equals
             # forward_KLX_G(y, source, target, flow, key_perm, coeff_lambda).
-            z = forward_KL_G(y, source, eqx.combine(p, static)) - target(y)
+            z = forward_KL_G(
+                y, source, eqx.combine(p, static), trace_key=key_trace
+            ) - target(y)
             if keep is None:
                 loss = (z + coeff_lambda * jnp.abs(z - z[perm])).mean()
             else:
-                loss = (_masked_mean(z, keep)
-                        + coeff_lambda * _masked_pair_mean(jnp.abs(z - z[perm]), keep, perm))
+                keep_z = keep & lax.stop_gradient(jnp.isfinite(z))
+                z_safe = jnp.where(keep_z, z, jnp.zeros_like(z))
+                loss = (_masked_mean(z, keep_z)
+                        + coeff_lambda * _masked_pair_mean(
+                            jnp.abs(z_safe - z_safe[perm]), keep_z, perm
+                        ))
             return loss, z
 
         loss_eval = jax.checkpoint(loss_fn) if checkpoint else loss_fn
         (loss, z), grads = jax.value_and_grad(loss_eval, has_aux=True)(params)
-        if g_clip != float("inf"):
-            grads = _clip_global(grads, g_clip)
         ess = compute_ESS_log(z)  # log w = -target(y) + source(x) - ladj (no extra flow eval)
         if monitor is not None:
             monitor.report(t, loss, ess)
-        m = jax.tree.map(lambda m_, g: _BETA1 * m_ + (1 - _BETA1) * g, m, grads)
-        v = jax.tree.map(lambda v_, g: _BETA2 * v_ + (1 - _BETA2) * g * g, v, grads)
-        m_hat = jax.tree.map(lambda a: a / (1 - _BETA1 ** t.astype(a.dtype)), m)
-        v_hat = jax.tree.map(lambda a: a / (1 - _BETA2 ** t.astype(a.dtype)), v)
-        params = jax.tree.map(
-            lambda p, mh, vh: p - lr * mh / (jnp.sqrt(vh) + _EPS), params, m_hat, v_hat
+        params, m, v, updates = _adam_step(
+            params, m, v, grads, loss, updates, lr, g_clip
         )
-        return (params, m, v), ess
+        return (params, m, v, updates), ess
 
-    ts = jnp.arange(1, steps + 1)  # traced step counter (per-step keys + bias correction)
-    (params, _, _), ess = lax.scan(body, (params, m0, v0), ts)
+    ts = jnp.arange(1, steps + 1)  # traced outer-step counter for per-step keys
+    (params, _, _, _), ess = lax.scan(body, (params, m0, v0, updates0), ts)
     return eqx.combine(params, static), ess
 
 
@@ -605,11 +701,16 @@ def train_forward_KLXX_G(
         flow: Flow          the trained flow
         ess:  Array [steps] per-step batch ESS (before that step's update)
     """
+    if not (g_clip >= 0):
+        raise ValueError(f"train_forward_KLXX_G: g_clip must be non-negative, got {g_clip!r}")
+    if e_clip != e_clip:
+        raise ValueError("train_forward_KLXX_G: e_clip must not be NaN")
     key = jax.random.fold_in(jax.random.key(7), seed)  # driver-specific base stream
     N = x_valid.shape[0]
     params, static = eqx.partition(flow, eqx.is_inexact_array)
     m0 = jax.tree.map(jnp.zeros_like, params)
     v0 = jax.tree.map(jnp.zeros_like, params)
+    updates0 = jnp.asarray(0, dtype=jnp.int32)
 
     # hat_mu: the quench-and-temper wide-coverage pool, built once per call
     key_qt_idx, key_qt = jax.random.split(jax.random.fold_in(key, 0))
@@ -622,14 +723,19 @@ def train_forward_KLXX_G(
                              jnp.full(n_batch, coeff_beta)])
 
     def body(carry, t):
-        params, m, v = carry
+        params, m, v, updates = carry
+        step_key = jax.random.fold_in(key, t)
         key_idx, key_ais, key_perm, key_hat, key_hat_mc, key_mix, key_perm2 = \
-            jax.random.split(jax.random.fold_in(key, t), 7)
+            jax.random.split(step_key, 7)
+        key_trace = jax.random.fold_in(step_key, 101)
+        key_trace_mix = jax.random.fold_in(step_key, 102)
+        key_trace_ais = jax.random.fold_in(step_key, 103)
         flow_now = eqx.combine(params, static)
         x = x_valid[jax.random.choice(key_idx, N, (n_batch,), replace=False)]
         y = annealed_importance_sampling(
             key_ais, x, source, target, flow_now, "G",
             ladder=ladder, step=mc_step, iters=mc_iters, adjust=mc_adjust,
+            trace_key=key_trace_ais,
         )
         perm = jax.random.permutation(key_perm, n_batch)
         # mixture batch: freshened hat_mu draw + detached pushforward bar_nu,
@@ -649,35 +755,38 @@ def train_forward_KLXX_G(
             # per-sample log-ratios log(mu/nu); the terms equal
             # forward_KLX_G on y plus (a+b)^2 * forward_X_G on y_mix.
             fl = eqx.combine(p, static)
-            z = forward_KL_G(y, source, fl) - target(y)
-            zx = forward_KL_G(y_mix, source, fl) - target(y_mix)
+            z = forward_KL_G(y, source, fl, trace_key=key_trace) - target(y)
+            zx = forward_KL_G(
+                y_mix, source, fl, trace_key=key_trace_mix
+            ) - target(y_mix)
             ab2 = (coeff_alpha + coeff_beta) ** 2
             if keep is None:
                 loss = (z + coeff_lambda * jnp.abs(z - z[perm])).mean() \
                     + ab2 * jnp.abs(zx - zx[perm2]).mean()
             else:
-                loss = (_masked_mean(z, keep)
-                        + coeff_lambda * _masked_pair_mean(jnp.abs(z - z[perm]), keep, perm)
-                        + ab2 * _masked_pair_mean(jnp.abs(zx - zx[perm2]), keep_mix, perm2))
+                keep_z = keep & lax.stop_gradient(jnp.isfinite(z))
+                keep_zx = keep_mix & lax.stop_gradient(jnp.isfinite(zx))
+                z_safe = jnp.where(keep_z, z, jnp.zeros_like(z))
+                zx_safe = jnp.where(keep_zx, zx, jnp.zeros_like(zx))
+                loss = (_masked_mean(z, keep_z)
+                        + coeff_lambda * _masked_pair_mean(
+                            jnp.abs(z_safe - z_safe[perm]), keep_z, perm
+                        )
+                        + ab2 * _masked_pair_mean(
+                            jnp.abs(zx_safe - zx_safe[perm2]), keep_zx, perm2
+                        ))
             return loss, z
 
         loss_eval = jax.checkpoint(loss_fn) if checkpoint else loss_fn
         (loss, z), grads = jax.value_and_grad(loss_eval, has_aux=True)(params)
-        if g_clip != float("inf"):
-            grads = _clip_global(grads, g_clip)
         ess = compute_ESS_log(z)  # log w = -target(y) + source(x) - ladj (no extra flow eval)
         if monitor is not None:
             monitor.report(t, loss, ess)
-        m = jax.tree.map(lambda m_, g: _BETA1 * m_ + (1 - _BETA1) * g, m, grads)
-        v = jax.tree.map(lambda v_, g: _BETA2 * v_ + (1 - _BETA2) * g * g, v, grads)
-        m_hat = jax.tree.map(lambda a: a / (1 - _BETA1 ** t.astype(a.dtype)), m)
-        v_hat = jax.tree.map(lambda a: a / (1 - _BETA2 ** t.astype(a.dtype)), v)
-        params = jax.tree.map(
-            lambda p, mh, vh: p - lr * mh / (jnp.sqrt(vh) + _EPS), params, m_hat, v_hat
+        params, m, v, updates = _adam_step(
+            params, m, v, grads, loss, updates, lr, g_clip
         )
-        return (params, m, v), ess
+        return (params, m, v, updates), ess
 
-    ts = jnp.arange(1, steps + 1)  # traced step counter (per-step keys + bias correction)
-    (params, _, _), ess = lax.scan(body, (params, m0, v0), ts)
+    ts = jnp.arange(1, steps + 1)  # traced outer-step counter for per-step keys
+    (params, _, _, _), ess = lax.scan(body, (params, m0, v0, updates0), ts)
     return eqx.combine(params, static), ess
-

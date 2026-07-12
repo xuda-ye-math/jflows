@@ -19,6 +19,9 @@ output records are identical, so `(y_valid, stages)` is consumed the same way.
 
 from __future__ import annotations
 
+import math
+import operator
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -27,7 +30,8 @@ from jax import Array
 from .flow import Flow
 from .potential import Potential, linear_combination
 from .utils.anneal import sequential_monte_carlo
-from .utils.metrics import compute_ESS_log, importance_weights_log, resample
+from .utils.metrics import (_linear_weights_from_log, compute_ESS_log,
+                            importance_weights_log, resample)
 from .utils.rejuvenation import langevin
 from .train import (Monitor, train_forward_KL_G, train_forward_KLX_G,
                     train_forward_KLXX_G, train_reverse_KL_F)
@@ -87,7 +91,7 @@ def _bg_advance(key_res, key_mc, y, log_w, flow, type, u_k, mc_step, mc_iters,
     y_push = jnp.concatenate(
         [push(c) for c in jnp.array_split(y, chunk, axis=0)], axis=0
     )
-    y_new = resample(key_res, y_push, jnp.exp(log_w - log_w.max()))
+    y_new = resample(key_res, y_push, _linear_weights_from_log(log_w))
     return langevin(key_mc, y_new, u_k, step=mc_step, iters=mc_iters,
                     adjust=mc_adjust, chunk=chunk)
 
@@ -102,6 +106,71 @@ _BG_DEFAULTS = {
     "max_stages": 30,      # ladder-length safety cap
     "max_retry": 6,        # training attempts per stage before giving up
 }
+
+
+def _bg_parameters(name: str, bg_param: dict | None) -> dict:
+    """Merge and validate one adaptive-ladder parameter dictionary."""
+    p = dict(_BG_DEFAULTS)
+    if bg_param:
+        unknown = set(bg_param) - set(p)
+        if unknown:
+            raise ValueError(f"{name}: unknown bg_param keys {sorted(unknown)}")
+        p.update(bg_param)
+
+    real_names = (
+        "t_safe", "shrink_factor", "enlarge_factor", "tau_smc", "tau_ess", "t_tol"
+    )
+    try:
+        values = {key: float(p[key]) for key in real_names}
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name}: non-numeric bg_param {p!r}") from exc
+    if not all(math.isfinite(value) for value in values.values()):
+        raise ValueError(f"{name}: bg_param values must be finite, got {p!r}")
+    if not (
+        0.0 < values["t_safe"] <= 1.0
+        and 0.0 < values["shrink_factor"] < 1.0
+        and values["enlarge_factor"] > 0.0
+        and 0.0 <= values["tau_smc"] <= 1.0
+        and 0.0 <= values["tau_ess"] <= 1.0
+        and 0.0 <= values["t_tol"] <= 1.0
+    ):
+        raise ValueError(f"{name}: invalid bg_param {p!r}")
+    if values["t_safe"] < 1.0 and min(
+        values["t_safe"] * (1.0 + values["enlarge_factor"]), 1.0
+    ) <= values["t_safe"]:
+        raise ValueError(
+            f"{name}: enlarge_factor={values['enlarge_factor']!r} is too small "
+            "to advance the ladder in floating-point arithmetic"
+        )
+    for key in ("max_stages", "max_retry"):
+        try:
+            value = operator.index(p[key])
+        except TypeError as exc:
+            raise ValueError(f"{name}: {key} must be a positive int, got {p[key]!r}") from exc
+        if isinstance(p[key], bool) or value < 1:
+            raise ValueError(f"{name}: {key} must be a positive int, got {p[key]!r}")
+        p[key] = value
+    p.update(values)
+    return p
+
+
+def _fixed_schedule(name: str, t_list) -> list[float]:
+    """Normalize and validate a caller-supplied fixed bridge schedule."""
+    try:
+        schedule = [float(t) for t in t_list]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name}: t_list must contain real numbers") from exc
+    if schedule and schedule[0] == 0.0:
+        schedule = schedule[1:]
+    if not schedule:
+        raise ValueError(f"{name}: t_list is empty")
+    if not all(math.isfinite(t) for t in schedule):
+        raise ValueError(f"{name}: t_list values must be finite")
+    if any(a >= b for a, b in zip(schedule, schedule[1:])):
+        raise ValueError(f"{name}: t_list must be strictly increasing")
+    if not (0.0 < schedule[0] and schedule[-1] <= 1.0):
+        raise ValueError(f"{name}: t_list must lie in (0, 1]")
+    return schedule
 
 
 def boltzmann_reverse_KL_F(
@@ -213,9 +282,11 @@ def boltzmann_reverse_KL_F(
                                  {t_safe, shrink_factor, enlarge_factor,
                                  tau_smc, tau_ess, t_tol, max_stages,
                                  max_retry}
-        chunk:    int            split the full-set stage operations (weights,
-                                 push, Langevin) into this many chunks to
-                                 bound peak memory at large N or deep flows
+        chunk:    int            split full-set stage operations into this many
+                                 execution chunks. Weight evaluation iterates
+                                 eagerly and bounds that graph; push/Langevin
+                                 run inside the compiled advancement and are
+                                 not a strict peak-memory guarantee
         checkpoint: bool         forwarded to the stage trainer: rematerialize
                                  the loss forward pass in the backward
                                  (jax.checkpoint) — worthwhile for deep flows,
@@ -249,14 +320,7 @@ def boltzmann_reverse_KL_F(
                              identity ESS costs two potential evaluations and no
                              flow inverse.
     """
-    p = dict(_BG_DEFAULTS)
-    if bg_param:
-        unknown = set(bg_param) - set(p)
-        if unknown:
-            raise ValueError(f"boltzmann_reverse_KL_F: unknown bg_param keys {sorted(unknown)}")
-        p.update(bg_param)
-    if not (0.0 < p["shrink_factor"] < 1.0 and 0.0 < p["t_safe"] <= 1.0 and p["max_retry"] >= 1):
-        raise ValueError(f"boltzmann_reverse_KL_F: invalid bg_param {p!r}")
+    p = _bg_parameters("boltzmann_reverse_KL_F", bg_param)
 
     status = monitor.printer if monitor is not None else print
     key = jax.random.key(3)  # the ladder's own base stream (distinct from the trainers)
@@ -275,6 +339,10 @@ def boltzmann_reverse_KL_F(
         )
         if 1.0 - t_k < p["t_tol"]:
             t_k = 1.0
+        if not (t_prev < t_k <= 1.0):
+            status(f"[stage {k}] candidate t={t_k!r} does not advance past "
+                   f"t={t_prev!r} — ladder INCOMPLETE")
+            break
         u_prev = linear_combination([target, source], [t_prev, 1.0 - t_prev])
         # (1) selection pool + SMC pre-selection of t_k (the reference
         # adaptive_step): the gate runs on an n_pool-sized pool drawn with
@@ -288,7 +356,10 @@ def boltzmann_reverse_KL_F(
                 pool = _langevin_jit(key_mc_pool, pool, u_prev, step=mc_step,
                                      iters=mc_iters, adjust=mc_adjust, chunk=chunk)
             smc_base = jax.random.fold_in(key, 10_000 + k)  # disjoint from the advance keys
+            ok_smc = False
             for s_i in range(60):                           # max_shrinks, as in the reference
+                if not t_k > t_prev:
+                    break
                 u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
                 _, smc_ess = _smc_jit(jax.random.fold_in(smc_base, s_i), pool,
                                       u_prev, u_k, ladder=ladder, step=mc_step,
@@ -300,8 +371,16 @@ def boltzmann_reverse_KL_F(
                 if ok_smc:
                     break
                 t_k = t_prev + p["shrink_factor"] * (t_k - t_prev)
+            if not ok_smc:
+                status(f"[stage {k}] SMC selection failed after 60 shrinks "
+                       f"(last t={t_k:.6g}) — ladder INCOMPLETE")
+                break
         accepted = False
         for attempt in range(1, p["max_retry"] + 1):
+            if not t_k > t_prev:
+                status(f"[stage {k}] rejected-step shrink made no floating-point "
+                       "progress — ladder INCOMPLETE")
+                break
             u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
             status(f"[stage {k}] t={t_prev:.4f} -> {t_k:.4f} "
                    f"(attempt {attempt}/{p['max_retry']}) training the increment ...")
@@ -425,14 +504,7 @@ def boltzmann_forward_KL_G(
     Output: as `boltzmann_reverse_KL_F` — (y_valid, stages) with per-stage
             records {"t", "ess", "flow", "ess_history", "imp_history"}.
     """
-    p = dict(_BG_DEFAULTS)
-    if bg_param:
-        unknown = set(bg_param) - set(p)
-        if unknown:
-            raise ValueError(f"boltzmann_forward_KL_G: unknown bg_param keys {sorted(unknown)}")
-        p.update(bg_param)
-    if not (0.0 < p["shrink_factor"] < 1.0 and 0.0 < p["t_safe"] <= 1.0 and p["max_retry"] >= 1):
-        raise ValueError(f"boltzmann_forward_KL_G: invalid bg_param {p!r}")
+    p = _bg_parameters("boltzmann_forward_KL_G", bg_param)
 
     status = monitor.printer if monitor is not None else print
     key = jax.random.key(4)  # this ladder's own base stream
@@ -449,6 +521,10 @@ def boltzmann_forward_KL_G(
         )
         if 1.0 - t_k < p["t_tol"]:
             t_k = 1.0
+        if not (t_prev < t_k <= 1.0):
+            status(f"[stage {k}] candidate t={t_k!r} does not advance past "
+                   f"t={t_prev!r} — ladder INCOMPLETE")
+            break
         u_prev = linear_combination([target, source], [t_prev, 1.0 - t_prev])
         # (1) SMC pre-selection of t_k on an n_pool-sized selection pool
         # (drawn with replacement, rejuvenated at U_{t_{k-1}} when t > 0)
@@ -459,7 +535,10 @@ def boltzmann_forward_KL_G(
                 pool = _langevin_jit(key_mc_pool, pool, u_prev, step=mc_step,
                                      iters=mc_iters, adjust=mc_adjust, chunk=chunk)
             smc_base = jax.random.fold_in(key, 10_000 + k)  # disjoint from the advance keys
+            ok_smc = False
             for s_i in range(60):                           # max_shrinks, as in the reference
+                if not t_k > t_prev:
+                    break
                 u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
                 _, smc_ess = _smc_jit(jax.random.fold_in(smc_base, s_i), pool,
                                       u_prev, u_k, ladder=ladder, step=mc_step,
@@ -471,8 +550,16 @@ def boltzmann_forward_KL_G(
                 if ok_smc:
                     break
                 t_k = t_prev + p["shrink_factor"] * (t_k - t_prev)
+            if not ok_smc:
+                status(f"[stage {k}] SMC selection failed after 60 shrinks "
+                       f"(last t={t_k:.6g}) — ladder INCOMPLETE")
+                break
         accepted = False
         for attempt in range(1, p["max_retry"] + 1):
+            if not t_k > t_prev:
+                status(f"[stage {k}] rejected-step shrink made no floating-point "
+                       "progress — ladder INCOMPLETE")
+                break
             u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
             status(f"[stage {k}] t={t_prev:.4f} -> {t_k:.4f} "
                    f"(attempt {attempt}/{p['max_retry']}) training the increment ...")
@@ -563,14 +650,7 @@ def boltzmann_forward_KLX_G(
     Output: as `boltzmann_forward_KL_G` — (y_valid, stages) with per-stage
             records {"t", "ess", "flow", "ess_history", "imp_history"}.
     """
-    p = dict(_BG_DEFAULTS)
-    if bg_param:
-        unknown = set(bg_param) - set(p)
-        if unknown:
-            raise ValueError(f"boltzmann_forward_KLX_G: unknown bg_param keys {sorted(unknown)}")
-        p.update(bg_param)
-    if not (0.0 < p["shrink_factor"] < 1.0 and 0.0 < p["t_safe"] <= 1.0 and p["max_retry"] >= 1):
-        raise ValueError(f"boltzmann_forward_KLX_G: invalid bg_param {p!r}")
+    p = _bg_parameters("boltzmann_forward_KLX_G", bg_param)
 
     status = monitor.printer if monitor is not None else print
     key = jax.random.key(6)  # this ladder's own base stream
@@ -587,6 +667,10 @@ def boltzmann_forward_KLX_G(
         )
         if 1.0 - t_k < p["t_tol"]:
             t_k = 1.0
+        if not (t_prev < t_k <= 1.0):
+            status(f"[stage {k}] candidate t={t_k!r} does not advance past "
+                   f"t={t_prev!r} — ladder INCOMPLETE")
+            break
         u_prev = linear_combination([target, source], [t_prev, 1.0 - t_prev])
         # (1) SMC pre-selection of t_k on an n_pool-sized selection pool
         # (drawn with replacement, rejuvenated at U_{t_{k-1}} when t > 0)
@@ -597,7 +681,10 @@ def boltzmann_forward_KLX_G(
                 pool = _langevin_jit(key_mc_pool, pool, u_prev, step=mc_step,
                                      iters=mc_iters, adjust=mc_adjust, chunk=chunk)
             smc_base = jax.random.fold_in(key, 10_000 + k)  # disjoint from the advance keys
+            ok_smc = False
             for s_i in range(60):                           # max_shrinks, as in the reference
+                if not t_k > t_prev:
+                    break
                 u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
                 _, smc_ess = _smc_jit(jax.random.fold_in(smc_base, s_i), pool,
                                       u_prev, u_k, ladder=ladder, step=mc_step,
@@ -609,8 +696,16 @@ def boltzmann_forward_KLX_G(
                 if ok_smc:
                     break
                 t_k = t_prev + p["shrink_factor"] * (t_k - t_prev)
+            if not ok_smc:
+                status(f"[stage {k}] SMC selection failed after 60 shrinks "
+                       f"(last t={t_k:.6g}) — ladder INCOMPLETE")
+                break
         accepted = False
         for attempt in range(1, p["max_retry"] + 1):
+            if not t_k > t_prev:
+                status(f"[stage {k}] rejected-step shrink made no floating-point "
+                       "progress — ladder INCOMPLETE")
+                break
             u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
             status(f"[stage {k}] t={t_prev:.4f} -> {t_k:.4f} "
                    f"(attempt {attempt}/{p['max_retry']}) training the increment ...")
@@ -715,14 +810,7 @@ def boltzmann_forward_KLXX_G(
     Output: as `boltzmann_forward_KL_G` — (y_valid, stages) with per-stage
             records {"t", "ess", "flow", "ess_history", "imp_history"}.
     """
-    p = dict(_BG_DEFAULTS)
-    if bg_param:
-        unknown = set(bg_param) - set(p)
-        if unknown:
-            raise ValueError(f"boltzmann_forward_KLXX_G: unknown bg_param keys {sorted(unknown)}")
-        p.update(bg_param)
-    if not (0.0 < p["shrink_factor"] < 1.0 and 0.0 < p["t_safe"] <= 1.0 and p["max_retry"] >= 1):
-        raise ValueError(f"boltzmann_forward_KLXX_G: invalid bg_param {p!r}")
+    p = _bg_parameters("boltzmann_forward_KLXX_G", bg_param)
 
     status = monitor.printer if monitor is not None else print
     key = jax.random.key(8)  # this ladder's own base stream
@@ -739,6 +827,10 @@ def boltzmann_forward_KLXX_G(
         )
         if 1.0 - t_k < p["t_tol"]:
             t_k = 1.0
+        if not (t_prev < t_k <= 1.0):
+            status(f"[stage {k}] candidate t={t_k!r} does not advance past "
+                   f"t={t_prev!r} — ladder INCOMPLETE")
+            break
         u_prev = linear_combination([target, source], [t_prev, 1.0 - t_prev])
         # (1) SMC pre-selection of t_k on an n_pool-sized selection pool
         # (drawn with replacement, rejuvenated at U_{t_{k-1}} when t > 0)
@@ -749,7 +841,10 @@ def boltzmann_forward_KLXX_G(
                 pool = _langevin_jit(key_mc_pool, pool, u_prev, step=mc_step,
                                      iters=mc_iters, adjust=mc_adjust, chunk=chunk)
             smc_base = jax.random.fold_in(key, 10_000 + k)  # disjoint from the advance keys
+            ok_smc = False
             for s_i in range(60):                           # max_shrinks, as in the reference
+                if not t_k > t_prev:
+                    break
                 u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
                 _, smc_ess = _smc_jit(jax.random.fold_in(smc_base, s_i), pool,
                                       u_prev, u_k, ladder=ladder, step=mc_step,
@@ -761,8 +856,16 @@ def boltzmann_forward_KLXX_G(
                 if ok_smc:
                     break
                 t_k = t_prev + p["shrink_factor"] * (t_k - t_prev)
+            if not ok_smc:
+                status(f"[stage {k}] SMC selection failed after 60 shrinks "
+                       f"(last t={t_k:.6g}) — ladder INCOMPLETE")
+                break
         accepted = False
         for attempt in range(1, p["max_retry"] + 1):
+            if not t_k > t_prev:
+                status(f"[stage {k}] rejected-step shrink made no floating-point "
+                       "progress — ladder INCOMPLETE")
+                break
             u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
             status(f"[stage {k}] t={t_prev:.4f} -> {t_k:.4f} "
                    f"(attempt {attempt}/{p['max_retry']}) training the increment ...")
@@ -848,15 +951,7 @@ def boltzmann_reverse_KL_F_fixed(
             a complete ladder, else the particle set stops at the last bridge.
     Output: as `boltzmann_reverse_KL_F` — (y_valid, stages).
     """
-    t_list = [float(t) for t in t_list]
-    if t_list and t_list[0] == 0.0:
-        t_list = t_list[1:]
-    if not t_list:
-        raise ValueError("boltzmann_reverse_KL_F_fixed: t_list is empty")
-    if any(a >= b for a, b in zip(t_list, t_list[1:])):
-        raise ValueError("boltzmann_reverse_KL_F_fixed: t_list must be strictly increasing")
-    if not (0.0 < t_list[0] and t_list[-1] <= 1.0):
-        raise ValueError("boltzmann_reverse_KL_F_fixed: t_list must lie in (0, 1]")
+    t_list = _fixed_schedule("boltzmann_reverse_KL_F_fixed", t_list)
 
     status = monitor.printer if monitor is not None else print
     key = jax.random.key(3)  # same base stream as boltzmann_reverse_KL_F
@@ -937,15 +1032,7 @@ def boltzmann_forward_KL_G_fixed(
             `t_list` (strictly increasing in (0, 1], ideally ending at 1.0).
     Output: as `boltzmann_forward_KL_G` — (y_valid, stages).
     """
-    t_list = [float(t) for t in t_list]
-    if t_list and t_list[0] == 0.0:
-        t_list = t_list[1:]
-    if not t_list:
-        raise ValueError("boltzmann_forward_KL_G_fixed: t_list is empty")
-    if any(a >= b for a, b in zip(t_list, t_list[1:])):
-        raise ValueError("boltzmann_forward_KL_G_fixed: t_list must be strictly increasing")
-    if not (0.0 < t_list[0] and t_list[-1] <= 1.0):
-        raise ValueError("boltzmann_forward_KL_G_fixed: t_list must lie in (0, 1]")
+    t_list = _fixed_schedule("boltzmann_forward_KL_G_fixed", t_list)
 
     status = monitor.printer if monitor is not None else print
     key = jax.random.key(4)  # same base stream as boltzmann_forward_KL_G
@@ -1026,15 +1113,7 @@ def boltzmann_forward_KLX_G_fixed(
             `t_list` (strictly increasing in (0, 1], ideally ending at 1.0).
     Output: as `boltzmann_forward_KLX_G` — (y_valid, stages).
     """
-    t_list = [float(t) for t in t_list]
-    if t_list and t_list[0] == 0.0:
-        t_list = t_list[1:]
-    if not t_list:
-        raise ValueError("boltzmann_forward_KLX_G_fixed: t_list is empty")
-    if any(a >= b for a, b in zip(t_list, t_list[1:])):
-        raise ValueError("boltzmann_forward_KLX_G_fixed: t_list must be strictly increasing")
-    if not (0.0 < t_list[0] and t_list[-1] <= 1.0):
-        raise ValueError("boltzmann_forward_KLX_G_fixed: t_list must lie in (0, 1]")
+    t_list = _fixed_schedule("boltzmann_forward_KLX_G_fixed", t_list)
 
     status = monitor.printer if monitor is not None else print
     key = jax.random.key(6)  # same base stream as boltzmann_forward_KLX_G
@@ -1122,15 +1201,7 @@ def boltzmann_forward_KLXX_G_fixed(
             (strictly increasing in (0, 1], ideally ending at 1.0).
     Output: as `boltzmann_forward_KLXX_G` — (y_valid, stages).
     """
-    t_list = [float(t) for t in t_list]
-    if t_list and t_list[0] == 0.0:
-        t_list = t_list[1:]
-    if not t_list:
-        raise ValueError("boltzmann_forward_KLXX_G_fixed: t_list is empty")
-    if any(a >= b for a, b in zip(t_list, t_list[1:])):
-        raise ValueError("boltzmann_forward_KLXX_G_fixed: t_list must be strictly increasing")
-    if not (0.0 < t_list[0] and t_list[-1] <= 1.0):
-        raise ValueError("boltzmann_forward_KLXX_G_fixed: t_list must lie in (0, 1]")
+    t_list = _fixed_schedule("boltzmann_forward_KLXX_G_fixed", t_list)
 
     status = monitor.printer if monitor is not None else print
     key = jax.random.key(8)  # same base stream as boltzmann_forward_KLXX_G

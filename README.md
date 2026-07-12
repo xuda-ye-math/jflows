@@ -26,7 +26,16 @@ OTFlow(key, dimension=8, hidden=64, layer=3, rank=10, nt=8, time_bound=(0.0, 1.0
 RealNVP(key, dimension=8, transforms=4, randmask=True, mixing="lu", hidden_features=(64, 64), activation=jax.nn.silu)
 ```
 
-all subclassing the same `Flow` abstract class (an `eqx.Module`, i.e. an immutable pytree). The flow itself is the user-facing object:
+`RealNVP(mixing="lu")` requires float32 or float64 parameters because JAX's
+GPU triangular-solve primitive does not support float16/bfloat16 inverses.
+
+For `CNF(exact=False)`, Hutchinson trace estimation uses one call-shared probe.
+The packed trainers replace its key every optimizer step, yielding stochastic
+trace gradients without letting the drift adapt to one frozen projection.
+Low-level loss calls accept an optional `trace_key`; omitting it retains the
+constructor key for backward-compatible, reproducible evaluation.
+
+All subclass the same `Flow` abstract class (an `eqx.Module`, i.e. an immutable pytree). The flow itself is the user-facing object:
 
 ```python
 from jflows.flow import NSF
@@ -57,7 +66,7 @@ class My_Potential(Potential):   # any user-defined energy
 u = My_Potential()   # `u(x)` evaluates the energy; `u.grad(x)` its gradient
 ```
 
-Naming follows one simple rule throughout the project: classes capitalize the first letter of each word (`My_Potential`, `Nlog_Gaussian`), instances lowercase it (`u`, `u0`, `u_target`). Built-ins are `Nlog_Uniform`, `Nlog_Gaussian`, `Nlog_Gaussian_Mixture` (all with key-first `.samples(key, N)`), and `potential_from(...)` wraps a plain `(x) -> Array` callable into a ready-to-use instance.
+Naming follows one simple rule throughout the project: classes capitalize the first letter of each word (`My_Potential`, `Nlog_Gaussian`), instances lowercase it (`u`, `u0`, `u_target`). Built-ins are `Nlog_Uniform`, `Nlog_Gaussian`, `Nlog_Gaussian_Mixture` (all with key-first `.samples(key, N)`), and `potential_from(...)` wraps a plain `(x) -> Array` callable into a ready-to-use instance. `Nlog_Uniform(a, b)` uses `[a, b]` for sampling but intentionally evaluates to the same constant outside the box; wrap periodic coordinates or provide an explicit confining potential when a hard support boundary is required.
 
 Potentials form a vector space: `c * u`, `u0 + u1`, `u0 - u1`, `-u`, `u / c`, and `sum([...])` all return potentials, with repeated instances merged by identity into one flat linear combination. `linear_combination` is the explicit constructor for annealing bridges:
 
@@ -107,11 +116,14 @@ weight per level but rejuvenates at the final target every time. This avoids
 flow-density derivatives inside MCMC, so it is a deliberately biased,
 score-free target surrogate rather than exact AIS/SMC.
 
-`chunk` splits batches along dim 0 to bound peak VRAM (statistically equivalent
-to `chunk=1`). The full-set importance-weight helper used by the Boltzmann
-drivers evaluates those chunks sequentially so they do not all live in one XLA
-graph. Rejuvenation and optimizer routines retain their original compiled-scan
-implementations.
+`chunk` splits batches along dim 0 (statistically equivalent to `chunk=1`). The
+standalone importance-weight helper and the full-set weight evaluation used by
+the Boltzmann drivers iterate eagerly over compiled per-chunk kernels, which
+reliably bounds those operations' peak graph size. A chunk loop nested inside a
+larger compiled stage (notably particle advancement/rejuvenation) is an
+execution partition, but XLA may schedule buffers across chunks; it is not a
+strict peak-VRAM guarantee. Rejuvenation and optimizer routines retain their
+compiled-scan implementations.
 
 **Medium level: training drivers.** Every `jflows.train` stage driver is
 `eqx.filter_jit`-compiled and runs all Adam steps in one `lax.scan`. Sampling,
@@ -166,7 +178,7 @@ y_valid, stages = boltzmann_reverse_KL_F(
     n_pool=24000, n_batch=2000, steps=500, lr=1e-4, ladder=1, mc_step=1e-3, mc_iters=100,
     bg_param={"t_safe": 0.1, "shrink_factor": 0.7, "enlarge_factor": 1.5, "tau_ess": 0.6},
 )
-# y_valid : the advanced validation set at the target (the generator's sample output)
+# y_valid : advanced particle set (at target iff stages[-1]["t"] == 1)
 # stages  : per-stage records {"t", "ess", "flow", "ess_history", "imp_history"} —
 #           the coefficient, the accepted incremental ESS (trained or identity),
 #           the saved incremental map, its per-step training-ESS history, and the
@@ -184,6 +196,7 @@ bound peak memory.
 
 ```
 jflows
+├── boltzmann.py
 ├── core
 │   ├── flows.py
 │   ├── __init__.py
@@ -228,6 +241,9 @@ cd "$HOME/src/jflows"
 pip install -e .
 ```
 
+To run the plotting examples, install the optional plotting dependency with
+`pip install -e ".[examples]"` instead.
+
 Verify both accelerator selection and editable source provenance explicitly:
 
 ```bash
@@ -250,6 +266,24 @@ Repository examples and smoke modules use the same pattern:
 ```bash
 python -m smoke.test_flow
 ```
+
+**Checkpoint skeletons.** Equinox serializes array leaves into a caller-built
+model skeleton. Reconstruct the same class and architecture before calling
+`eqx.tree_deserialise_leaves`. NSF/NCSF orderings and masked matrices are array
+leaves and are restored from the checkpoint. A `RealNVP` with `randmask=True`
+must use the same constructor key because its coupling masks are static tuples.
+CNF PRNG state is stored as ordinary uint32 key data and is supported by the
+standard Equinox leaf serializer; reconstruct its skeleton with the same JAX
+PRNG implementation (`threefry2x32`, `rbg`, etc.), although the seed itself may
+differ.
+
+Checkpoints written by jflows versions before box bounds were normalized to a
+floating dtype need a one-time skeleton migration if their NSF/NCSF constructor
+used integer lists. Build the same skeleton, temporarily replace its `a` and
+`b` leaves with arrays of the legacy integer dtype via `eqx.tree_at`, deserialize,
+then cast those two informational leaves back to the flow's `center.dtype`.
+All transforms use the already-floating `center`/`halfwidth`; checkpoints made
+with floating bounds, and all new checkpoints, need no migration.
 
 **Importing.** Use the public submodules `flow`, `potential`, `loss`, `train`,
 `boltzmann`, and `utils`, and call `help(foo_name)` to read the documents. For

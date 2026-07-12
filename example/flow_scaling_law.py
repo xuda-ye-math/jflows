@@ -6,8 +6,8 @@ of the two fused maps of an NSF across dimension and conditioner width:
     forward + ladj:   flow.call_and_ladj(x)   -> (y, log|det J_F|)
     inverse + ladj:   flow.inv_and_ladj(y)    -> (x, log|det J_{F^-1}|)
 
-Each map is `eqx.filter_jit`-compiled once per dimension (warmup absorbs the
-compile), then timed over a fixed batch. The inverse of a MAF-style spline flow
+Each map is `eqx.filter_jit`-compiled once per (conditioner width, dimension)
+pair (warmup absorbs the compile), then timed over a fixed batch. The inverse of a MAF-style spline flow
 is autoregressive — d sequential coordinate solves — while the forward is a
 single parallel pass, so the inverse latency grows with dimension where the
 forward stays flat; this sweep traces that scaling from d = 4 to d = 128.

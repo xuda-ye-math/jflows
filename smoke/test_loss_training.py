@@ -3,7 +3,7 @@ from the repo root as `python -m smoke.test_loss_training`.
 
 Trains four flow architectures on the SAME 2D three-mode Gaussian-mixture
 target with the per-sample `reverse_KL_F` loss (mean-reduced at the call
-site), and saves the four loss curves to smoke_tests/test_loss_training.png:
+site), and saves the four loss curves to smoke/test_loss_training.png:
 
     NSF      — spline flow on a box, uniform source
     RealNVP  — affine couplings + LU mixing, Gaussian source

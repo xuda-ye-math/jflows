@@ -21,8 +21,8 @@ Both trainers regenerate their batch inside every Adam step. The reverse KL flow
 
 | objective  | final ESS ($N = 40000$) | batch ESS along training |
 | :--------: | :---------------------: | :----------------------: |
-| reverse KL |         0.9242          |   0.35 -> 0.88 -> 0.94   |
-| forward KL |         0.9455          |   0.84 -> 0.96 -> 0.97   |
+| reverse KL |         0.9180          |   0.35 -> 0.88 -> 0.94   |
+| forward KL |         0.9404          |   0.84 -> 0.96 -> 0.97   |
 
 </div>
 
@@ -78,27 +78,16 @@ The 4D two-charge target, sampled by [`4D_boltzmann.py`](4D_boltzmann.py) with B
 
 ### Results
 
-Both ladders reach $t = 1$ in four stages (~8-10 s each on the full 120000-particle set; the stage trainer, weight evaluation, and advance each compile once and are reused across all stages). The rejection machinery earns its keep in the reverse run: its safe start $t = 0.2$ trains but misses the acceptance bar and shrinks to $0.14$, while the AIS-fed forward run accepts the full safe start and climbs faster — every other stage passes on its first attempt:
+Both ladders in the checked-in representative figure reach $t = 1$: the
+reverse run uses five accepted levels and the forward run four. Exact adaptive
+coefficients and ESS values can move with accelerator kernels and acceptance
+decisions, so the script records them in its log instead of treating one run's
+stage table as canonical. It now refuses to produce a target-labelled figure
+if either ladder is incomplete.
 
-<div align="center">
-
-| reverse KL, stage $k$ |   1   |   2   |   3   |   4   |
-| :-------------------: | :---: | :---: | :---: | :---: |
-|         $t_k$         | 0.14  | 0.35  | 0.665 |  1.0  |
-|          ESS          | 0.634 | 0.904 | 0.957 | 0.985 |
-
-</div>
-
-<div align="center">
-
-| forward KL, stage $k$ |   1   |   2   |   3   |   4   |
-| :-------------------: | :---: | :---: | :---: | :---: |
-|         $t_k$         | 0.20  | 0.50  | 0.95  |  1.0  |
-|          ESS          | 0.763 | 0.897 | 0.962 | 0.996 |
-
-</div>
-
-The accepted ESS is per stage the better of the trained flow and the identity map (pure SMC reweighting): after training, each stage keeps whichever has the higher incremental ESS, so a stage is never worse than SMC. Here the trained flow wins every level except the forward run's last, where the identity fallback edges it ($0.996$ against the trained $0.986$).
+The accepted ESS is per stage the better of the trained flow and the identity
+map (pure SMC reweighting): after training, each stage keeps whichever has the
+higher incremental ESS, so a stage is never worse than SMC.
 
 <p align="center"><img src="4D_boltzmann.png" alt="4D Boltzmann generator" width="1000px"></p>
 
@@ -126,8 +115,8 @@ CNF versus OTFlow on a fixed multi-modal target as the dimension grows, run by [
 
 | flow   | $d=4$  | $d=8$  | $d=16$ | $d=32$ | $d=64$ | $d=128$ |
 | :----: | :----: | :----: | :----: | :----: | :----: | :-----: |
-| CNF    | 0.9705 | 0.9579 | 0.9311 | 0.8824 | 0.7412 | 0.4293  |
-| OTFlow | 0.9713 | 0.9595 | 0.9456 | 0.9145 | 0.8588 | 0.6166  |
+| CNF    | 0.9706 | 0.9578 | 0.9311 | 0.8824 | 0.7412 | 0.4288  |
+| OTFlow | 0.9712 | 0.9595 | 0.9457 | 0.9146 | 0.8597 | 0.6146  |
 
 </div>
 
@@ -155,9 +144,9 @@ Forward map, mean ms per call:
 
 | width   |  $d=4$ |  $d=8$ | $d=16$ | $d=32$ | $d=64$ | $d=128$ |
 | :-----: | :----: | :----: | :----: | :----: | :----: | :-----: |
-| 64x64   | 0.153  | 0.157  | 0.179  | 0.221  | 0.272  |  0.420  |
-| 128x128 | 0.166  | 0.171  | 0.199  | 0.231  | 0.317  |  0.451  |
-| 256x256 | 0.176  | 0.192  | 0.207  | 0.260  | 0.365  |  0.552  |
+| 64x64   | 0.153  | 0.165  | 0.177  | 0.219  | 0.287  |  0.414  |
+| 128x128 | 0.156  | 0.176  | 0.196  | 0.237  | 0.312  |  0.472  |
+| 256x256 | 0.173  | 0.191  | 0.222  | 0.260  | 0.363  |  0.569  |
 
 </div>
 
@@ -167,9 +156,9 @@ Inverse map, mean ms per call:
 
 | width   | $d=4$ | $d=8$ | $d=16$ | $d=32$ | $d=64$ | $d=128$ |
 | :-----: | :---: | :---: | :----: | :----: | :----: | :-----: |
-| 64x64   | 0.432 | 0.720 | 1.585  | 4.016  | 11.815 | 40.124  |
-| 128x128 | 0.471 | 0.846 | 1.865  | 4.585  | 13.338 | 46.438  |
-| 256x256 | 0.554 | 1.071 | 2.205  | 5.907  | 17.529 | 59.332  |
+| 64x64   | 0.434 | 0.765 | 1.559  | 4.040  | 11.948 | 40.754  |
+| 128x128 | 0.476 | 0.840 | 1.855  | 4.578  | 13.490 | 46.673  |
+| 256x256 | 0.561 | 1.005 | 2.328  | 5.657  | 17.189 | 60.454  |
 
 </div>
 
@@ -177,4 +166,4 @@ The full grid, with the inv/fwd ratio, is written to [`flow_scaling_law.csv`](fl
 
 ### Reading the result
 
-The forward map is a single parallel pass and stays essentially flat in dimension — at $(64, 64)$ it moves only $0.153 \to 0.420$ ms from $d = 4$ to $d = 128$ ($\sim 3\times$ over a $32\times$ dimension increase). The inverse is autoregressive: a MAF-style flow inverts one coordinate at a time, so it runs $d$ sequential conditioner passes and climbs steeply — $0.432 \to 40.1$ ms at $(64, 64)$, roughly $90\times$, and steepening as $d$ rises. The resulting inv/fwd penalty opens from $\sim 3\times$ at $d = 4$ to $\sim 100\times$ at $d = 128$ across all three widths. Widening the conditioner ($64 \to 256$) raises both maps but far less than dimension does — at $d = 128$ the inverse grows only $40 \to 59$ ms and the forward $0.42 \to 0.55$ ms — so dimension, through the sequential autoregressive inversion, is the dominant cost, not MLP width. This is the intrinsic forward/inverse asymmetry of autoregressive spline flows, and it is exactly why the losses in the other examples are differentiated in each flow's native forward direction and never invert during training. The absolute milliseconds are GPU-specific; the scaling — a near-flat forward and a steeply growing inverse, dominated by dimension — is the reproducible finding.
+The forward map is a single parallel pass and stays essentially flat in dimension — at $(64, 64)$ it moves only $0.153 \to 0.414$ ms from $d = 4$ to $d = 128$ ($\sim 3\times$ over a $32\times$ dimension increase). The inverse is autoregressive: a MAF-style flow inverts one coordinate at a time, so it runs $d$ sequential conditioner passes and climbs steeply — $0.434 \to 40.8$ ms at $(64, 64)$, roughly $94\times$, and steepening as $d$ rises. The resulting inv/fwd penalty opens from $\sim 3\times$ at $d = 4$ to $\sim 100\times$ at $d = 128$ across all three widths. Widening the conditioner ($64 \to 256$) raises both maps but far less than dimension does — at $d = 128$ the inverse grows only $41 \to 60$ ms and the forward $0.41 \to 0.57$ ms — so dimension, through the sequential autoregressive inversion, is the dominant cost, not MLP width. This is the intrinsic forward/inverse asymmetry of autoregressive spline flows, and it is exactly why the losses in the other examples are differentiated in each flow's native forward direction and never invert during training. The absolute milliseconds are GPU-specific; the scaling — a near-flat forward and a steeply growing inverse, dominated by dimension — is the reproducible finding.

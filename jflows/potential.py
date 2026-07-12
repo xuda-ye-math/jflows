@@ -8,7 +8,7 @@ language:
     Potential             — abstract base; __call__(x) -> U(x), .grad(x)
     potential_from        — wrap a callable as a Potential instance
     linear_combination    — flat linear combination sum_k c_k * U_k
-    Nlog_Uniform          — U = -log of a uniform box density (constant)
+    Nlog_Uniform          — globally constant U, with a box sampler
     Nlog_Gaussian         — U = -log of a diagonal Gaussian density
     Nlog_Gaussian_Mixture — U = -log of a diagonal Gaussian mixture density
 
@@ -294,8 +294,13 @@ def linear_combination(
 
 class Nlog_Uniform(Potential):
     """
-    Negative log of the uniform density on the box [a, b]: a constant
-    potential (zero, up to the additive normalisation constant).
+    Constant reference potential with a sampler on the box [a, b].
+
+    The bounds define the support of `.samples`; `__call__` intentionally
+    returns zero for every input, including points outside the box. This
+    constant extension is useful as a torus/box base potential, but it is not
+    a hard-wall constraint. A workflow that can leave the box must wrap its
+    coordinates or supply an explicit confining potential.
     """
 
     a: Array
@@ -314,7 +319,20 @@ class Nlog_Uniform(Potential):
         """
         a = jnp.asarray(a)
         b = jnp.asarray(b)
-        assert a.shape == b.shape
+        dtype = jnp.result_type(a, b)
+        if not jnp.issubdtype(dtype, jnp.floating):
+            if jnp.issubdtype(dtype, jnp.complexfloating):
+                raise ValueError("Nlog_Uniform: bounds must be real-valued")
+            dtype = jnp.result_type(float)
+        a = jnp.asarray(a, dtype=dtype)
+        b = jnp.asarray(b, dtype=dtype)
+        if a.ndim != 1 or a.shape != b.shape or a.size == 0:
+            raise ValueError(
+                f"Nlog_Uniform: a and b must be non-empty vectors of equal shape; "
+                f"got {a.shape} and {b.shape}"
+            )
+        if not bool(jnp.all(jnp.isfinite(a) & jnp.isfinite(b) & (b > a))):
+            raise ValueError("Nlog_Uniform: bounds must be finite and satisfy b > a coordinatewise")
         self.a = a
         self.b = b
         self.d = a.shape[0]
@@ -364,7 +382,22 @@ class Nlog_Gaussian(Potential):
         """
         mean = jnp.asarray(mean)
         variance = jnp.asarray(variance)
-        assert mean.shape == variance.shape
+        dtype = jnp.result_type(mean, variance)
+        if not jnp.issubdtype(dtype, jnp.floating):
+            if jnp.issubdtype(dtype, jnp.complexfloating):
+                raise ValueError("Nlog_Gaussian: mean and variance must be real-valued")
+            dtype = jnp.result_type(float)
+        mean = jnp.asarray(mean, dtype=dtype)
+        variance = jnp.asarray(variance, dtype=dtype)
+        if mean.ndim != 1 or mean.shape != variance.shape or mean.size == 0:
+            raise ValueError(
+                f"Nlog_Gaussian: mean and variance must be non-empty vectors of "
+                f"equal shape; got {mean.shape} and {variance.shape}"
+            )
+        if not bool(jnp.all(jnp.isfinite(mean))):
+            raise ValueError("Nlog_Gaussian: mean must be finite")
+        if not bool(jnp.all(jnp.isfinite(variance) & (variance > 0))):
+            raise ValueError("Nlog_Gaussian: variance must be finite and strictly positive")
         self.mean = mean
         self.variance = variance
         self.d = mean.shape[0]
@@ -424,9 +457,37 @@ class Nlog_Gaussian_Mixture(Potential):
         weights = jnp.asarray(weights)
         mean = jnp.asarray(mean)
         variance = jnp.asarray(variance)
-        assert weights.ndim == 1 and mean.ndim == 2 and variance.ndim == 2
-        assert mean.shape == variance.shape
-        assert weights.shape[0] == mean.shape[0]
+        dtype = jnp.result_type(weights, mean, variance)
+        if not jnp.issubdtype(dtype, jnp.floating):
+            if jnp.issubdtype(dtype, jnp.complexfloating):
+                raise ValueError("Nlog_Gaussian_Mixture: parameters must be real-valued")
+            dtype = jnp.result_type(float)
+        weights = jnp.asarray(weights, dtype=dtype)
+        mean = jnp.asarray(mean, dtype=dtype)
+        variance = jnp.asarray(variance, dtype=dtype)
+        if weights.ndim != 1 or mean.ndim != 2 or variance.ndim != 2:
+            raise ValueError(
+                "Nlog_Gaussian_Mixture: weights must have shape [K] and "
+                "mean/variance shape [K, d]"
+            )
+        if mean.shape != variance.shape or weights.shape[0] != mean.shape[0] \
+                or weights.size == 0 or mean.shape[1] == 0:
+            raise ValueError(
+                f"Nlog_Gaussian_Mixture: incompatible shapes weights={weights.shape}, "
+                f"mean={mean.shape}, variance={variance.shape}"
+            )
+        if not bool(jnp.all(jnp.isfinite(mean))):
+            raise ValueError("Nlog_Gaussian_Mixture: means must be finite")
+        if not bool(jnp.all(jnp.isfinite(variance) & (variance > 0))):
+            raise ValueError(
+                "Nlog_Gaussian_Mixture: variances must be finite and strictly positive"
+            )
+        if not bool(jnp.all(jnp.isfinite(weights) & (weights >= 0))) \
+                or not bool(jnp.any(weights > 0)):
+            raise ValueError(
+                "Nlog_Gaussian_Mixture: weights must be finite, non-negative, "
+                "and contain at least one positive entry"
+            )
         log_w = jnp.log(weights)
         self.log_weights = log_w - jax.scipy.special.logsumexp(log_w, axis=0)  # normalized log-weights
         self.mean = mean

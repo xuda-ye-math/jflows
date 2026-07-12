@@ -312,6 +312,7 @@ class FFJTransform(eqx.Module):
     ode: MLP
     freqs: Array
     key: Array
+    key_impl: str = eqx.field(static=True)
     nt: int = eqx.field(static=True)
     exact: bool = eqx.field(static=True)
 
@@ -336,7 +337,13 @@ class FFJTransform(eqx.Module):
             activation=activation,
         )
         self.freqs = jnp.arange(1, frequency + 1) * pi
-        self.key = hkey
+        # Typed JAX PRNG keys cannot currently be written by Equinox's
+        # standard leaf serializer.  Keep the equivalent raw uint32 key data
+        # as an ordinary array leaf and reconstruct the typed key only at the
+        # random operation.  This makes CNF checkpoints portable without
+        # changing the generated stream.
+        self.key = jax.random.key_data(hkey)
+        self.key_impl = str(jax.random.key_impl(hkey))
         self.nt = nt
         self.exact = exact
 
@@ -358,6 +365,7 @@ class FFJTransform(eqx.Module):
             nt=self.nt,
             exact=self.exact,
             key=self.key,
+            key_impl=self.key_impl,
         )
 
 

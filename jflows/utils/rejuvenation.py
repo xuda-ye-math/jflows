@@ -20,6 +20,9 @@ scaled potential `beta * U` (the potential algebra covers tempering).
 
 from __future__ import annotations
 
+import math
+import operator
+
 import jax
 import jax.numpy as jnp
 from jax import Array, lax
@@ -38,6 +41,46 @@ __all__ = [
     "stochastic_heun",
     "stochastic_heun_step",
 ]
+
+
+def _positive_step(name: str, step: float) -> float:
+    try:
+        value = float(step)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name}: step must be a real scalar, got {step!r}") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name}: step must be finite and positive, got {step!r}")
+    return value
+
+
+def _count(name: str, value, minimum: int) -> int:
+    try:
+        result = operator.index(value)
+    except TypeError as exc:
+        raise ValueError(f"{name} must be an integer, got {value!r}") from exc
+    if isinstance(value, bool) or result < minimum:
+        raise ValueError(f"{name} must be >= {minimum}, got {value!r}")
+    return result
+
+
+def _chunk(name: str, samples: Array, chunk: int) -> int:
+    chunk = _count(f"{name}: chunk", chunk, 1)
+    if samples.ndim < 1 or samples.shape[0] < 1 or chunk > samples.shape[0]:
+        raise ValueError(
+            f"{name}: need non-empty samples and 1 <= chunk <= N; "
+            f"got samples={samples.shape}, chunk={chunk}"
+        )
+    return chunk
+
+
+def _taming(name: str, taming: float) -> float:
+    try:
+        value = float(taming)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name}: taming must be a real scalar, got {taming!r}") from exc
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"{name}: taming must be finite and non-negative, got {taming!r}")
+    return value
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -139,14 +182,18 @@ def langevin(
         adjust:    bool           if True, run MALA (unbiased); if False, ULA
         taming:    float          if > 0, tamed drift (ULA only)
         chunk:     int            split `samples` along dim 0 into this many
-                                  chunks and run the trajectories
-                                  sequentially. Reduces peak memory at the
-                                  cost of wall time; statistically
-                                  equivalent to chunk=1 (each chunk uses
-                                  its own independent noise).
+                                  execution chunks. Statistically equivalent
+                                  to chunk=1 (each chunk uses independent
+                                  noise); if an enclosing routine is jitted,
+                                  XLA may co-schedule buffers, so this is not
+                                  a strict peak-memory guarantee.
     Output:
         samples: Array [N, d]   particles after `iters` Langevin updates
     """
+    step = _positive_step("langevin", step)
+    iters = _count("langevin: iters", iters, 0)
+    chunk = _chunk("langevin", samples, chunk)
+    taming = _taming("langevin", taming)
     if adjust and taming > 0:
         raise ValueError("langevin(): adjust=True and taming>0 are mutually exclusive.")
     out = []
@@ -233,6 +280,9 @@ def stochastic_heun(
     Output:
         samples: Array [N, d]   particles after `iters` Heun updates
     """
+    step = _positive_step("stochastic_heun", step)
+    iters = _count("stochastic_heun: iters", iters, 0)
+    chunk = _chunk("stochastic_heun", samples, chunk)
     out = []
     for i, x in enumerate(jnp.array_split(samples, chunk, axis=0)):
         keys = jax.random.split(jax.random.fold_in(key, i), iters)
@@ -382,6 +432,10 @@ def hamiltonian_monte_carlo(
     Output:
         samples: Array [N, d]   particles after `burns` HMC trajectories
     """
+    step = _positive_step("hamiltonian_monte_carlo", step)
+    iters = _count("hamiltonian_monte_carlo: iters", iters, 1)
+    burns = _count("hamiltonian_monte_carlo: burns", burns, 0)
+    chunk = _chunk("hamiltonian_monte_carlo", samples, chunk)
     out = []
     for i, x in enumerate(jnp.array_split(samples, chunk, axis=0)):
         keys = jax.random.split(jax.random.fold_in(key, i), burns)

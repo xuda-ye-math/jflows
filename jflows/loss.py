@@ -39,7 +39,18 @@ __all__ = [
 # KL loss estimators — Monte Carlo KL divergences on source / target
 # ──────────────────────────────────────────────────────────────────────
 
-def reverse_KL_F(x: Array, target: Potential, flow: Flow) -> Array:
+def _trace_flow(flow: Flow, trace_key: Array | None) -> Flow:
+    if trace_key is None:
+        return flow
+    return flow.with_trace_key(trace_key)
+
+
+def reverse_KL_F(
+    x: Array,
+    target: Potential,
+    flow: Flow,
+    trace_key: Array | None = None,
+) -> Array:
     """
     KL loss using source samples, with the flow fixed as the forward map F
     (source -> target), differentiated in its native direction. Returns
@@ -51,14 +62,23 @@ def reverse_KL_F(x: Array, target: Potential, flow: Flow) -> Array:
         x:      Array [N, d]   samples drawn from the source distribution
         target: Potential      negative log-density of the target (up to const)
         flow:   Flow           the normalizing flow, applied as F (source -> target)
+        trace_key: Array | None optional Hutchinson key for `CNF(exact=False)`;
+                              packed trainers refresh it every step. None uses
+                              the constructor key for reproducible evaluation
     Output:
         loss: Array [N]   per-sample losses (reduce with .mean() for the objective)
     """
+    flow = _trace_flow(flow, trace_key)
     y, ladj = flow.call_and_ladj(x)  # y = F(x), log|det J_F(x)|
     return target(y) - ladj
 
 
-def forward_KL_G(y: Array, source: Potential, flow: Flow) -> Array:
+def forward_KL_G(
+    y: Array,
+    source: Potential,
+    flow: Flow,
+    trace_key: Array | None = None,
+) -> Array:
     """
     KL loss using target samples, with the flow fixed as the inverse map G
     (target -> source), differentiated in its native direction. Returns
@@ -70,15 +90,19 @@ def forward_KL_G(y: Array, source: Potential, flow: Flow) -> Array:
         y:      Array [N, d]   samples drawn from the target distribution
         source: Potential      negative log-density of the source (up to const)
         flow:   Flow           the normalizing flow, applied as G (target -> source)
+        trace_key: Array | None optional Hutchinson key for `CNF(exact=False)`;
+                              packed trainers refresh it every step
     Output:
         loss: Array [N]   per-sample losses (reduce with .mean() for the objective)
     """
+    flow = _trace_flow(flow, trace_key)
     x, ladj = flow.call_and_ladj(y)  # x = G(y), log|det J_G(y)|
     return source(x) - ladj
 
 
 def forward_KLX_G(y: Array, source: Potential, target: Potential, flow: Flow,
-                  key: Array, coeff_lambda: float = 1.0) -> Array:
+                  key: Array, coeff_lambda: float = 1.0,
+                  trace_key: Array | None = None) -> Array:
     """
     Forward KL regularised by the X functional, using target samples, with the
     flow fixed as the inverse map G (target -> source). Writing the per-sample
@@ -97,9 +121,11 @@ def forward_KLX_G(y: Array, source: Potential, target: Potential, flow: Flow,
         flow:         Flow           the normalizing flow, applied as G (target -> source)
         key:          Array          PRNG key seeding the batch permutation
         coeff_lambda: float          weight of the X functional term
+        trace_key:    Array | None   optional Hutchinson key for an approximate CNF
     Output:
         loss: Array [N]   per-sample losses (reduce with .mean() for the objective)
     """
+    flow = _trace_flow(flow, trace_key)
     x, ladj = flow.call_and_ladj(y)      # x = G(y), log|det J_G(y)|
     z = source(x) - target(y) - ladj     # per-sample log-ratio  log(mu/nu)
     perm = jax.random.permutation(key, y.shape[0])
@@ -107,7 +133,7 @@ def forward_KLX_G(y: Array, source: Potential, target: Potential, flow: Flow,
 
 
 def forward_X_G(y: Array, source: Potential, target: Potential, flow: Flow,
-                key: Array) -> Array:
+                key: Array, trace_key: Array | None = None) -> Array:
     """
     The standalone X functional X_omega, using samples of a weight measure
     omega, with the flow fixed as the inverse map G (target -> source).
@@ -130,9 +156,11 @@ def forward_X_G(y: Array, source: Potential, target: Potential, flow: Flow,
         target: Potential      negative log-density of the target (up to const)
         flow:   Flow           the normalizing flow, applied as G (target -> source)
         key:    Array          PRNG key seeding the batch permutation
+        trace_key: Array | None optional Hutchinson key for an approximate CNF
     Output:
         loss: Array [N]   per-sample losses (reduce with .mean() for the objective)
     """
+    flow = _trace_flow(flow, trace_key)
     x, ladj = flow.call_and_ladj(y)      # x = G(y), log|det J_G(y)|
     z = source(x) - target(y) - ladj     # per-sample log-ratio  log(mu/nu)
     perm = jax.random.permutation(key, y.shape[0])

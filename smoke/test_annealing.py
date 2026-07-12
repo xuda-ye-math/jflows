@@ -10,7 +10,7 @@ For sequential_monte_carlo / annealed_importance_sampling (type='F'/'G'):
     2. loop == composition: SMC equals the manual
        reweight -> resample -> langevin chain with the documented key
        derivation;
-    3. taming pass-through keeps the rejuvenation finite and unbiased on
+    3. taming pass-through keeps the unadjusted rejuvenation finite on
        the same target;
     4. AIS with the identity flow (RealNVP.zeros()) reduces to a
        geometric source->target ladder and reproduces the target

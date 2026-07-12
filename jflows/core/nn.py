@@ -170,6 +170,19 @@ class MaskedMLP(eqx.Module):
         if activation is None:
             activation = jax.nn.relu
 
+        # A fully unconditional output is a valid autoregressive
+        # conditioner (and is exactly what the first/only coordinate of a
+        # one-dimensional NSF/NCSF needs).  Represent it as a bias-only
+        # masked linear layer instead of rejecting the null Jacobian.  The
+        # output biases remain independently trainable, while the all-zero
+        # mask guarantees that the conditioner does not depend on x.
+        if not adjacency.any():
+            self.linears = (MaskedLinear(key, adjacency),)
+            self.activation = activation
+            self.in_features = in_features
+            self.out_features = out_features
+            return
+
         # Merge outputs with identical dependency sets so the masked
         # linear layers can be smaller.
         adjacency, inverse = np.unique(adjacency, axis=0, return_inverse=True)

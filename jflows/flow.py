@@ -26,6 +26,8 @@ JAX conventions:
 
 from abc import abstractmethod
 from collections.abc import Callable
+import math
+import operator
 
 import equinox as eqx
 import jax
@@ -90,6 +92,20 @@ class Flow(eqx.Module):
     @abstractmethod
     def t(self) -> ComposedTransform: ...
 
+    def with_trace_key(self, key: Array) -> "Flow":
+        """Return a copy using `key` for a stochastic log-Jacobian trace.
+
+        Deterministic flows ignore the key and return themselves. Approximate
+        CNFs override this hook so generic losses/trainers can refresh their
+        Hutchinson probes without changing the standard map interface.
+        """
+        return self
+
+    @property
+    def needs_trace_key(self) -> bool:
+        """Whether training should refresh a stochastic log-trace key."""
+        return False
+
     def __call__(self, x: Array) -> Array:
         """Forward map y (the transform's native direction)."""
         return self.t()(x)
@@ -117,6 +133,36 @@ def _make_orders(key: Array, d: int, transforms: int, randmask: bool) -> list[np
         np.arange(d) if i % 2 == 0 else np.arange(d)[::-1]
         for i in range(transforms)
     ]
+
+
+def _positive_int(name: str, value, minimum: int = 1) -> int:
+    try:
+        result = operator.index(value)
+    except TypeError as exc:
+        raise ValueError(f"{name} must be an integer, got {value!r}") from exc
+    if isinstance(value, bool) or result < minimum:
+        raise ValueError(f"{name} must be >= {minimum}, got {value!r}")
+    return result
+
+
+def _box_bounds(name: str, a, b) -> tuple[Array, Array]:
+    a = jnp.asarray(a)
+    b = jnp.asarray(b)
+    dtype = jnp.result_type(a, b)
+    if not jnp.issubdtype(dtype, jnp.floating):
+        if jnp.issubdtype(dtype, jnp.complexfloating):
+            raise ValueError(f"{name}: bounds must be real-valued")
+        dtype = jnp.result_type(float)
+    a = jnp.asarray(a, dtype=dtype)
+    b = jnp.asarray(b, dtype=dtype)
+    if a.ndim != 1 or a.shape != b.shape or a.size == 0:
+        raise ValueError(
+            f"{name}: a and b must be non-empty vectors of equal shape; "
+            f"got {a.shape} and {b.shape}"
+        )
+    if not bool(jnp.all(jnp.isfinite(a) & jnp.isfinite(b) & (b > a))):
+        raise ValueError(f"{name}: bounds must be finite and satisfy b > a coordinatewise")
+    return a, b
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -178,9 +224,11 @@ class NSF(Flow):
         hidden_features: tuple[int, ...] = (64, 64),
         activation: Callable[[Array], Array] = jax.nn.silu,
     ) -> None:
-        a = jnp.asarray(a)
-        b = jnp.asarray(b)
-        assert a.shape == b.shape and a.ndim == 1
+        a, b = _box_bounds("NSF", a, b)
+        bins = _positive_int("NSF: bins", bins, minimum=2)
+        transforms = _positive_int("NSF: transforms", transforms)
+        if not math.isfinite(float(slope)) or not 0 < slope < 1:
+            raise ValueError(f"NSF: slope must be finite and lie in (0, 1), got {slope!r}")
         d = a.shape[0]
 
         self.a = a
@@ -300,9 +348,11 @@ class NCSF(Flow):
         hidden_features: tuple[int, ...] = (64, 64),
         activation: Callable[[Array], Array] = jax.nn.silu,
     ) -> None:
-        a = jnp.asarray(a)
-        b = jnp.asarray(b)
-        assert a.shape == b.shape and a.ndim == 1
+        a, b = _box_bounds("NCSF", a, b)
+        bins = _positive_int("NCSF: bins", bins, minimum=2)
+        transforms = _positive_int("NCSF: transforms", transforms)
+        if not math.isfinite(float(slope)) or not 0 < slope < 1:
+            raise ValueError(f"NCSF: slope must be finite and lie in (0, 1), got {slope!r}")
         d = a.shape[0]
 
         self.a = a
@@ -366,8 +416,8 @@ class CNF(Flow):
     Acts as a bijection on R^d via an ODE drift learned by an MLP. The
     exact-log-det path is O(d) ODE evaluations per Jacobian; pass
     `exact=False` to switch to a Hutchinson stochastic estimate (faster,
-    biased gradients during training; the probe noise is drawn from the
-    constructor key).
+    stochastic gradients during training; the packed trainers refresh the
+    call-shared trace key every optimizer step).
 
     Integration is fixed-step RK4 (the only integrator in jflows): a
     deterministic flop budget under a single `lax.scan` trace. Accuracy is
@@ -399,6 +449,9 @@ class CNF(Flow):
         hidden_features: tuple[int, ...] = (64, 64),
         activation: Callable[[Array], Array] = jax.nn.silu,
     ) -> None:
+        dimension = _positive_int("CNF: dimension", dimension)
+        frequency = _positive_int("CNF: frequency", frequency, minimum=0)
+        nt = _positive_int("CNF: nt", nt)
         self._ffj = FFJTransform(
             key,
             dimension=dimension,
@@ -412,6 +465,24 @@ class CNF(Flow):
     def t(self) -> ComposedTransform:
         """Bijection on R^d as a length-1 ComposedTransform."""
         return ComposedTransform(self._ffj())
+
+    @property
+    def needs_trace_key(self) -> bool:
+        return not self._ffj.exact
+
+    def with_trace_key(self, key: Array) -> "CNF":
+        """Copy with a fresh Hutchinson probe key (`exact=False`)."""
+        if self._ffj.exact:
+            return self
+        impl = str(jax.random.key_impl(key))
+        if impl != self._ffj.key_impl:
+            seed = jax.random.bits(key, shape=(), dtype=jnp.uint32)
+            key = jax.random.key(seed, impl=self._ffj.key_impl)
+        return eqx.tree_at(
+            lambda f: f._ffj.key,
+            self,
+            jax.random.key_data(key),
+        )
 
     def zeros(self) -> "CNF":
         """Drift = 0 → ODE flows trivially, identity bijection.
@@ -480,6 +551,16 @@ class OTFlow(Flow):
         nt: int = 8,
         time_bound: tuple[float, float] = (0.0, 1.0),
     ) -> None:
+        dimension = _positive_int("OTFlow: dimension", dimension)
+        hidden = _positive_int("OTFlow: hidden", hidden)
+        layer = _positive_int("OTFlow: layer", layer, minimum=2)
+        rank = _positive_int("OTFlow: rank", rank)
+        nt = _positive_int("OTFlow: nt", nt)
+        if (len(time_bound) != 2 or not all(math.isfinite(float(t)) for t in time_bound)
+                or not time_bound[0] < time_bound[1]):
+            raise ValueError(
+                f"OTFlow: time_bound must be two finite increasing values, got {time_bound!r}"
+            )
         self._ot = OTFlowLazy(
             key,
             dimension=dimension,
@@ -559,6 +640,12 @@ class RealNVP(Flow):
         hidden_features: tuple[int, ...] = (64, 64),
         activation: Callable[[Array], Array] = jax.nn.silu,
     ) -> None:
+        dimension = _positive_int("RealNVP: dimension", dimension, minimum=2)
+        transforms = _positive_int("RealNVP: transforms", transforms)
+        if mixing not in (None, "rotation", "lu"):
+            raise ValueError(
+                f"RealNVP: mixing must be None, 'rotation', or 'lu', got {mixing!r}"
+            )
         mask_key, layer_key = jax.random.split(key)
         mkeys = jax.random.split(mask_key, transforms)
         lkeys = jax.random.split(layer_key, transforms)

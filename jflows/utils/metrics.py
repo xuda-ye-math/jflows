@@ -16,6 +16,8 @@ diagnostic; resample bootstraps the particle set from the linear weights.
 
 from __future__ import annotations
 
+import operator
+
 import jax
 import jax.numpy as jnp
 from jax import Array
@@ -34,6 +36,28 @@ __all__ = [
 ]
 
 
+def _linear_weights_from_log(log_weights: Array) -> Array:
+    """Convert log-weights to a safe max-shifted linear representation.
+
+    Positive infinities share all mass, finite values use the usual shifted
+    exponential, and an undefined vector (any NaN, or all -inf) becomes all
+    zeros. `resample` gives that zero vector a deliberate uniform fallback.
+    """
+    log_weights = jnp.asarray(log_weights)
+    if not jnp.issubdtype(log_weights.dtype, jnp.inexact):
+        log_weights = log_weights.astype(jnp.result_type(float))
+    has_nan = jnp.any(jnp.isnan(log_weights))
+    posinf = jnp.isposinf(log_weights)
+    has_posinf = jnp.any(posinf)
+    finite = jnp.isfinite(log_weights)
+    has_finite = jnp.any(finite)
+    shift = jnp.max(jnp.where(finite, log_weights, -jnp.inf))
+    regular = jnp.where(finite, jnp.exp(log_weights - shift), 0.0)
+    weights = jnp.where(has_posinf, posinf.astype(log_weights.dtype), regular)
+    valid = ~has_nan & (has_posinf | has_finite)
+    return jnp.where(valid, weights, jnp.zeros_like(weights))
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Importance weights — log/linear-space flow IS reweighting
 # ──────────────────────────────────────────────────────────────────────
@@ -45,6 +69,7 @@ def importance_weights_log(
     flow: Flow,
     type: str,
     chunk: int = 1,
+    trace_key: Array | None = None,
 ) -> Array:
     """
     Self-normalized importance-sampling log-weights for the proposal
@@ -77,19 +102,19 @@ def importance_weights_log(
                                      of wall time; statistically and numerically
                                      equivalent to chunk=1 (each sample's
                                      log-weight depends only on its own (x, F(x))).
+        trace_key: Array | None optional base key for stochastic CNF
+                                log-Jacobian probes
     Output:
         log_w: Array [N]   unnormalized log importance weights, ready to
                            feed into compute_ESS_log or to exponentiate
                            (after subtracting max).
     """
-    if type == "F":
-        push = flow.call_and_ladj   # y = F(x), log|det J_F(x)|
-    elif type == "G":
-        push = flow.inv_and_ladj    # y = G^-1(x), log|det J_{G^-1}(x)|
-    else:
+    if type not in ("F", "G"):
         raise ValueError(f"importance_weights_log: type must be 'F' or 'G', got {type!r}")
+    flow_trace = flow if trace_key is None else flow.with_trace_key(trace_key)
     out = []
     for x in jnp.array_split(samples, chunk, axis=0):
+        push = flow_trace.call_and_ladj if type == "F" else flow_trace.inv_and_ladj
         y, ladj = push(x)
         out.append(-target(y) + source(x) + ladj)
     return jnp.concatenate(out, axis=0)
@@ -102,6 +127,7 @@ def importance_weights(
     flow: Flow,
     type: str,
     chunk: int = 1,
+    trace_key: Array | None = None,
 ) -> Array:
     """
     Linear-space self-normalized importance weights for the proposal
@@ -122,8 +148,10 @@ def importance_weights(
     Output:
         w: Array [N]   unnormalized importance weights in [0, 1].
     """
-    log_w = importance_weights_log(samples, source, target, flow, type, chunk=chunk)
-    return jnp.exp(log_w - log_w.max())
+    log_w = importance_weights_log(
+        samples, source, target, flow, type, chunk=chunk, trace_key=trace_key
+    )
+    return _linear_weights_from_log(log_w)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -139,8 +167,33 @@ def compute_ESS(weights: Array) -> Array:
     Output:
         ESS: Array (scalar in [0, 1])
     """
+    weights = jnp.asarray(weights)
+    if weights.ndim != 1 or weights.shape[0] == 0:
+        raise ValueError("compute_ESS: weights must be a non-empty vector")
+    if not jnp.issubdtype(weights.dtype, jnp.inexact):
+        weights = weights.astype(jnp.result_type(float))
     N = weights.shape[0]
-    return weights.sum() ** 2 / (N * (weights**2).sum())
+    total = weights.sum()
+    square = jnp.square(weights).sum()
+    raw = total**2 / (N * square)
+
+    # Preserve the ordinary calculation whenever it is finite. If its
+    # intermediate sum/square overflowed despite finite inputs, recompute on
+    # a scale-normalized vector. Invalid/negative/all-zero weights have no
+    # meaningful ESS and deliberately return 0 rather than NaN.
+    scale = jnp.max(jnp.abs(weights))
+    scaled = jnp.where(
+        weights != 0,
+        jnp.sign(weights) * jnp.exp(jnp.log(jnp.abs(weights)) - jnp.log(scale)),
+        0.0,
+    )
+    fallback_den = N * jnp.square(scaled).sum()
+    fallback = jnp.where(
+        fallback_den > 0, scaled.sum() ** 2 / fallback_den, 0.0
+    )
+    ess = jnp.where(jnp.isfinite(raw), raw, fallback)
+    valid = jnp.all(jnp.isfinite(weights) & (weights >= 0)) & (scale > 0)
+    return jnp.where(valid, jnp.clip(ess, 0.0, 1.0), 0.0)
 
 
 def compute_ESS_log(log_weights: Array) -> Array:
@@ -156,12 +209,24 @@ def compute_ESS_log(log_weights: Array) -> Array:
     Output:
         ESS: Array (scalar in [0, 1])
     """
+    log_weights = jnp.asarray(log_weights)
+    if log_weights.ndim != 1 or log_weights.shape[0] == 0:
+        raise ValueError("compute_ESS_log: log_weights must be a non-empty vector")
+    if not jnp.issubdtype(log_weights.dtype, jnp.inexact):
+        log_weights = log_weights.astype(jnp.result_type(float))
     N = log_weights.shape[0]
+    # Keep the established logsumexp computation bit-for-bit on ordinary
+    # finite inputs; use the safe linear representation only for degenerate
+    # vectors where the original expression is non-finite.
     log_num = 2 * jax.scipy.special.logsumexp(log_weights, axis=0)
     log_den = jax.scipy.special.logsumexp(2 * log_weights, axis=0) + jnp.log(
         jnp.asarray(N, dtype=log_weights.dtype)
     )
-    return jnp.exp(log_num - log_den)
+    raw = jnp.exp(log_num - log_den)
+    weights = _linear_weights_from_log(log_weights)
+    fallback = compute_ESS(weights)
+    ess = jnp.where(jnp.isfinite(raw), raw, fallback)
+    return jnp.where(jnp.any(jnp.isnan(log_weights)), 0.0, ess)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -190,11 +255,33 @@ def coverage(y: Array, x: Array, k: int = 5, chunk: int = 1) -> Array:
     Input:
         y: Array [N, d]   candidate samples (e.g. the flow's pushforward)
         x: Array [P, d]   reference samples (e.g. a wide-coverage measure)
-        k: int            neighborhood order (default 5)
+        k: int            neighborhood order (default 5), 1 <= k < P
         chunk: int        split the reference set into this many row blocks
     Output:
         coverage: Array (scalar in [0, 1])
     """
+    if x.ndim != 2 or y.ndim != 2 or x.shape[1] != y.shape[1] \
+            or x.shape[0] < 2 or y.shape[0] < 1:
+        raise ValueError(
+            "coverage: x/y must be non-empty rank-2 arrays with matching feature "
+            f"dimensions and at least two reference rows; got x={x.shape}, y={y.shape}"
+        )
+    if isinstance(k, bool) or isinstance(chunk, bool):
+        raise ValueError("coverage: k and chunk must be integers, not booleans")
+    try:
+        k = operator.index(k)
+    except TypeError as exc:
+        raise ValueError(f"coverage: k must be an integer, got {k!r}") from exc
+    try:
+        chunk = operator.index(chunk)
+    except TypeError as exc:
+        raise ValueError(f"coverage: chunk must be an integer, got {chunk!r}") from exc
+    if not (1 <= k < x.shape[0]):
+        raise ValueError(f"coverage: k must satisfy 1 <= k < P={x.shape[0]}, got {k!r}")
+    if not (1 <= chunk <= x.shape[0]):
+        raise ValueError(
+            f"coverage: chunk must satisfy 1 <= chunk <= P={x.shape[0]}, got {chunk!r}"
+        )
     x2 = (x * x).sum(axis=-1)                                   # [P]
     y2 = (y * y).sum(axis=-1)                                   # [N]
     covered = []
@@ -226,14 +313,51 @@ def resample(key: Array, samples: Array, weights: Array, N: int | None = None) -
     Input:
         key:     PRNG key
         samples: Array [M, d]
-        weights: Array [M]   (non-negative, not required to be normalized)
+        weights: Array [M]   non-negative, not required to be normalized.
+                 Positive infinities share all mass. A zero-total or invalid
+                 vector falls back to uniform resampling rather than silently
+                 selecting the final particle.
         N: number of independent samples to return; defaults to samples.shape[0]
     Output:
         resampled: Array [N, d]
     """
+    weights = jnp.asarray(weights)
+    M = samples.shape[0]
+    if M == 0 or weights.ndim != 1 or weights.shape[0] != M:
+        raise ValueError(
+            f"resample: samples and weights need matching non-empty leading axes; "
+            f"got samples={samples.shape}, weights={weights.shape}"
+        )
     if N is None:
-        N = samples.shape[0]
-    cdf = jnp.cumsum(weights)
+        N = M
+    if N < 1:
+        raise ValueError(f"resample: N must be positive, got {N!r}")
+    if not jnp.issubdtype(weights.dtype, jnp.inexact):
+        weights = weights.astype(jnp.result_type(float))
+
+    posinf = jnp.isposinf(weights)
+    has_posinf = jnp.any(posinf)
+    valid = jnp.all((jnp.isfinite(weights) | posinf) & (weights >= 0))
+    finite_weights = jnp.where(jnp.isfinite(weights), weights, 0.0)
+    total = finite_weights.sum()
+    scale = jnp.max(finite_weights)
+    # On some float32 accelerator kernels, reciprocal(scale) underflows for
+    # scale ~ 1e38, making the seemingly safe `weights / scale` all zeros.
+    # The log difference avoids that reciprocal path and is used only when
+    # the ordinary total has overflowed.
+    scaled = jnp.where(
+        finite_weights > 0,
+        jnp.exp(jnp.log(finite_weights) - jnp.log(scale)),
+        0.0,
+    )
+    regular = jnp.where(jnp.isfinite(total), finite_weights, scaled)
+    regular_ok = valid & (scale > 0)
+    safe = jnp.where(
+        valid & has_posinf,
+        posinf.astype(weights.dtype),
+        jnp.where(regular_ok, regular, jnp.ones_like(weights)),
+    )
+    cdf = jnp.cumsum(safe)
     u = jax.random.uniform(key, (N,), dtype=cdf.dtype) * cdf[-1]
     idx = jnp.searchsorted(cdf, u, side="right")
     idx = jnp.minimum(idx, weights.shape[0] - 1)  # u can round up to cdf[-1]

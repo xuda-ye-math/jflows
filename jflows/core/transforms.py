@@ -583,9 +583,9 @@ class FreeFormJacobianTransform(Transform):
 
     `exact=True`  → exact log|det J| via an O(d) JVP sweep per drift eval.
     `exact=False` → Hutchinson trace estimator (stochastic); requires a
-        PRNG `key` — the probe noise is drawn once per `call_and_ladj`
-        from that key (rebuild the transform with a fresh key for a new
-        probe).
+        PRNG `key`. One probe is shared across leading batch axes so a fixed
+        key is permutation/chunk invariant. Rebuild/rekey the transform for
+        an independent call; packed trainers do this every optimizer step.
 
     Integration is fixed-step RK4 (`rk4_fixed`) under `lax.scan`;
     gradients to the drift's parameters flow through the scan natively.
@@ -606,6 +606,7 @@ class FreeFormJacobianTransform(Transform):
     nt: int = eqx.field(static=True)
     exact: bool = eqx.field(static=True)
     key: Array | None
+    key_impl: str | None = eqx.field(static=True)
 
     domain_dim: ClassVar[int] = 1
     codomain_dim: ClassVar[int] = 1
@@ -618,13 +619,32 @@ class FreeFormJacobianTransform(Transform):
         nt: int = 8,
         exact: bool = True,
         key: Array | None = None,
+        key_impl: str | None = None,
     ) -> None:
         self.f = f
         self.t0 = t0
         self.t1 = t1
         self.nt = nt
         self.exact = exact
-        self.key = key
+        if key is None:
+            self.key = None
+            self.key_impl = None
+        else:
+            key = jnp.asarray(key)
+            if jax.dtypes.issubdtype(key.dtype, jax.dtypes.prng_key):
+                inferred_impl = str(jax.random.key_impl(key))
+                self.key = jax.random.key_data(key)
+            else:
+                inferred_impl = key_impl or str(jax.random.key_impl(key))
+                # Validate raw key shape against the selected implementation.
+                jax.random.wrap_key_data(key, impl=inferred_impl)
+                self.key = key
+            if key_impl is not None and key_impl != inferred_impl:
+                raise ValueError(
+                    "FreeFormJacobianTransform: key_impl disagrees with the typed key "
+                    f"({key_impl!r} != {inferred_impl!r})"
+                )
+            self.key_impl = inferred_impl
 
     def __call__(self, x: Array) -> Array:
         return rk4_fixed(self.f, x, self.t0, self.t1, self.nt)
@@ -638,6 +658,7 @@ class FreeFormJacobianTransform(Transform):
             nt=self.nt,
             exact=self.exact,
             key=self.key,
+            key_impl=self.key_impl,
         )
 
     def _inverse(self, y: Array) -> Array:
@@ -658,13 +679,16 @@ class FreeFormJacobianTransform(Transform):
                     "FreeFormJacobianTransform(exact=False) needs a PRNG `key` "
                     "for the Hutchinson probe."
                 )
-            # re-randomize the probe per call (content-hashed key, grad-severed
-            # by the int cast) so the Hutchinson trace is unbiased across
-            # training batches instead of frozen to the construction-time key
-            seed = (jnp.abs(x).sum() * 1e3).astype(jnp.int32)
+            # A call-shared probe makes every row's estimate independent of
+            # batch ordering/chunking. Training drivers refresh the owning
+            # CNF's key every optimizer step, preventing the learned drift
+            # from adapting to one frozen projection.
             eps = jax.random.normal(
-                jax.random.fold_in(self.key, seed), x.shape, dtype=x.dtype
+                jax.random.wrap_key_data(self.key, impl=self.key_impl),
+                (d,),
+                dtype=x.dtype,
             )
+            eps = jnp.broadcast_to(eps, x.shape)
 
         def f_aug(t: Array, z: Array) -> Array:
             xs = z[..., :d]
@@ -742,13 +766,14 @@ class LULinearTransform(Transform):
     part plus the identity (unit diagonal), so the forward is a single
     `L @ U @ x` and the log-abs-determinant is `sum(log|diag(L)|)`.
 
-    Numerical safety: `log|det| = sum log|diag(L)|` diverges to `-inf`
-    if any diagonal entry crosses zero during training (nothing in the
-    parameterisation keeps `diag(L)` away from the origin). The log is
-    therefore computed on `|diag|` clamped to a small floor `_LADJ_EPS`,
-    so a near-singular `L` produces a large-but-finite negative ladj
-    with a saturated zero gradient on the affected entries — preventing
-    the loss from exploding to NaN.
+    Numerical safety: every use of `diag(L)` — forward map, inverse, and
+    log-determinant — applies the same sign-preserving magnitude floor
+    `max(_LADJ_EPS, finfo(dtype).tiny)`. Thus even a parameter exactly at zero
+    defines one coherent, invertible map, rather than a singular map paired
+    with a finite reported log-determinant. Entries outside the tiny floored
+    region are unchanged. LU transforms require float32 or float64: JAX's GPU
+    triangular solve does not support float16/bfloat16, so accepting those
+    dtypes would violate the transform's forward/inverse contract.
 
     Arguments:
         LU: matrix whose lower / upper triangular parts hold the non-zero
@@ -767,11 +792,32 @@ class LULinearTransform(Transform):
     _LADJ_EPS: ClassVar[float] = 1e-12
 
     def __init__(self, LU: Array) -> None:
+        LU = jnp.asarray(LU)
+        if not jnp.issubdtype(LU.dtype, jnp.floating):
+            if jnp.issubdtype(LU.dtype, jnp.complexfloating):
+                raise ValueError("LULinearTransform: LU must be real-valued")
+            LU = LU.astype(jnp.result_type(float))
+        if jnp.finfo(LU.dtype).bits < 32:
+            raise ValueError(
+                "LULinearTransform: LU requires float32 or float64 because "
+                f"the JAX GPU triangular solve does not support {LU.dtype}"
+            )
+        if LU.ndim != 2 or LU.shape[0] == 0 or LU.shape[0] != LU.shape[1]:
+            raise ValueError(f"LULinearTransform: LU must be a non-empty square matrix, got {LU.shape}")
         self.LU = LU
 
     @property
     def L(self) -> Array:
-        return jnp.tril(self.LU)
+        L = jnp.tril(self.LU)
+        raw = jnp.diagonal(L, axis1=-2, axis2=-1)
+        sign = jnp.where(raw < 0, -jnp.ones_like(raw), jnp.ones_like(raw))
+        floor = jnp.maximum(
+            jnp.asarray(self._LADJ_EPS, dtype=raw.dtype),
+            jnp.asarray(jnp.finfo(raw.dtype).tiny, dtype=raw.dtype),
+        )
+        safe = sign * jnp.maximum(jnp.abs(raw), floor)
+        idx = jnp.arange(self.LU.shape[-1])
+        return L.at[..., idx, idx].set(safe)
 
     @property
     def U(self) -> Array:
@@ -790,16 +836,16 @@ class LULinearTransform(Transform):
 
     def log_abs_det_jacobian(self, x: Array, y: Array) -> Array:
         diag = jnp.diagonal(self.L, axis1=-2, axis2=-1)
-        ladj = jnp.log(jnp.maximum(jnp.abs(diag), self._LADJ_EPS)).sum(axis=-1)
+        ladj = jnp.log(jnp.abs(diag)).sum(axis=-1)
         return jnp.broadcast_to(ladj, x[..., 0].shape)
 
     def call_and_ladj(self, x: Array) -> tuple[Array, Array]:
         # Compute L and U once and share — ComposedTransform.call_and_ladj
         # routes through here on the training hot path.
         I = jnp.eye(self.LU.shape[-1], dtype=self.LU.dtype)
-        L = jnp.tril(self.LU)
+        L = self.L
         U = jnp.triu(self.LU, k=1) + I
         y = jnp.einsum("...ij,...j->...i", L @ U, x)
         diag = jnp.diagonal(L, axis1=-2, axis2=-1)
-        ladj = jnp.log(jnp.maximum(jnp.abs(diag), self._LADJ_EPS)).sum(axis=-1)
+        ladj = jnp.log(jnp.abs(diag)).sum(axis=-1)
         return y, jnp.broadcast_to(ladj, x[..., 0].shape)

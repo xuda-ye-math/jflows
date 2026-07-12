@@ -22,7 +22,7 @@ from jax import Array
 
 from ..flow import Flow
 from ..potential import Potential, linear_combination
-from .metrics import compute_ESS_log, resample
+from .metrics import _linear_weights_from_log, compute_ESS_log, resample
 from .rejuvenation import langevin
 
 
@@ -97,9 +97,11 @@ def sequential_monte_carlo(
                                 grad u_k / (1 + taming * ||grad u_k||) —
                                 stabilizes the rejuvenation on potentials
                                 whose gradients grow super-linearly
-        chunk:   int            split along dim 0 into this many chunks
-                                inside each Langevin call to bound peak
-                                memory (statistically equivalent to chunk=1)
+        chunk:   int            split along dim 0 into this many execution
+                                chunks inside each Langevin call
+                                (statistically equivalent to chunk=1; when the
+                                enclosing routine is jitted this is not a
+                                strict peak-memory guarantee)
     Output:
         samples: Array [N, d]   particles approximating exp(-target)
         ess:     Array [M]      per-level effective sample size (in [0, 1]) of
@@ -108,6 +110,15 @@ def sequential_monte_carlo(
                                 consecutive bridges overlap (close to 1 =
                                 well-spaced ladder)
     """
+    if ladder < 1:
+        raise ValueError(f"sequential_monte_carlo: ladder must be positive, got {ladder!r}")
+    if iters < 0:
+        raise ValueError(f"sequential_monte_carlo: iters must be non-negative, got {iters!r}")
+    if chunk < 1 or chunk > samples.shape[0]:
+        raise ValueError(
+            f"sequential_monte_carlo: chunk must lie in [1, N], got {chunk!r} "
+            f"for N={samples.shape[0]}"
+        )
     M = ladder
     x = samples
     ess = []  # per-level effective sample size of the incremental weights
@@ -119,7 +130,7 @@ def sequential_monte_carlo(
         #     k) to (1/M) * (source(x) - target(x)).
         log_w = (source(x) - target(x)) / M
         ess.append(compute_ESS_log(log_w))
-        w = jnp.exp(log_w - log_w.max())  # self-normalised, in [0, 1]
+        w = _linear_weights_from_log(log_w)
         # (2) resample onto high-weight particles, then (3) Langevin-rejuvenate
         #     ON the bridge u_k to obtain fresh samples ~ exp(-u_k).
         key_r, key_l = jax.random.split(jax.random.fold_in(key, k))
@@ -145,10 +156,11 @@ def annealed_importance_sampling(
     adjust: bool = True,
     taming: float = 0,
     chunk: int = 1,
+    trace_key: Array | None = None,
 ) -> Array:
     """
-    Annealed importance sampling (an SMC sampler) that uses a trained flow
-    as the proposal. The source `mu_0 ~ exp(-source)` and target
+    Flow-proposal annealing surrogate that uses a trained flow as the
+    proposal. The source `mu_0 ~ exp(-source)` and target
     `mu_1 ~ exp(-target)` live in the same space, and the flow has been
     trained so that the pushforward `F_# mu_0 ~~ mu_1`. The input `samples`
     are drawn from `mu_0`; the routine returns samples from `mu_1`.
@@ -183,9 +195,10 @@ def annealed_importance_sampling(
     rejuvenation targets `mu_1 = exp(-target)` **directly** rather than the
     exact intermediate `pi_k`: evaluating / differentiating `log pi_k`
     would require the pushforward density of F (hence F^{-1} and its
-    Jacobian gradient), which is far more expensive, and since the de-facto
-    target is `mu_1` and the incremental weights already follow the `pi_k`
-    path, the `mu_1` kernel introduces no essential deviation.
+    Jacobian gradient), which is far more expensive. Consequently this is a
+    deliberately biased, score-free target surrogate rather than exact AIS
+    or SMC. MALA makes each rejuvenation kernel invariant for `mu_1`; it does
+    not remove the intermediate-path approximation.
 
     Input:
         key:       PRNG key (level k uses fold_in(key, k), split into the
@@ -201,21 +214,38 @@ def annealed_importance_sampling(
                                      from the flow proposal to the target.
         step:      float             Langevin step size, shared across levels
         iters:     int               Langevin steps per level
-        adjust:    bool              if True, MALA rejuvenation in mu_1
-                                     (unbiased); if False, ULA (see `langevin`)
+        adjust:    bool              if True, MALA rejuvenation invariant for
+                                     mu_1; if False, ULA (see `langevin`)
         taming:    float             if > 0, tamed Langevin drift on the target
                                      (see `langevin`)
-        chunk:     int               split along dim 0 into this many chunks for
-                                     the pushforward / inverse / weight passes
-                                     and inside each Langevin call, to bound
-                                     peak memory (statistically equivalent to
-                                     chunk=1)
+        chunk:     int               split along dim 0 into this many execution
+                                     chunks for the pushforward / inverse /
+                                     weight passes and Langevin calls
+                                     (statistically equivalent to chunk=1;
+                                     nested compiled loops are not a strict
+                                     peak-memory guarantee)
+        trace_key: Array | None      optional base key for stochastic CNF
+                                     log-Jacobian probes; packed trainers pass
+                                     a fresh key automatically
     Output:
         samples: Array [N, d]      particles in mu_1 (target space),
                                    approximating exp(-target)
     """
     if type not in ("F", "G"):
         raise ValueError(f"annealed_importance_sampling: type must be 'F' or 'G', got {type!r}")
+    if ladder < 1:
+        raise ValueError(
+            f"annealed_importance_sampling: ladder must be positive, got {ladder!r}"
+        )
+    if iters < 0:
+        raise ValueError(
+            f"annealed_importance_sampling: iters must be non-negative, got {iters!r}"
+        )
+    if chunk < 1 or chunk > samples.shape[0]:
+        raise ValueError(
+            f"annealed_importance_sampling: chunk must lie in [1, N], got {chunk!r} "
+            f"for N={samples.shape[0]}"
+        )
     M = ladder
     # (0) push the source samples through F to obtain pi_0 = F_# mu_0.
     push = flow.__call__ if type == "F" else flow.inv
@@ -227,16 +257,19 @@ def annealed_importance_sampling(
         #     latent pre-image x = F^{-1}(y) and reuse the
         #     importance_weights_log rule, scaled by 1/M for one level.
         parts = []
+        flow_k = flow if trace_key is None else flow.with_trace_key(
+            jax.random.fold_in(trace_key, k)
+        )
         for yc in jnp.array_split(y, chunk, axis=0):
             if type == "F":
-                xc = flow.inv(yc)                 # x = F^{-1}(y)
-                _, ladj = flow.call_and_ladj(xc)  # log|det J_F(x)|
+                xc = flow_k.inv(yc)                 # x = F^{-1}(y)
+                _, ladj = flow_k.call_and_ladj(xc)  # log|det J_F(x)|
             else:
-                xc, ladj_G = flow.call_and_ladj(yc)  # x = G(y), log|det J_G(y)|
+                xc, ladj_G = flow_k.call_and_ladj(yc)  # x = G(y), log|det J_G(y)|
                 ladj = -ladj_G                       # log|det J_F(x)|
             parts.append((-target(yc) + source(xc) + ladj) / M)
         log_w = jnp.concatenate(parts, axis=0)
-        w = jnp.exp(log_w - log_w.max())  # self-normalised, in [0, 1]
+        w = _linear_weights_from_log(log_w)
         # (2) resample onto high-weight particles, then rejuvenate in mu_1.
         key_r, key_l = jax.random.split(jax.random.fold_in(key, k))
         y = resample(key_r, y, w)
