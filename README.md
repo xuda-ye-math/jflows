@@ -207,51 +207,40 @@ jflows
 
 ## Installation
 
-`jflows` is pure Python. The project convention uses one Conda environment:
-the molecular-science stack comes from conda-forge, while the current CUDA 13
-JAX stack comes from pip inside that environment.
+`jflows` is pure Python and requires JAX and Equinox. Prepare an environment
+containing compatible versions of those dependencies; this project does not
+prescribe how the dependency stack is installed.
 
-**1. Clone the repository.**
+For readers who want a conventional editable installation from GitHub:
 
 ```bash
 mkdir -p "$HOME/src"
 git clone https://github.com/xuda-ye-math/jflows.git "$HOME/src/jflows"
-git clone https://github.com/xuda-ye-math/jflows_md.git "$HOME/src/jflows_md"
+cd "$HOME/src/jflows"
+pip install -e .
 ```
 
-**2. Create the dependency environment.**
+### Maintainer live-source runs
+
+On the project workstation, do not perform the editable installation above.
+Development and test runs use the canonical checkout directly through
+`PYTHONPATH`; local edits then take effect on the next Python process:
 
 ```bash
-conda create -n jflows -c conda-forge \
-  python=3.11 pip openmm parmed cuda-version=13.3
-conda activate jflows
-python -m pip install --upgrade \
-  "jax[cuda13]" equinox matplotlib
+PYTHONPATH=/mnt/projects/jflows python your_script.py
 ```
 
-**3. Register the live ML packages with Conda.** `conda develop` is provided
-by `conda-build`; it keeps imports connected to the source trees, so local
-edits take effect immediately:
+Verify the live-source provenance explicitly:
 
 ```bash
-conda activate jflows
-conda develop -n jflows "$HOME/src/jflows" "$HOME/src/jflows_md"
+PYTHONPATH=/mnt/projects/jflows python -c \
+  "from pathlib import Path; import jflows; print(Path(jflows.__file__).resolve())"
 ```
 
-**4. Verify the live source trees.**
+Repository examples and smoke modules use the same pattern:
 
 ```bash
-conda activate jflows
-python -c \
-  "from pathlib import Path; import jflows, jflows_md; print(Path(jflows.__file__).resolve()); print(Path(jflows_md.__file__).resolve())"
-```
-
-To leave an environment package-free, unregister both paths and use explicit
-`PYTHONPATH` only for individual experiment commands:
-
-```bash
-conda develop -u -n jflows "$HOME/src/jflows" "$HOME/src/jflows_md"
-PYTHONPATH="$HOME/src/jflows:$HOME/src/jflows_md" python molecular_driver.py
+PYTHONPATH=/mnt/projects/jflows python -m smoke.test_flow
 ```
 
 **Importing.** Use the public submodules `flow`, `potential`, `loss`, `train`,
