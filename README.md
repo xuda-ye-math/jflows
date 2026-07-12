@@ -207,11 +207,19 @@ jflows
 
 ## Installation
 
-`jflows` is pure Python and requires JAX and Equinox. Prepare an environment
-containing compatible versions of those dependencies; this project does not
-prescribe how the dependency stack is installed.
+`jflows` is pure Python. A fresh pip-only virtual environment using the latest
+compatible releases is the recommended setup. On Linux with an NVIDIA CUDA 13
+driver:
 
-For readers who want a conventional editable installation from GitHub:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install --upgrade "jax[cuda13]" equinox
+```
+
+Use `jax[cuda12]` for a CUDA 12 system, or plain `jax` for CPU-only work. Then
+install the current checkout conventionally:
 
 ```bash
 mkdir -p "$HOME/src"
@@ -220,11 +228,21 @@ cd "$HOME/src/jflows"
 pip install -e .
 ```
 
-Verify the editable source provenance explicitly:
+Verify both accelerator selection and editable source provenance explicitly:
 
 ```bash
-python -c \
-  "from pathlib import Path; import jflows; print(Path(jflows.__file__).resolve())"
+pip check
+python
+```
+
+Then enter:
+
+```python
+>>> from pathlib import Path
+>>> import jax
+>>> import jflows
+>>> print(jax.default_backend(), jax.devices())
+>>> print(Path(jflows.__file__).resolve())
 ```
 
 Repository examples and smoke modules use the same pattern:
