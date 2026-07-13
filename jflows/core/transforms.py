@@ -358,7 +358,13 @@ class MonotonicRQSTransform(Transform):
         heights = jnp.pad(jax.nn.softmax(heights, axis=-1), [*pad_last, (1, 0)])
         if circular:
             # d_0 = d_K, one learnable seam slope (C¹ across the seam).
-            derivatives = jnp.concatenate([derivatives, derivatives[..., :1]], axis=-1)
+            # A static gather is exactly the index map [0, ..., K - 1, 0].
+            # Keeping this as one uniformly indexed operand also avoids an
+            # XLA:GPU tiled-concatenate lowering failure for some batch sizes.
+            wrap_indices = (
+                jnp.arange(derivatives.shape[-1] + 1) % derivatives.shape[-1]
+            )
+            derivatives = jnp.take(derivatives, wrap_indices, axis=-1)
         else:
             # d_0 = d_K = 1, matching the identity tails outside the box.
             derivatives = jnp.pad(derivatives, [*pad_last, (1, 1)])
