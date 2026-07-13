@@ -98,17 +98,18 @@ def main() -> None:
     log("loop == step composition")
     for name, loop_fn, step_fn, kw_loop, kw_step in [
         ("langevin/ULA", langevin, langevin_step,
-         dict(step=0.05, iters=7, adjust=False), dict(step=0.05, adjust=False)),
+         dict(dt=0.05, steps=7, adjust=False), dict(dt=0.05, adjust=False)),
         ("langevin/MALA", langevin, langevin_step,
-         dict(step=0.05, iters=7, adjust=True), dict(step=0.05, adjust=True)),
+         dict(dt=0.05, steps=7, adjust=True), dict(dt=0.05, adjust=True)),
         ("stochastic_heun", stochastic_heun, stochastic_heun_step,
-         dict(step=0.05, iters=7), dict(step=0.05)),
+         dict(dt=0.05, steps=7), dict(dt=0.05)),
         ("hmc", hamiltonian_monte_carlo, hmc_step,
-         dict(step=0.2, iters=5, burns=7), dict(step=0.2, iters=5)),
+         dict(dt=0.2, leapfrog_steps=5, trajectories=7),
+         dict(dt=0.2, leapfrog_steps=5)),
     ]:
         x_loop = loop_fn(key, x0, TARGET, **kw_loop)
         x_man = x0
-        n_it = kw_loop.get("burns", kw_loop.get("iters"))
+        n_it = kw_loop.get("trajectories", kw_loop.get("steps"))
         for k in jax.random.split(jax.random.fold_in(key, 0), n_it):
             x_man, _ = step_fn(k, x_man, TARGET, **kw_step)
         # tol: scanned loop vs eager steps differ only by XLA fusion rounding
@@ -116,21 +117,26 @@ def main() -> None:
 
     # ── 2. stationary-moment checks on the Gaussian target ──
     log("moments vs analytic Gaussian target (N=4096)")
-    x = langevin(jax.random.key(2), x0, TARGET, step=0.05, iters=600, adjust=True)
+    x = langevin(jax.random.key(2), x0, TARGET, dt=0.05, steps=600, adjust=True)
     check_moments("MALA (exact)", x, mean_tol=0.10, var_rtol=0.15)
-    x = hamiltonian_monte_carlo(jax.random.key(3), x0, TARGET, step=0.25, iters=10, burns=120)
+    x = hamiltonian_monte_carlo(
+        jax.random.key(3), x0, TARGET, dt=0.25,
+        leapfrog_steps=10, trajectories=120,
+    )
     check_moments("HMC (exact)", x, mean_tol=0.10, var_rtol=0.15)
-    x = langevin(jax.random.key(4), x0, TARGET, step=0.02, iters=1500, adjust=False)
+    x = langevin(jax.random.key(4), x0, TARGET, dt=0.02, steps=1500, adjust=False)
     check_moments("ULA (small-step bias)", x, mean_tol=0.10, var_rtol=0.20)
-    x = stochastic_heun(jax.random.key(5), x0, TARGET, step=0.02, iters=1500)
+    x = stochastic_heun(jax.random.key(5), x0, TARGET, dt=0.02, steps=1500)
     check_moments("Heun (small-step bias)", x, mean_tol=0.10, var_rtol=0.20)
 
     # ── 3. acceptance diagnostics from the step aux ──
     log("MH diagnostics")
-    _, aux = langevin_step(jax.random.key(6), x0, TARGET, step=1e-6, adjust=True)
+    _, aux = langevin_step(jax.random.key(6), x0, TARGET, dt=1e-6, adjust=True)
     rate = float(aux["accept"].mean())
     check_true("MALA acceptance -> 1 as step -> 0", rate > 0.99, f"rate = {rate:.4f}")
-    _, aux = hmc_step(jax.random.key(7), x0, TARGET, step=1e-3, iters=5)
+    _, aux = hmc_step(
+        jax.random.key(7), x0, TARGET, dt=1e-3, leapfrog_steps=5,
+    )
     rate = float(aux["accept"].mean())
     check_true("HMC acceptance -> 1 as step -> 0", rate > 0.99, f"rate = {rate:.4f}")
 
@@ -138,8 +144,8 @@ def main() -> None:
     log("tamed drift")
     quartic = potential_from(lambda x: 0.25 * ((x**2).sum(-1)) ** 2)
     x_far = jnp.full((32, 2), 10.0)
-    x_plain = langevin(jax.random.key(8), x_far, quartic, step=0.1, iters=200, adjust=False)
-    x_tamed = langevin(jax.random.key(8), x_far, quartic, step=0.1, iters=200, taming=1.0, adjust=False)
+    x_plain = langevin(jax.random.key(8), x_far, quartic, dt=0.1, steps=200, adjust=False)
+    x_tamed = langevin(jax.random.key(8), x_far, quartic, dt=0.1, steps=200, taming=1.0, adjust=False)
     check_true("untamed ULA diverges (demonstrates the hazard)",
                not bool(jnp.isfinite(x_plain).all()))
     check_true("tamed ULA stays finite", bool(jnp.isfinite(x_tamed).all()),
@@ -152,7 +158,9 @@ def main() -> None:
 
     # ── 5. HMC NaN guard ──
     log("HMC NaN guard")
-    x_guard, aux = hmc_step(jax.random.key(9), x0, quartic, step=1e3, iters=5)
+    x_guard, aux = hmc_step(
+        jax.random.key(9), x0, quartic, dt=1e3, leapfrog_steps=5,
+    )
     check_true("all rejected", bool(~aux["accept"].any()))
     check("particles reverted (finite)", x_guard, x0, tol=0)
 
@@ -161,8 +169,8 @@ def main() -> None:
     check_true("rejuvenation is langevin", rejuvenation is langevin)
     check_true("hmc is hamiltonian_monte_carlo", hmc is hamiltonian_monte_carlo)
     check("same key -> same trajectory",
-          langevin(jax.random.key(10), x0, TARGET, step=0.05, iters=20),
-          langevin(jax.random.key(10), x0, TARGET, step=0.05, iters=20), tol=0)
+          langevin(jax.random.key(10), x0, TARGET, dt=0.05, steps=20),
+          langevin(jax.random.key(10), x0, TARGET, dt=0.05, steps=20), tol=0)
 
     if FAILURES:
         log(f"DONE — {FAILURES} FAILURE(S)")

@@ -98,7 +98,7 @@ def main() -> None:
         for c in (2, 7):
             got = jax.block_until_ready(
                 _iw_log_jit(xs, u0, u1, flow, type_, chunks=c))
-            check(f"eager chunk={c} == full call (type {type_})", got, ref, tol=1e-3)
+            check(f"eager chunks={c} == full call (type {type_})", got, ref, tol=1e-3)
 
     # 2 — memory: the eager per-chunk loop runs FIRST (smallest working
     # set), so every later high-water mark is attributable to the in-jit
@@ -106,7 +106,7 @@ def main() -> None:
     lw_eager = jax.block_until_ready(_iw_log_jit(x, u0, u1, flow, "G", chunks=8))
     p_eager = peak_gib()
     eager_delta = p_eager - p0
-    log(f"peak after EAGER chunk=8  'G' on {NSAMP}: {p_eager:.3f} GiB "
+    log(f"peak after EAGER chunks=8  'G' on {NSAMP}: {p_eager:.3f} GiB "
         f"(delta {eager_delta:.3f})")
 
     # negative control: the SAME chunk count inside one jit — the XLA
@@ -116,7 +116,7 @@ def main() -> None:
     lw_injit = jax.block_until_ready(full_jit(x, u0, u1, flow, "G", chunks=8))
     p_injit = peak_gib()
     injit_delta = p_injit - p0
-    log(f"peak after IN-JIT chunk=8 'G' on {NSAMP}: {p_injit:.3f} GiB "
+    log(f"peak after IN-JIT chunks=8 'G' on {NSAMP}: {p_injit:.3f} GiB "
         f"(delta {injit_delta:.3f})")
     check("eager == in-jit values", lw_eager, lw_injit, tol=1e-3)
     check_true("eager chunking reduces peak memory",
@@ -127,7 +127,7 @@ def main() -> None:
     # 3 — the unchunked full-set call agrees in value (its peak is
     # already covered by the control above)
     lw_full = jax.block_until_ready(full_jit(x, u0, u1, flow, "G"))
-    check("in-jit chunk=8 == unchunked full call", lw_injit, lw_full, tol=1e-3)
+    check("in-jit chunks=8 == unchunked full call", lw_injit, lw_full, tol=1e-3)
 
     if FAILURES:
         log(f"DONE — {FAILURES} FAILURE(S)")

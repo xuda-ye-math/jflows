@@ -1,4 +1,4 @@
-"""Fast BG history/artifact/legacy-keyword smoke test."""
+"""Fast Boltzmann-generator history and artifact smoke test."""
 
 from __future__ import annotations
 
@@ -25,7 +25,6 @@ EXPECTED = {
     "selected", "flow", "t_hist", "batch_ess_hist",
     "valid_trained_ess_hist", "valid_identity_ess_hist",
     "attempt_status_hist", "trained_flow_path_hist", "selected_flow_path",
-    "ess", "ess_history", "imp_history",
 }
 
 
@@ -76,7 +75,8 @@ def main() -> None:
             ]
             with np.load(monitor_path) as monitor_data:
                 assert np.array_equal(
-                    monitor_data["batch_ess_hist"], np.asarray(record["ess_history"])
+                    monitor_data["batch_ess_hist"],
+                    np.asarray(record["batch_ess_hist"][0]),
                 )
             try:
                 bg.boltzmann_reverse_KL_F_fixed(
@@ -90,8 +90,8 @@ def main() -> None:
 
         plain_y, plain_stages = bg.boltzmann_reverse_KL_F_fixed(
             samples, source, source, flow,
-            n_batch=4, steps=2, lr=0.0,
-            mc_step=0.1, mc_iters=0, t_list=[1.0], chunk=1,
+            batch_size=4, train_steps=2, lr=0.0,
+            mc_dt=0.1, mc_steps=0, t_list=[1.0], chunks=1,
         )
         assert jnp.array_equal(plain_y, saved_y)
         assert plain_stages[0]["trained_flow_path_hist"] == (None,)

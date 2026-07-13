@@ -108,8 +108,8 @@ def new_flow():
 
 def train(fn, target, **kw):
     return fn(u0.samples(jax.random.key(2), 4000), u0, target, new_flow(),
-             n_batch=256, steps=40, lr=1e-3, ladder=1, mc_step=1e-3,
-             mc_iters=20, seed=jnp.uint32(0), **kw)[0]
+             batch_size=256, train_steps=40, lr=1e-3, ladder=1, mc_dt=1e-3,
+             mc_steps=20, seed=jnp.uint32(0), **kw)[0]
 
 
 def main() -> None:
@@ -154,7 +154,7 @@ def main() -> None:
                      ("KLX_G", train_forward_KLX_G),
                      ("KLXX_G", train_forward_KLXX_G)):
         kw = {} if fn is not train_forward_KLXX_G else dict(
-            n_pool=1000, melt=2 * math.pi, opt_step=1e-2, opt_iters=20)
+            pool_size=1000, melt=2 * math.pi, opt_alpha=1e-2, opt_steps=20)
         base = train(fn, u_smooth, **kw)
         active = train(fn, u_smooth, e_clip=BIG_E, g_clip=BIG_G, **kw)
         d = max_param_delta(active, base)
@@ -167,7 +167,7 @@ def main() -> None:
                      ("KLX_G", train_forward_KLX_G),
                      ("KLXX_G", train_forward_KLXX_G)):
         kw = {} if fn is not train_forward_KLXX_G else dict(
-            n_pool=1000, melt=2 * math.pi, opt_step=1e-2, opt_iters=20)
+            pool_size=1000, melt=2 * math.pi, opt_alpha=1e-2, opt_steps=20)
         unscreened = train(fn, u_smooth, **kw)
         screened = train(fn, u_smooth, e_clip=E_SCREEN, **kw)
         d = max_param_delta(unscreened, screened)
@@ -197,8 +197,8 @@ def main() -> None:
     log("boltzmann_forward_KLXX_G forwards e_clip / g_clip:")
     y_bg, stages = boltzmann_forward_KLXX_G(
         u0.samples(jax.random.key(3), 4000), u0, u_smooth, new_flow(),
-        n_pool=1000, n_batch=256, steps=30, lr=1e-3, ladder=1,
-        melt=2 * math.pi, opt_step=1e-2, opt_iters=20, mc_step=1e-3, mc_iters=20,
+        pool_size=1000, batch_size=256, train_steps=30, lr=1e-3, ladder=1,
+        melt=2 * math.pi, opt_alpha=1e-2, opt_steps=20, mc_dt=1e-3, mc_steps=20,
         bg_param={"t_safe": 0.3, "tau_ess": 0.2, "max_stages": 2, "max_retry": 2},
         e_clip=20.0, g_clip=1e3)
     check_true("boltzmann KLXX runs under finite e_clip/g_clip",

@@ -139,7 +139,7 @@ def main() -> None:
           jnp.exp(lw - lw.max()), tol=1e-14)
     check("linear type=G", importance_weights(xw, source, target, nsf, type="G"),
           jnp.exp(lw_g - lw_g.max()), tol=1e-14)
-    check("chunk invariance", importance_weights_log(xw, source, target, nsf, type="F", chunk=3),
+    check("chunk invariance", importance_weights_log(xw, source, target, nsf, type="F", chunks=3),
           lw, tol=1e-12)
     try:
         importance_weights_log(xw, source, target, nsf, type="Z")
@@ -178,7 +178,7 @@ def main() -> None:
         d_i = sorted(float(np.linalg.norm(xs_[i] - xs_[j])) for j in range(32) if j != i)
         r_i = d_i[k_ - 1]
         covered += int(any(float(np.linalg.norm(xs_[i] - ys_[n])) < r_i for n in range(48)))
-    check("chunk invariance (chunk=3)", coverage(yc, xr, k=5, chunk=3),
+    check("chunk invariance (chunks=3)", coverage(yc, xr, k=5, chunks=3),
           coverage(yc, xr, k=5), tol=1e-12)
     check("brute-force agreement", coverage(jnp.asarray(ys_), jnp.asarray(xs_), k=k_),
           np.asarray(covered / 32), tol=1e-12)

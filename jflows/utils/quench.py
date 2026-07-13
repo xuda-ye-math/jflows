@@ -19,7 +19,6 @@ import jax
 from jax import Array
 
 from ..potential import Potential
-from ._compat import legacy_keywords
 from .optimization import lbfgs
 from .rejuvenation import langevin
 
@@ -30,10 +29,6 @@ __all__ = [
 ]
 
 
-@legacy_keywords(
-    opt_step="opt_alpha", opt_iters="opt_steps",
-    mc_step="mc_dt", mc_iters="mc_steps", chunk="chunks",
-)
 def quench_and_temper(
     key: Array,
     samples: Array,

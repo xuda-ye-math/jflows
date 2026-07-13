@@ -18,7 +18,7 @@ For boltzmann_reverse_KL_F (the adaptive-ladder annealed BG):
        validation, and acceptance lines;
     7. tau_smc pre-selection: a gated ladder (tau_smc > 0, MALA,
        ladder = 2) shrinks over-aggressive t_k via the multi-level SMC
-       check on an n_pool-sized selection pool and still completes,
+       check on a pool_size-sized selection pool and still completes,
        with [select] lines reported;
     8. boltzmann_forward_KL_G: the forward KL twin (per-step AIS through
        the current flow, flow fixed as G) completes its ladder with the
@@ -67,9 +67,9 @@ LOG = os.path.join(HERE, "test_boltzmann.log")
 
 FAILURES = 0
 
-N_VALID, N_POOL, N_BATCH, STEPS, LR = 4000, 1000, 500, 100, 2e-3
-MC_STEP, MC_ITERS = 1e-3, 20
-MELT, OPT_STEP, OPT_ITERS = 2.0, 0.5, 100
+N_VALID, POOL_SIZE, BATCH_SIZE, TRAIN_STEPS, LR = 4000, 1000, 500, 100, 2e-3
+MC_DT, MC_STEPS = 1e-3, 20
+MELT, OPT_ALPHA, OPT_STEPS = 2.0, 0.5, 100
 COEFF_LAMBDA, COEFF_ALPHA, COEFF_BETA = 0.7, 0.8, 0.3
 TAU = 0.5
 BG = {"t_safe": 0.3, "tau_ess": TAU}
@@ -79,8 +79,6 @@ STAGE_KEYS = {
     "selected", "flow", "t_hist", "batch_ess_hist",
     "valid_trained_ess_hist", "valid_identity_ess_hist",
     "attempt_status_hist", "trained_flow_path_hist", "selected_flow_path",
-    # Temporary compatibility aliases.
-    "ess", "ess_history", "imp_history",
 }
 
 
@@ -114,6 +112,17 @@ def max_param_delta(flow_a, flow_b) -> float:
     return max(float(jnp.abs(a - b).max()) for a, b in zip(la, lb))
 
 
+def selection_consistent(record: dict) -> bool:
+    """The chosen map and ESS must match the better validation candidate."""
+    trained = record["valid_trained_ess"]
+    identity = record["valid_identity_ess"]
+    selected = "trained" if trained >= identity else "identity"
+    return (
+        record["selected"] == selected
+        and record["valid_selected_ess"] == max(trained, identity)
+    )
+
+
 def main() -> None:
     open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START test_boltzmann | jax {jax.__version__} | {jax.default_backend()}")
@@ -135,22 +144,22 @@ def main() -> None:
     lines: list[str] = []
     y, stages = boltzmann_reverse_KL_F(
         x_valid, u0, u1, flow0,
-        n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=1,
-        mc_step=MC_STEP, mc_iters=MC_ITERS,
-        monitor=Monitor(STEPS, "[t] ", lines.append), bg_param=BG,
+        pool_size=POOL_SIZE, batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=1,
+        mc_dt=MC_DT, mc_steps=MC_STEPS,
+        monitor=Monitor(TRAIN_STEPS, "[t] ", lines.append), bg_param=BG,
     )
     jax.effects_barrier()
     ts = [s["t"] for s in stages]
     check_true("at least one accepted stage", len(stages) >= 1, f"{len(stages)} stages")
     check_true("ladder strictly increasing", ts == sorted(set(ts)), f"t = {ts}")
     check_true("ladder complete (t = 1)", bool(ts) and ts[-1] == 1.0, f"t[-1] = {ts[-1] if ts else None}")
-    check_true("every stage ESS >= tau_ess", all(s["ess"] >= TAU for s in stages),
-               f"ESS = {[round(s['ess'], 3) for s in stages]}")
+    check_true("every stage ESS >= tau_ess", all(s["valid_selected_ess"] >= TAU for s in stages),
+               f"ESS = {[round(s['valid_selected_ess'], 3) for s in stages]}")
 
     # ── per-stage records ──
     log("per-stage records")
     check_true("stage flows saved", all(isinstance(s["flow"], NSF) for s in stages))
-    check_true("stage record keys are canonical plus compatibility aliases",
+    check_true("stage record keys are canonical",
                all(set(s) == STAGE_KEYS for s in stages))
     check_true(
         "adaptive attempt histories are aligned",
@@ -171,8 +180,8 @@ def main() -> None:
             for s in stages
         ),
     )
-    check_true("imp_history >= 0 (stages)",
-               all(float(s["imp_history"]) >= 0.0 for s in stages))
+    check_true("stage selections match the better validation ESS",
+               all(selection_consistent(s) for s in stages))
 
     # ── final output ──
     check_true("particle set full-size and finite",
@@ -185,8 +194,8 @@ def main() -> None:
     log("determinism")
     y2, stages2 = boltzmann_reverse_KL_F(
         x_valid, u0, u1, flow0,
-        n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=1,
-        mc_step=MC_STEP, mc_iters=MC_ITERS,
+        pool_size=POOL_SIZE, batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=1,
+        mc_dt=MC_DT, mc_steps=MC_STEPS,
         bg_param=BG,
     )
     check_true("same ladder", [s["t"] for s in stages2] == ts,
@@ -199,10 +208,10 @@ def main() -> None:
     sel_lines: list[str] = []
     y3, stages3 = boltzmann_reverse_KL_F(
         x_valid, u0, u1, flow0,
-        n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR,
-        mc_step=MC_STEP, mc_iters=MC_ITERS,
+        pool_size=POOL_SIZE, batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR,
+        mc_dt=MC_DT, mc_steps=MC_STEPS,
         ladder=2, mc_adjust=True,
-        monitor=Monitor(STEPS, "[t] ", sel_lines.append),
+        monitor=Monitor(TRAIN_STEPS, "[t] ", sel_lines.append),
         bg_param={"t_safe": 0.3, "tau_ess": TAU, "tau_smc": 0.2},
     )
     jax.effects_barrier()
@@ -215,19 +224,19 @@ def main() -> None:
     log("boltzmann_forward_KL_G ladder")
     yf, stages_f = boltzmann_forward_KL_G(
         x_valid, u0, u1, flow0,
-        n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=1,
-        mc_step=MC_STEP, mc_iters=MC_ITERS, mc_adjust=True,
+        pool_size=POOL_SIZE, batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=1,
+        mc_dt=MC_DT, mc_steps=MC_STEPS, mc_adjust=True,
         bg_param=BG,
     )
     tsf = [s["t"] for s in stages_f]
     check_true("forward ladder complete (t = 1)", bool(tsf) and tsf[-1] == 1.0,
                f"t = {[round(t, 3) for t in tsf]}")
-    check_true("forward stage ESS >= tau_ess", all(s["ess"] >= TAU for s in stages_f),
-               f"ESS = {[round(s['ess'], 3) for s in stages_f]}")
+    check_true("forward stage ESS >= tau_ess", all(s["valid_selected_ess"] >= TAU for s in stages_f),
+               f"ESS = {[round(s['valid_selected_ess'], 3) for s in stages_f]}")
     check_true("forward stage record keys",
                all(set(s) == STAGE_KEYS for s in stages_f))
-    check_true("imp_history >= 0 (stages_f)",
-               all(float(s["imp_history"]) >= 0.0 for s in stages_f))
+    check_true("forward selections match the better validation ESS",
+               all(selection_consistent(s) for s in stages_f))
     check_true("forward particle set full-size and finite",
                yf.shape == x_valid.shape and bool(jnp.isfinite(yf).all()), f"{yf.shape}")
 
@@ -237,23 +246,23 @@ def main() -> None:
     xx_lines: list[str] = []
     yxx, stages_xx = boltzmann_forward_KLXX_G(
         x_valid, u0, u1, flow0,
-        n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=2,
-        melt=MELT, opt_step=OPT_STEP, opt_iters=OPT_ITERS,
-        mc_step=MC_STEP, mc_iters=MC_ITERS,
+        pool_size=POOL_SIZE, batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=2,
+        melt=MELT, opt_alpha=OPT_ALPHA, opt_steps=OPT_STEPS,
+        mc_dt=MC_DT, mc_steps=MC_STEPS,
         coeff_lambda=COEFF_LAMBDA, coeff_alpha=COEFF_ALPHA, coeff_beta=COEFF_BETA,
-        monitor=Monitor(STEPS, "[t] ", xx_lines.append),
+        monitor=Monitor(TRAIN_STEPS, "[t] ", xx_lines.append),
         bg_param={"t_safe": 0.3, "tau_ess": TAU, "tau_smc": 0.2},
     )
     jax.effects_barrier()
     tsxx = [s["t"] for s in stages_xx]
     check_true("KLXX ladder complete (t = 1)", bool(tsxx) and tsxx[-1] == 1.0,
                f"t = {[round(t, 3) for t in tsxx]}")
-    check_true("KLXX stage ESS >= tau_ess", all(s["ess"] >= TAU for s in stages_xx),
-               f"ESS = {[round(s['ess'], 3) for s in stages_xx]}")
+    check_true("KLXX stage ESS >= tau_ess", all(s["valid_selected_ess"] >= TAU for s in stages_xx),
+               f"ESS = {[round(s['valid_selected_ess'], 3) for s in stages_xx]}")
     check_true("KLXX stage record keys",
                all(set(s) == STAGE_KEYS for s in stages_xx))
-    check_true("imp_history >= 0 (stages_xx)",
-               all(float(s["imp_history"]) >= 0.0 for s in stages_xx))
+    check_true("KLXX selections match the better validation ESS",
+               all(selection_consistent(s) for s in stages_xx))
     check_true("KLXX particle set full-size and finite",
                yxx.shape == x_valid.shape and bool(jnp.isfinite(yxx).all()), f"{yxx.shape}")
     check_true("KLXX [select] lines observed", any("[select]" in ln for ln in xx_lines),
@@ -264,10 +273,10 @@ def main() -> None:
     # tau_ess=0 make the adaptive call take exactly one accepted level.
     log("KLX adaptive and KL/KLX fixed interface probes")
     x_small = x_valid[:128]
-    small = dict(n_batch=64, steps=2, lr=LR, ladder=1,
-                 mc_step=MC_STEP, mc_iters=0)
+    small = dict(batch_size=64, train_steps=2, lr=LR, ladder=1,
+                 mc_dt=MC_DT, mc_steps=0)
     y_kx, s_kx = boltzmann_forward_KLX_G(
-        x_small, u0, u1, flow0, n_pool=64, coeff_lambda=COEFF_LAMBDA,
+        x_small, u0, u1, flow0, pool_size=64, coeff_lambda=COEFF_LAMBDA,
         bg_param={"t_safe": 1.0, "tau_ess": 0.0, "max_stages": 1},
         **small,
     )
@@ -311,8 +320,8 @@ def main() -> None:
         ot_x = u0.samples(jax.random.key(92), 64)
         _, ot_stages = boltzmann_module.boltzmann_forward_KL_G_fixed(
             ot_x, u0, u0, ot0,
-            n_batch=16, steps=1, lr=0.0, ladder=1,
-            mc_step=MC_STEP, mc_iters=0, t_list=[0.5, 1.0],
+            batch_size=16, train_steps=1, lr=0.0, ladder=1,
+            mc_dt=MC_DT, mc_steps=0, t_list=[0.5, 1.0],
         )
     finally:
         boltzmann_module.train_forward_KL_G = original_train
@@ -348,16 +357,16 @@ def main() -> None:
     ):
         try:
             boltzmann_reverse_KL_F(x_valid, u0, u1, flow0,
-                                   n_pool=N_POOL, n_batch=N_BATCH, steps=1, lr=LR,
-                                   ladder=1, mc_step=MC_STEP, mc_iters=1, bg_param=bg)
+                                   pool_size=POOL_SIZE, batch_size=BATCH_SIZE, train_steps=1, lr=LR,
+                                   ladder=1, mc_dt=MC_DT, mc_steps=1, bg_param=bg)
             check_true(f"rejects {name}", False)
         except ValueError:
             check_true(f"rejects {name}", True)
 
     klxx_args = dict(
-        n_pool=32, n_batch=16, steps=1, lr=0.0, ladder=1,
-        melt=0.0, opt_step=0.1, opt_iters=0,
-        mc_step=MC_STEP, mc_iters=0,
+        pool_size=32, batch_size=16, train_steps=1, lr=0.0, ladder=1,
+        melt=0.0, opt_alpha=0.1, opt_steps=0,
+        mc_dt=MC_DT, mc_steps=0,
     )
     for name, fn, extra in (
         (
@@ -383,9 +392,9 @@ def main() -> None:
     fx_lines: list[str] = []
     yfx, stages_fx = boltzmann_reverse_KL_F_fixed(
         x_valid, u0, u1, flow0,
-        n_batch=N_BATCH, steps=STEPS, lr=LR,
-        mc_step=MC_STEP, mc_iters=MC_ITERS, t_list=t_list,
-        monitor=Monitor(STEPS, "[fx] ", fx_lines.append),
+        batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR,
+        mc_dt=MC_DT, mc_steps=MC_STEPS, t_list=t_list,
+        monitor=Monitor(TRAIN_STEPS, "[fx] ", fx_lines.append),
     )
     jax.effects_barrier()
     check_true("fixed: one stage per t_list entry", len(stages_fx) == len(t_list),
@@ -395,12 +404,13 @@ def main() -> None:
                f"t = {[s['t'] for s in stages_fx]}")
     check_true("fixed: stage record keys",
                all(set(s) == STAGE_KEYS for s in stages_fx))
-    check_true("fixed: imp_history >= 0",
-               all(float(s["imp_history"]) >= 0.0 for s in stages_fx))
-    check_true("fixed: ess_history length == steps",
-               all(len(s["ess_history"]) == STEPS for s in stages_fx))
+    check_true("fixed: selections match the better validation ESS",
+               all(selection_consistent(s) for s in stages_fx))
+    check_true("fixed: accepted batch-ESS history length == train_steps",
+               all(len(s["batch_ess_hist"][-1]) == TRAIN_STEPS
+                   for s in stages_fx))
     check_true("fixed: attempt-history outer length is one",
-               all(s["batch_ess_hist"].shape == (1, STEPS)
+               all(s["batch_ess_hist"].shape == (1, TRAIN_STEPS)
                    and len(s["t_hist"]) == 1
                    and len(s["valid_trained_ess_hist"]) == 1
                    and len(s["valid_identity_ess_hist"]) == 1
@@ -414,15 +424,15 @@ def main() -> None:
     # KLXX_fixed exercises the QT-pool path along a fixed schedule
     yxfx, stages_xfx = boltzmann_forward_KLXX_G_fixed(
         x_valid, u0, u1, flow0,
-        n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=2,
-        melt=MELT, opt_step=OPT_STEP, opt_iters=OPT_ITERS,
-        mc_step=MC_STEP, mc_iters=MC_ITERS, t_list=[0.5, 1.0],
+        pool_size=POOL_SIZE, batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=2,
+        melt=MELT, opt_alpha=OPT_ALPHA, opt_steps=OPT_STEPS,
+        mc_dt=MC_DT, mc_steps=MC_STEPS, t_list=[0.5, 1.0],
         coeff_lambda=COEFF_LAMBDA, coeff_alpha=COEFF_ALPHA, coeff_beta=COEFF_BETA,
     )
-    check_true("KLXX_fixed: 2 stages, complete records, imp>=0, finite",
+    check_true("KLXX_fixed: 2 stages, complete records, valid selections, finite",
                len(stages_xfx) == 2 and stages_xfx[-1]["t"] == 1.0
                and all(set(s) == STAGE_KEYS for s in stages_xfx)
-               and all(float(s["imp_history"]) >= 0.0 for s in stages_xfx)
+               and all(selection_consistent(s) for s in stages_xfx)
                and bool(jnp.isfinite(yxfx).all()),
                f"t = {[round(s['t'], 3) for s in stages_xfx]}")
 
@@ -431,8 +441,8 @@ def main() -> None:
     for name, tl in (("empty", []), ("non-monotone", [0.6, 0.3, 1.0]),
                      ("out of (0,1]", [0.3, 1.5])):
         try:
-            boltzmann_reverse_KL_F_fixed(x_valid, u0, u1, flow0, n_batch=N_BATCH,
-                                         steps=1, lr=LR, mc_step=MC_STEP, mc_iters=1,
+            boltzmann_reverse_KL_F_fixed(x_valid, u0, u1, flow0, batch_size=BATCH_SIZE,
+                                         train_steps=1, lr=LR, mc_dt=MC_DT, mc_steps=1,
                                          t_list=tl)
             check_true(f"fixed rejects {name} t_list", False)
         except ValueError:

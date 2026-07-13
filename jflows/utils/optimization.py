@@ -27,7 +27,6 @@ import jax.numpy as jnp
 from jax import Array, lax
 
 from ..potential import Potential
-from ._compat import legacy_keywords
 
 
 __all__ = [
@@ -101,7 +100,6 @@ def lbfgs_init(x: Array, potential: Potential, memory: int = 6) -> LBFGS_State:
     )
 
 
-@legacy_keywords(step="alpha")
 def lbfgs_step(
     state: LBFGS_State,
     potential: Potential,
@@ -207,7 +205,6 @@ def lbfgs_step(
     )
 
 
-@legacy_keywords(step="alpha", iters="steps", chunk="chunks")
 def lbfgs(
     samples: Array,
     potential: Potential,
@@ -320,7 +317,6 @@ def adamw_init(x: Array) -> AdamW_State:
     )
 
 
-@legacy_keywords(step="lr")
 def adamw_step(
     state: AdamW_State,
     potential: Potential,
@@ -365,7 +361,6 @@ def adamw_step(
     return AdamW_State(x=x, m=m, v=v, k=k)
 
 
-@legacy_keywords(step="lr", iters="steps", chunk="chunks")
 def adamw(
     samples: Array,
     potential: Potential,

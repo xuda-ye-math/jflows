@@ -116,7 +116,7 @@ def main() -> None:
     # ── 1. SMC onto the two-mode mixture ──
     log("sequential_monte_carlo (ladder=12)")
     x, ess = sequential_monte_carlo(jax.random.key(2), x0, SOURCE, TARGET,
-                                    ladder=12, step=0.05, iters=120)
+                                    ladder=12, mc_dt=0.05, mc_steps=120)
     check_target_match("moments & mode proportions", x)
     check_true("ess shape (M,), values in (0, 1]",
                ess.shape == (12,) and bool(((ess > 0) & (ess <= 1.0)).all()),
@@ -135,15 +135,15 @@ def main() -> None:
         w = jnp.exp(log_w - log_w.max())
         key_r, key_l = jax.random.split(jax.random.fold_in(key, k))
         x_man = resample(key_r, x_man, w)
-        x_man = langevin(key_l, x_man, u_k, step=0.02, iters=10)
+        x_man = langevin(key_l, x_man, u_k, dt=0.02, steps=10)
     x_loop, _ = sequential_monte_carlo(key, x0, SOURCE, TARGET,
-                                       ladder=M, step=0.02, iters=10)
+                                       ladder=M, mc_dt=0.02, mc_steps=10)
     check("agreement (fusion rounding)", x_loop, x_man, tol=1e-13)
 
     # ── 3. taming pass-through (mild taming: active only on outlier drifts) ──
     log("taming pass-through")
     x_tamed, ess_t = sequential_monte_carlo(jax.random.key(2), x0, SOURCE, TARGET,
-                                            ladder=16, step=0.05, iters=300, taming=0.05, adjust=False)
+                                            ladder=16, mc_dt=0.05, mc_steps=300, taming=0.05, adjust=False)
     check_true("finite", bool(jnp.isfinite(x_tamed).all()))
     # taming caps the drift, biasing the finite-step chain -> wider mean tolerance
     check_target_match("tamed moments & proportions", x_tamed, m_tol=0.2)
@@ -153,7 +153,7 @@ def main() -> None:
     flow_id = RealNVP(jax.random.key(5), dimension=2, transforms=2).zeros()
     y, initial_log_weight = annealed_importance_sampling(
         jax.random.key(6), x0, SOURCE, TARGET, flow_id, type="F",
-        ladder=10, step=0.05, iters=150,
+        ladder=10, mc_dt=0.05, mc_steps=150,
         return_initial_log_weights=True,
     )
     check_target_match("AIS (type=F) moments & mode proportions", y)
@@ -167,7 +167,7 @@ def main() -> None:
         tol=1e-13,
     )
     y_g = annealed_importance_sampling(jax.random.key(6), x0, SOURCE, TARGET, flow_id, type="G",
-                                     ladder=10, step=0.05, iters=150)
+                                     ladder=10, mc_dt=0.05, mc_steps=150)
     check("F/G agree for the identity flow (same key)", y_g, y, tol=1e-10)
     check_true(
         "pre-AIS proposal ESS finite",
@@ -193,8 +193,8 @@ def main() -> None:
             flow_probe,
             type=flow_type,
             ladder=3,
-            step=0.01,
-            iters=2,
+            mc_dt=0.01,
+            mc_steps=2,
         )
         y_optional, proposal_log_weight = annealed_importance_sampling(
             probe_key,
@@ -204,8 +204,8 @@ def main() -> None:
             flow_probe,
             type=flow_type,
             ladder=3,
-            step=0.01,
-            iters=2,
+            mc_dt=0.01,
+            mc_steps=2,
             return_initial_log_weights=True,
         )
         expected = importance_weights_log(
@@ -249,14 +249,14 @@ def main() -> None:
         probe_key = jax.random.fold_in(jax.random.key(63), offset)
         y_default = annealed_importance_sampling(
             probe_key, probe32, source32, target32, otflow, flow_type,
-            ladder=3, iters=0, chunk=3,
+            ladder=3, mc_steps=0, chunks=3,
         )
         y_optional, log_weight = annealed_importance_sampling(
             probe_key, probe32, source32, target32, otflow, flow_type,
-            ladder=3, iters=0, chunk=3, return_initial_log_weights=True,
+            ladder=3, mc_steps=0, chunks=3, return_initial_log_weights=True,
         )
         expected = importance_weights_log(
-            probe32, source32, target32, otflow, flow_type, chunk=3
+            probe32, source32, target32, otflow, flow_type, chunks=3
         )
         check(
             f"OTFlow {flow_type}: optional return preserves samples",
@@ -286,15 +286,15 @@ def main() -> None:
         probe_key = jax.random.fold_in(jax.random.key(66), offset)
         y_default = annealed_importance_sampling(
             probe_key, probe32, source32, target32, cnf, flow_type,
-            ladder=3, iters=0, chunk=3, trace_key=trace_base,
+            ladder=3, mc_steps=0, chunks=3, trace_key=trace_base,
         )
         y_optional, log_weight = annealed_importance_sampling(
             probe_key, probe32, source32, target32, cnf, flow_type,
-            ladder=3, iters=0, chunk=3, trace_key=trace_base,
+            ladder=3, mc_steps=0, chunks=3, trace_key=trace_base,
             return_initial_log_weights=True,
         )
         expected = importance_weights_log(
-            probe32, source32, target32, cnf, flow_type, chunk=3,
+            probe32, source32, target32, cnf, flow_type, chunks=3,
             trace_key=trace_level_1,
         )
         check(
@@ -324,10 +324,10 @@ def main() -> None:
             full_weight = jnp.concatenate(parts, axis=0)
         key_r, key_l = jax.random.split(jax.random.fold_in(manual_key, k))
         y_manual = resample(key_r, y_manual, jnp.exp(full_weight / 3 - jnp.max(full_weight / 3)))
-        y_manual = langevin(key_l, y_manual, target32, iters=0, chunk=3)
+        y_manual = langevin(key_l, y_manual, target32, steps=0, chunks=3)
     y_public = annealed_importance_sampling(
         manual_key, probe32, source32, target32, otflow, "F",
-        ladder=3, iters=0, chunk=3,
+        ladder=3, mc_steps=0, chunks=3,
     )
     check("OTFlow three-level manual composition", y_public, y_manual, tol=0.0)
 
@@ -345,8 +345,8 @@ def main() -> None:
 
     # ── 5. reproducibility ──
     log("reproducibility")
-    x_a, _ = sequential_monte_carlo(jax.random.key(7), x0, SOURCE, TARGET, ladder=3, iters=10)
-    x_b, _ = sequential_monte_carlo(jax.random.key(7), x0, SOURCE, TARGET, ladder=3, iters=10)
+    x_a, _ = sequential_monte_carlo(jax.random.key(7), x0, SOURCE, TARGET, ladder=3, mc_steps=10)
+    x_b, _ = sequential_monte_carlo(jax.random.key(7), x0, SOURCE, TARGET, ladder=3, mc_steps=10)
     check("same key -> same particles", x_a, x_b, tol=0)
 
     if FAILURES:

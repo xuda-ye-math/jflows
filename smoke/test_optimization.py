@@ -93,7 +93,7 @@ def main() -> None:
     gau = Nlog_Gaussian(mean, [0.5, 2.0, 1.0])
     x0 = jax.random.normal(key, (N, d)) * 4.0
     for armijo in (False, True):
-        xf = lbfgs(x0, gau, step=1.0, iters=25, memory=6, armijo=armijo)
+        xf = lbfgs(x0, gau, alpha=1.0, steps=25, memory=6, armijo=armijo)
         check(f"armijo={armijo}: reaches the mean", xf,
               jnp.broadcast_to(mean, (N, d)), tol=1e-6)
     check_true("optimization is lbfgs", optimization is lbfgs)
@@ -105,14 +105,14 @@ def main() -> None:
         [[0.5, 0.3, 0.4], [0.4, 0.6, 0.3]],
     )
     x0m = jax.random.normal(jax.random.key(1), (N, d)) * 2.0
-    xf = lbfgs(x0m, gmm, step=0.5, iters=60, memory=6, armijo=False)
+    xf = lbfgs(x0m, gmm, alpha=0.5, steps=60, memory=6, armijo=False)
     gnorm = float(jnp.linalg.norm(gmm.grad(xf), axis=-1).max())
     check_true("stationary points (max |grad| < 1e-5)", gnorm < 1e-5, f"max|grad| = {gnorm:.2e}")
 
     state = lbfgs_init(x0m, gmm, memory=6)
     energies = [float(gmm(state.x).mean())]
     for _ in range(30):
-        state = lbfgs_step(state, gmm, step=1.0, armijo=True)
+        state = lbfgs_step(state, gmm, alpha=1.0, armijo=True)
         energies.append(float(gmm(state.x).mean()))
     check_true("armijo: mean energy non-increasing",
                all(b <= a + 1e-10 for a, b in zip(energies, energies[1:])),
@@ -123,7 +123,7 @@ def main() -> None:
     quartic = potential_from(lambda x: (x ** 4).sum(axis=-1))
     mixed0 = jnp.asarray([[0.1], [10.0]])
     mixed_state = lbfgs_init(mixed0, quartic, memory=3)
-    mixed_next = lbfgs_step(mixed_state, quartic, step=1.0, armijo=True)
+    mixed_next = lbfgs_step(mixed_state, quartic, alpha=1.0, armijo=True)
     check_true(
         "mixed acceptance: easy row moves",
         bool(jnp.abs(mixed_next.x[0] - mixed0[0]).max() > 0),
@@ -149,7 +149,7 @@ def main() -> None:
     stiff = potential_from(lambda x: 50.0 * (x ** 2).sum(axis=-1))
     stiff0 = jnp.asarray([[1.0]])
     stiff_state = lbfgs_init(stiff0, stiff, memory=3)
-    stiff_next = lbfgs_step(stiff_state, stiff, step=1.0, armijo=True)
+    stiff_next = lbfgs_step(stiff_state, stiff, alpha=1.0, armijo=True)
     check(
         "seventh trial step/64 is evaluated and accepted",
         stiff_next.x, jnp.asarray([[-0.5625]]), tol=1e-15,
@@ -162,7 +162,7 @@ def main() -> None:
     extreme = potential_from(lambda x: 500.0 * (x ** 2).sum(axis=-1))
     extreme0 = jnp.asarray([[1.0]])
     extreme_state = lbfgs_init(extreme0, extreme, memory=3)
-    extreme_next = lbfgs_step(extreme_state, extreme, step=1.0, armijo=True)
+    extreme_next = lbfgs_step(extreme_state, extreme, alpha=1.0, armijo=True)
     check(
         "extreme exhaustion leaves particle unchanged",
         extreme_next.x, extreme0, tol=0.0,
@@ -173,7 +173,7 @@ def main() -> None:
     )
     check("extreme cached energy remains consistent",
           extreme_next.U, extreme(extreme_next.x), tol=0.0)
-    extreme_retry = lbfgs_step(extreme_next, extreme, step=1.0, armijo=True)
+    extreme_retry = lbfgs_step(extreme_next, extreme, alpha=1.0, armijo=True)
     check_true(
         "extreme row progresses on its next iteration",
         bool(jnp.abs(extreme_retry.x - extreme_next.x).max() > 0),
@@ -191,43 +191,43 @@ def main() -> None:
     log("loop == lbfgs_init + lbfgs_step composition")
     state = lbfgs_init(x0m, gmm, memory=6)
     for _ in range(25):
-        state = lbfgs_step(state, gmm, step=0.5, armijo=False)
+        state = lbfgs_step(state, gmm, alpha=0.5, armijo=False)
     # tol: scanned loop vs eager steps differ only by XLA fusion rounding
     check("agreement (fusion rounding)", state.x,
-          lbfgs(x0m, gmm, step=0.5, iters=25, memory=6, armijo=False), tol=1e-15)
+          lbfgs(x0m, gmm, alpha=0.5, steps=25, memory=6, armijo=False), tol=1e-15)
 
     # ── 4/5. chunk invariance and memory=1 ──
     log("chunk invariance / memory=1")
-    check("chunk=4 == chunk=1 (fusion rounding)", lbfgs(x0m, gmm, step=0.5, iters=25, chunk=4),
-          lbfgs(x0m, gmm, step=0.5, iters=25, chunk=1), tol=1e-15)
-    xf1 = lbfgs(x0, gau, step=1.0, iters=80, memory=1)
+    check("chunks=4 == chunks=1 (fusion rounding)", lbfgs(x0m, gmm, alpha=0.5, steps=25, chunks=4),
+          lbfgs(x0m, gmm, alpha=0.5, steps=25, chunks=1), tol=1e-15)
+    xf1 = lbfgs(x0, gau, alpha=1.0, steps=80, memory=1)
     check("memory=1 quadratic convergence", xf1, jnp.broadcast_to(mean, (N, d)), tol=1e-4)
 
     # ── 6. jit ──
     log("jit")
     state = lbfgs_init(x0m, gmm, memory=6)
-    step_jit = eqx.filter_jit(lambda s: lbfgs_step(s, gmm, step=0.5, armijo=False))
+    step_jit = eqx.filter_jit(lambda s: lbfgs_step(s, gmm, alpha=0.5, armijo=False))
     check("filter_jit(lbfgs_step)", step_jit(state).x,
-          lbfgs_step(state, gmm, step=0.5, armijo=False).x, tol=1e-12)
+          lbfgs_step(state, gmm, alpha=0.5, armijo=False).x, tol=1e-12)
 
     # ── 7. adamw ──
     log("adamw")
-    xf = adamw(x0, gau, step=0.05, iters=1500)
+    xf = adamw(x0, gau, lr=0.05, steps=1500)
     check("quadratic convergence (O(step) residual)", xf,
           jnp.broadcast_to(mean, (N, d)), tol=0.05)
     state = adamw_init(x0m)
     for _ in range(20):
-        state = adamw_step(state, gmm, step=0.02)
+        state = adamw_step(state, gmm, lr=0.02)
     check("loop == composition (fusion rounding)", state.x,
-          adamw(x0m, gmm, step=0.02, iters=20), tol=1e-15)
-    x_wd = adamw(x0, gau, step=0.05, iters=1500, weight_decay=0.2)
+          adamw(x0m, gmm, lr=0.02, steps=20), tol=1e-15)
+    x_wd = adamw(x0, gau, lr=0.05, steps=1500, weight_decay=0.2)
     check_true("weight_decay shrinks toward the origin",
                bool(jnp.linalg.norm(x_wd.mean(0)) < jnp.linalg.norm(xf.mean(0)) - 0.1),
                f"|mean| {float(jnp.linalg.norm(x_wd.mean(0))):.3f} < "
                f"{float(jnp.linalg.norm(xf.mean(0))):.3f}")
-    check("chunk=4 == chunk=1 (fusion rounding)",
-          adamw(x0m, gmm, step=0.02, iters=50, chunk=4),
-          adamw(x0m, gmm, step=0.02, iters=50, chunk=1), tol=1e-15)
+    check("chunks=4 == chunks=1 (fusion rounding)",
+          adamw(x0m, gmm, lr=0.02, steps=50, chunks=4),
+          adamw(x0m, gmm, lr=0.02, steps=50, chunks=1), tol=1e-15)
 
     if FAILURES:
         log(f"DONE — {FAILURES} FAILURE(S)")

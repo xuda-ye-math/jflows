@@ -20,8 +20,7 @@ Stage records expose unambiguous full-validation ESS values and aligned
 attempt histories. Passing ``flow_dir`` additionally writes every trained
 candidate (including rejected and identity-losing attempts), the accepted
 stage map, metadata, and an atomic run manifest. Persistence is eager and does
-not participate in JIT compilation or PRNG handling. The old ``ess``,
-``ess_history``, and ``imp_history`` record keys remain temporary aliases.
+not participate in JIT compilation or PRNG handling.
 """
 
 from __future__ import annotations
@@ -37,7 +36,6 @@ from jax import Array
 from ._artifacts import FlowArtifactWriter
 from .flow import Flow
 from .potential import Potential, linear_combination
-from .utils._compat import inherit_implementation_doc, legacy_keywords
 from .utils.anneal import sequential_monte_carlo
 from .utils.metrics import (_linear_weights_from_log, compute_ESS_log,
                             importance_weights_log, resample)
@@ -156,9 +154,9 @@ def _stage_record(
     hist: dict[str, list],
     selected_flow_path: str | None,
 ) -> dict:
-    """Canonical stage record plus temporary aliases for old consumers."""
+    """Canonical stage record with aligned validation and attempt histories."""
     batch_ess_hist = jnp.stack(hist["batch_ess"], axis=0)
-    record = {
+    return {
         "t": float(t),
         "valid_selected_ess": float(valid_selected_ess),
         "valid_trained_ess": float(valid_trained_ess),
@@ -173,13 +171,6 @@ def _stage_record(
         "trained_flow_path_hist": tuple(hist["trained_flow_path"]),
         "selected_flow_path": selected_flow_path,
     }
-    # Compatibility aliases. New code should use the explicit names above.
-    record["ess"] = record["valid_selected_ess"]
-    record["ess_history"] = batch_ess_hist[-1]
-    record["imp_history"] = max(
-        0.0, record["valid_trained_ess"] - record["valid_identity_ess"]
-    )
-    return record
 
 
 @eqx.filter_jit
@@ -274,7 +265,7 @@ def _fixed_schedule(name: str, t_list) -> list[float]:
     return schedule
 
 
-def _boltzmann_reverse_KL_F_impl(
+def boltzmann_reverse_KL_F(
     x_valid: Array,
     source: Potential,
     target: Potential,
@@ -421,9 +412,7 @@ def _boltzmann_reverse_KL_F_impl(
                              ESS, not necessarily the trained flow's — "flow" is
                              the identity map when the fallback wins, and
                              the identity ESS costs two potential evaluations
-                             and no flow inverse. ``ess``, ``ess_history``, and
-                             ``imp_history`` are temporary aliases for old
-                             consumers.
+                             and no flow inverse.
     """
     p = _bg_parameters("boltzmann_reverse_KL_F", bg_param)
     artifacts = FlowArtifactWriter(flow_dir, "boltzmann_reverse_KL_F")
@@ -567,7 +556,7 @@ def _boltzmann_reverse_KL_F_impl(
     return y_valid, stages
 
 
-def _boltzmann_forward_KL_G_impl(
+def boltzmann_forward_KL_G(
     x_valid: Array,
     source: Potential,
     target: Potential,
@@ -773,7 +762,7 @@ def _boltzmann_forward_KL_G_impl(
     return y_valid, stages
 
 
-def _boltzmann_forward_KLX_G_impl(
+def boltzmann_forward_KLX_G(
     x_valid: Array,
     source: Potential,
     target: Potential,
@@ -948,7 +937,7 @@ def _boltzmann_forward_KLX_G_impl(
     return y_valid, stages
 
 
-def _boltzmann_forward_KLXX_G_impl(
+def boltzmann_forward_KLXX_G(
     x_valid: Array,
     source: Potential,
     target: Potential,
@@ -1147,7 +1136,7 @@ def _boltzmann_forward_KLXX_G_impl(
     return y_valid, stages
 
 
-def _boltzmann_reverse_KL_F_fixed_impl(
+def boltzmann_reverse_KL_F_fixed(
     x_valid: Array,
     source: Potential,
     target: Potential,
@@ -1250,7 +1239,7 @@ def _boltzmann_reverse_KL_F_fixed_impl(
     return y_valid, stages
 
 
-def _boltzmann_forward_KL_G_fixed_impl(
+def boltzmann_forward_KL_G_fixed(
     x_valid: Array,
     source: Potential,
     target: Potential,
@@ -1354,7 +1343,7 @@ def _boltzmann_forward_KL_G_fixed_impl(
     return y_valid, stages
 
 
-def _boltzmann_forward_KLX_G_fixed_impl(
+def boltzmann_forward_KLX_G_fixed(
     x_valid: Array,
     source: Potential,
     target: Potential,
@@ -1457,7 +1446,7 @@ def _boltzmann_forward_KLX_G_fixed_impl(
     return y_valid, stages
 
 
-def _boltzmann_forward_KLXX_G_fixed_impl(
+def boltzmann_forward_KLXX_G_fixed(
     x_valid: Array,
     source: Potential,
     target: Potential,
@@ -1575,288 +1564,3 @@ def _boltzmann_forward_KLXX_G_fixed_impl(
     artifacts.finish(complete=t_list[-1] == 1.0, last_t=t_prev,
                      accepted_stages=len(stages))
     return y_valid, stages
-@legacy_keywords(
-    n_pool="pool_size", n_batch="batch_size", steps="train_steps",
-    mc_step="mc_dt", mc_iters="mc_steps", chunk="chunks",
-)
-def boltzmann_reverse_KL_F(
-    x_valid: Array,
-    source: Potential,
-    target: Potential,
-    flow: Flow,
-    pool_size: int,
-    batch_size: int,
-    train_steps: int,
-    lr: float,
-    ladder: int,
-    mc_dt: float,
-    mc_steps: int,
-    mc_adjust: bool = True,
-    monitor: Monitor | None = None,
-    bg_param: dict | None = None,
-    chunks: int = 1,
-    checkpoint: bool = False,
-    flow_dir=None,
-) -> tuple[Array, list[dict]]:
-    """Adaptive reverse-KL Boltzmann generator."""
-    return _boltzmann_reverse_KL_F_impl(
-        x_valid, source, target, flow, pool_size, batch_size, train_steps, lr,
-        ladder, mc_dt, mc_steps, mc_adjust, monitor, bg_param, chunks,
-        checkpoint, flow_dir,
-    )
-
-
-@legacy_keywords(
-    n_pool="pool_size", n_batch="batch_size", steps="train_steps",
-    mc_step="mc_dt", mc_iters="mc_steps", chunk="chunks",
-)
-def boltzmann_forward_KL_G(
-    x_valid: Array,
-    source: Potential,
-    target: Potential,
-    flow: Flow,
-    pool_size: int,
-    batch_size: int,
-    train_steps: int,
-    lr: float,
-    ladder: int,
-    mc_dt: float,
-    mc_steps: int,
-    mc_adjust: bool = True,
-    monitor: Monitor | None = None,
-    bg_param: dict | None = None,
-    chunks: int = 1,
-    checkpoint: bool = False,
-    e_clip: float = float("inf"),
-    g_clip: float = float("inf"),
-    flow_dir=None,
-) -> tuple[Array, list[dict]]:
-    """Adaptive forward-KL Boltzmann generator."""
-    return _boltzmann_forward_KL_G_impl(
-        x_valid, source, target, flow, pool_size, batch_size, train_steps, lr,
-        ladder, mc_dt, mc_steps, mc_adjust, monitor, bg_param, chunks,
-        checkpoint, e_clip, g_clip, flow_dir,
-    )
-
-
-@legacy_keywords(
-    n_pool="pool_size", n_batch="batch_size", steps="train_steps",
-    mc_step="mc_dt", mc_iters="mc_steps", chunk="chunks",
-)
-def boltzmann_forward_KLX_G(
-    x_valid: Array,
-    source: Potential,
-    target: Potential,
-    flow: Flow,
-    pool_size: int,
-    batch_size: int,
-    train_steps: int,
-    lr: float,
-    ladder: int,
-    mc_dt: float,
-    mc_steps: int,
-    coeff_lambda: float = 1.0,
-    mc_adjust: bool = True,
-    monitor: Monitor | None = None,
-    bg_param: dict | None = None,
-    chunks: int = 1,
-    checkpoint: bool = False,
-    e_clip: float = float("inf"),
-    g_clip: float = float("inf"),
-    flow_dir=None,
-) -> tuple[Array, list[dict]]:
-    """Adaptive X-regularized forward-KL Boltzmann generator."""
-    return _boltzmann_forward_KLX_G_impl(
-        x_valid, source, target, flow, pool_size, batch_size, train_steps, lr,
-        ladder, mc_dt, mc_steps, coeff_lambda, mc_adjust, monitor, bg_param,
-        chunks, checkpoint, e_clip, g_clip, flow_dir,
-    )
-
-
-@legacy_keywords(
-    n_pool="pool_size", n_batch="batch_size", steps="train_steps",
-    opt_step="opt_alpha", opt_iters="opt_steps", mc_step="mc_dt",
-    mc_iters="mc_steps", chunk="chunks",
-)
-def boltzmann_forward_KLXX_G(
-    x_valid: Array,
-    source: Potential,
-    target: Potential,
-    flow: Flow,
-    pool_size: int,
-    batch_size: int,
-    train_steps: int,
-    lr: float,
-    ladder: int,
-    melt: float,
-    opt_alpha: float,
-    opt_steps: int,
-    mc_dt: float,
-    mc_steps: int,
-    coeff_lambda: float = 1.0,
-    coeff_alpha: float = 0.5,
-    coeff_beta: float = 0.5,
-    mc_adjust: bool = True,
-    monitor: Monitor | None = None,
-    bg_param: dict | None = None,
-    chunks: int = 1,
-    checkpoint: bool = False,
-    e_clip: float = float("inf"),
-    g_clip: float = float("inf"),
-    flow_dir=None,
-) -> tuple[Array, list[dict]]:
-    """Adaptive full-mixture forward-KLXX Boltzmann generator."""
-    return _boltzmann_forward_KLXX_G_impl(
-        x_valid, source, target, flow, pool_size, batch_size, train_steps, lr,
-        ladder, melt, opt_alpha, opt_steps, mc_dt, mc_steps, coeff_lambda,
-        coeff_alpha, coeff_beta, mc_adjust, monitor, bg_param, chunks,
-        checkpoint, e_clip, g_clip, flow_dir,
-    )
-
-
-@legacy_keywords(
-    n_batch="batch_size", steps="train_steps", mc_step="mc_dt",
-    mc_iters="mc_steps", chunk="chunks",
-)
-def boltzmann_reverse_KL_F_fixed(
-    x_valid: Array,
-    source: Potential,
-    target: Potential,
-    flow: Flow,
-    batch_size: int,
-    train_steps: int,
-    lr: float,
-    mc_dt: float,
-    mc_steps: int,
-    t_list,
-    mc_adjust: bool = True,
-    monitor: Monitor | None = None,
-    chunks: int = 1,
-    checkpoint: bool = False,
-    flow_dir=None,
-) -> tuple[Array, list[dict]]:
-    """Fixed-schedule reverse-KL Boltzmann generator."""
-    return _boltzmann_reverse_KL_F_fixed_impl(
-        x_valid, source, target, flow, batch_size, train_steps, lr, mc_dt,
-        mc_steps, t_list, mc_adjust, monitor, chunks, checkpoint, flow_dir,
-    )
-
-
-@legacy_keywords(
-    n_batch="batch_size", steps="train_steps", mc_step="mc_dt",
-    mc_iters="mc_steps", chunk="chunks",
-)
-def boltzmann_forward_KL_G_fixed(
-    x_valid: Array,
-    source: Potential,
-    target: Potential,
-    flow: Flow,
-    batch_size: int,
-    train_steps: int,
-    lr: float,
-    ladder: int,
-    mc_dt: float,
-    mc_steps: int,
-    t_list,
-    mc_adjust: bool = True,
-    monitor: Monitor | None = None,
-    chunks: int = 1,
-    checkpoint: bool = False,
-    e_clip: float = float("inf"),
-    g_clip: float = float("inf"),
-    flow_dir=None,
-) -> tuple[Array, list[dict]]:
-    """Fixed-schedule forward-KL Boltzmann generator."""
-    return _boltzmann_forward_KL_G_fixed_impl(
-        x_valid, source, target, flow, batch_size, train_steps, lr, ladder,
-        mc_dt, mc_steps, t_list, mc_adjust, monitor, chunks, checkpoint,
-        e_clip, g_clip, flow_dir,
-    )
-
-
-@legacy_keywords(
-    n_batch="batch_size", steps="train_steps", mc_step="mc_dt",
-    mc_iters="mc_steps", chunk="chunks",
-)
-def boltzmann_forward_KLX_G_fixed(
-    x_valid: Array,
-    source: Potential,
-    target: Potential,
-    flow: Flow,
-    batch_size: int,
-    train_steps: int,
-    lr: float,
-    ladder: int,
-    mc_dt: float,
-    mc_steps: int,
-    t_list,
-    coeff_lambda: float = 1.0,
-    mc_adjust: bool = True,
-    monitor: Monitor | None = None,
-    chunks: int = 1,
-    checkpoint: bool = False,
-    e_clip: float = float("inf"),
-    g_clip: float = float("inf"),
-    flow_dir=None,
-) -> tuple[Array, list[dict]]:
-    """Fixed-schedule X-regularized forward-KL Boltzmann generator."""
-    return _boltzmann_forward_KLX_G_fixed_impl(
-        x_valid, source, target, flow, batch_size, train_steps, lr, ladder,
-        mc_dt, mc_steps, t_list, coeff_lambda, mc_adjust, monitor, chunks,
-        checkpoint, e_clip, g_clip, flow_dir,
-    )
-
-
-@legacy_keywords(
-    n_pool="pool_size", n_batch="batch_size", steps="train_steps",
-    opt_step="opt_alpha", opt_iters="opt_steps", mc_step="mc_dt",
-    mc_iters="mc_steps", chunk="chunks",
-)
-def boltzmann_forward_KLXX_G_fixed(
-    x_valid: Array,
-    source: Potential,
-    target: Potential,
-    flow: Flow,
-    pool_size: int,
-    batch_size: int,
-    train_steps: int,
-    lr: float,
-    ladder: int,
-    melt: float,
-    opt_alpha: float,
-    opt_steps: int,
-    mc_dt: float,
-    mc_steps: int,
-    t_list,
-    coeff_lambda: float = 1.0,
-    coeff_alpha: float = 0.5,
-    coeff_beta: float = 0.5,
-    mc_adjust: bool = True,
-    monitor: Monitor | None = None,
-    chunks: int = 1,
-    checkpoint: bool = False,
-    e_clip: float = float("inf"),
-    g_clip: float = float("inf"),
-    flow_dir=None,
-) -> tuple[Array, list[dict]]:
-    """Fixed-schedule full-mixture forward-KLXX Boltzmann generator."""
-    return _boltzmann_forward_KLXX_G_fixed_impl(
-        x_valid, source, target, flow, pool_size, batch_size, train_steps, lr,
-        ladder, melt, opt_alpha, opt_steps, mc_dt, mc_steps, t_list,
-        coeff_lambda, coeff_alpha, coeff_beta, mc_adjust, monitor, chunks,
-        checkpoint, e_clip, g_clip, flow_dir,
-    )
-
-
-for _public, _implementation in (
-    (boltzmann_reverse_KL_F, _boltzmann_reverse_KL_F_impl),
-    (boltzmann_forward_KL_G, _boltzmann_forward_KL_G_impl),
-    (boltzmann_forward_KLX_G, _boltzmann_forward_KLX_G_impl),
-    (boltzmann_forward_KLXX_G, _boltzmann_forward_KLXX_G_impl),
-    (boltzmann_reverse_KL_F_fixed, _boltzmann_reverse_KL_F_fixed_impl),
-    (boltzmann_forward_KL_G_fixed, _boltzmann_forward_KL_G_fixed_impl),
-    (boltzmann_forward_KLX_G_fixed, _boltzmann_forward_KLX_G_fixed_impl),
-    (boltzmann_forward_KLXX_G_fixed, _boltzmann_forward_KLXX_G_fixed_impl),
-):
-    inherit_implementation_doc(_public, _implementation)
-del _public, _implementation

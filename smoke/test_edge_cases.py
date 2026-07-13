@@ -199,15 +199,15 @@ def main():
     gaussian = Nlog_Gaussian([0.0], [1.0])
     particles = jnp.zeros((2, 1))
     raises("Langevin rejects negative step", ValueError,
-           lambda: langevin(jax.random.key(0), particles, gaussian, step=-1.0))
+           lambda: langevin(jax.random.key(0), particles, gaussian, dt=-1.0))
     raises("Langevin rejects NaN step", ValueError,
            lambda: langevin(jax.random.key(0), particles, gaussian,
-                            step=float("nan")))
+                            dt=float("nan")))
     raises("Langevin rejects negative taming", ValueError,
            lambda: langevin(jax.random.key(0), particles, gaussian,
                             taming=-1.0, adjust=False))
     raises("Heun rejects zero step", ValueError,
-           lambda: stochastic_heun(jax.random.key(0), particles, gaussian, step=0.0))
+           lambda: stochastic_heun(jax.random.key(0), particles, gaussian, dt=0.0))
 
     # Invalid adaptive/fixed schedules should fail before compilation/training.
     raises("adaptive ladder rejects zero enlarge", ValueError,

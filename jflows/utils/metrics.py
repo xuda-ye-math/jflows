@@ -24,7 +24,6 @@ from jax import Array
 
 from ..flow import Flow
 from ..potential import Potential
-from ._compat import legacy_keywords
 
 
 __all__ = [
@@ -76,7 +75,6 @@ def linear_weights_from_log(log_weights: Array) -> Array:
 # Importance weights — log/linear-space flow IS reweighting
 # ──────────────────────────────────────────────────────────────────────
 
-@legacy_keywords(chunk="chunks")
 def importance_weights_log(
     samples: Array,
     source: Potential,
@@ -135,7 +133,6 @@ def importance_weights_log(
     return jnp.concatenate(out, axis=0)
 
 
-@legacy_keywords(chunk="chunks")
 def importance_weights(
     samples: Array,
     source: Potential,
@@ -249,7 +246,6 @@ def compute_ESS_log(log_weights: Array) -> Array:
 # coverage — k-NN mode-collapse diagnostic
 # ──────────────────────────────────────────────────────────────────────
 
-@legacy_keywords(chunk="chunks")
 def coverage(y: Array, x: Array, k: int = 5, chunks: int = 1) -> Array:
     """
     Coverage metric (Naeem et al., 2020): the fraction of reference

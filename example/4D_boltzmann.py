@@ -161,7 +161,8 @@ def main() -> None:
             )
         ts = [s["t"] for s in stages]
         log(f"[{name}] ladder done in {time.time() - t0:.1f}s: "
-            f"t = {[round(t, 4) for t in ts]}  ESS = {[round(s['ess'], 3) for s in stages]}  "
+            f"t = {[round(t, 4) for t in ts]}  "
+            f"ESS = {[round(s['valid_selected_ess'], 3) for s in stages]}  "
             f"({'COMPLETE' if ts and ts[-1] == 1.0 else 'INCOMPLETE'})")
         if not ts or ts[-1] != 1.0:
             raise RuntimeError(
@@ -169,8 +170,12 @@ def main() -> None:
                 f"the particles as t=1 (last t={ts[-1] if ts else 0.0:.4f})"
             )
         if stages:
-            log(f"[{name}] stage ESS: min = {min(s['ess'] for s in stages):.4f}   "
-                f"last = {stages[-1]['ess']:.4f}   (N_VALID = {N_VALID})")
+            log(
+                f"[{name}] stage ESS: min = "
+                f"{min(s['valid_selected_ess'] for s in stages):.4f}   "
+                f"last = {stages[-1]['valid_selected_ess']:.4f}   "
+                f"(N_VALID = {N_VALID})"
+            )
         results[name] = (y, stages)
 
     # figure (2, 3): per row — adaptive ladder | particle-1 marginal | relative angle
@@ -186,7 +191,8 @@ def main() -> None:
 
         ax = axes[row, 0]
         ax.plot(range(1, len(ts) + 1), ts, "o-", color="#1F77B4", lw=1.2, label=r"$t_k$")
-        ax.plot(range(1, len(ts) + 1), [s["ess"] for s in stages], "s--",
+        ax.plot(range(1, len(ts) + 1),
+                [s["valid_selected_ess"] for s in stages], "s--",
                 color="#D62728", lw=1.2, label="stage ESS")
         ax.set_xlabel("stage $k$")
         ax.set_xticks(range(1, len(ts) + 1))

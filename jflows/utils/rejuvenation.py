@@ -28,7 +28,6 @@ import jax.numpy as jnp
 from jax import Array, lax
 
 from ..potential import Potential
-from ._compat import legacy_keywords
 
 
 __all__ = [
@@ -88,7 +87,6 @@ def _taming(name: str, taming: float) -> float:
 # Langevin — overdamped Langevin / MALA / tamed variants
 # ──────────────────────────────────────────────────────────────────────
 
-@legacy_keywords(step="dt")
 def langevin_step(
     key: Array,
     x: Array,
@@ -151,7 +149,6 @@ def langevin_step(
     return x_new, {"accept": accept, "log_alpha": log_alpha}
 
 
-@legacy_keywords(step="dt", iters="steps", chunk="chunks")
 def langevin(
     key: Array,
     samples: Array,
@@ -220,7 +217,6 @@ rejuvenation = langevin
 # Stochastic Heun — Stratonovich predictor-corrector Langevin
 # ──────────────────────────────────────────────────────────────────────
 
-@legacy_keywords(step="dt")
 def stochastic_heun_step(
     key: Array,
     x: Array,
@@ -254,7 +250,6 @@ def stochastic_heun_step(
     return x - 0.5 * dt * (fx + fx_pred) + dw, {}    # Heun corrector (same dW)
 
 
-@legacy_keywords(step="dt", iters="steps", chunk="chunks")
 def stochastic_heun(
     key: Array,
     samples: Array,
@@ -305,7 +300,6 @@ def stochastic_heun(
 # HMC — Hamiltonian Monte Carlo with leapfrog + MH gate
 # ──────────────────────────────────────────────────────────────────────
 
-@legacy_keywords(step="dt", iters="steps")
 def leapfrog(
     x: Array,
     p: Array,
@@ -348,7 +342,6 @@ def leapfrog(
     return x, p
 
 
-@legacy_keywords(step="dt", iters="leapfrog_steps")
 def hmc_step(
     key: Array,
     x: Array,
@@ -398,7 +391,6 @@ def hmc_step(
     return x_new, {"accept": accept, "log_alpha": log_alpha}
 
 
-@legacy_keywords(step="dt", iters="leapfrog_steps", burns="trajectories", chunk="chunks")
 def hamiltonian_monte_carlo(
     key: Array,
     samples: Array,

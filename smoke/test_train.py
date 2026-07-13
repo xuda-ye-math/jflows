@@ -58,9 +58,9 @@ LOG = os.path.join(HERE, "test_train.log")
 FAILURES = 0
 
 SIGMA = 2.0
-N_VALID, N_BATCH, STEPS, LR = 8000, 1000, 200, 2e-3
-MC_STEP, MC_ITERS, LADDER = 1e-3, 20, 3
-N_POOL, MELT, OPT_STEP, OPT_ITERS = 2000, 2.0, 0.5, 100
+N_VALID, BATCH_SIZE, TRAIN_STEPS, LR = 8000, 1000, 200, 2e-3
+MC_DT, MC_STEPS, LADDER = 1e-3, 20, 3
+POOL_SIZE, MELT, OPT_ALPHA, OPT_STEPS = 2000, 2.0, 0.5, 100
 COEFF_LAMBDA, COEFF_ALPHA, COEFF_BETA = 0.7, 0.8, 0.3
 
 
@@ -106,7 +106,7 @@ def first_forward_proposal_ess(
     key_idx = jax.random.split(step_key, split_count)[0]
     x = x_valid[
         jax.random.choice(
-            key_idx, x_valid.shape[0], (N_BATCH,), replace=False
+            key_idx, x_valid.shape[0], (BATCH_SIZE,), replace=False
         )
     ]
     log_weight = importance_weights_log(x, source, target, flow, type="G")
@@ -136,10 +136,10 @@ def main() -> None:
     f0 = new_flow(jax.random.key(0))
     loss_before = float(reverse_KL_F(x_valid, u1, f0).mean())
     flow_F, ess_F = train_reverse_KL_F(x_valid, u0, u1, f0,
-                                       batch_size=N_BATCH, train_steps=STEPS, lr=LR,
-                                       mc_dt=MC_STEP, mc_steps=MC_ITERS)
+                                       batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR,
+                                       mc_dt=MC_DT, mc_steps=MC_STEPS)
     loss_after = float(reverse_KL_F(x_valid, u1, flow_F).mean())
-    check_true("ess history shape", ess_F.shape == (STEPS,), f"{ess_F.shape}")
+    check_true("ess history shape", ess_F.shape == (TRAIN_STEPS,), f"{ess_F.shape}")
     check_true("ess history in (0, 1]",
                bool(jnp.all((ess_F > 0) & (ess_F <= 1.0))),
                f"min {float(ess_F.min()):.3f} max {float(ess_F.max()):.3f}")
@@ -150,13 +150,13 @@ def main() -> None:
     ess_full = float(compute_ESS(importance_weights(x_valid, u0, u1, flow_F, type="F")))
     check_true("final full-set ESS > 0.5", ess_full > 0.5, f"ESS = {ess_full:.4f}")
     flow_F2, _ = train_reverse_KL_F(x_valid, u0, u1, f0,
-                                    n_batch=N_BATCH, steps=STEPS, lr=LR,
-                                    mc_step=MC_STEP, mc_iters=MC_ITERS)
-    check("canonical/legacy keywords are identical",
+                                    batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR,
+                                    mc_dt=MC_DT, mc_steps=MC_STEPS)
+    check("same canonical call is reproducible",
           max_param_delta(flow_F, flow_F2), 0.0, tol=0)
     flow_A, _ = train_reverse_KL_F(x_valid, u0, u1, f0,
-                                   n_batch=N_BATCH, steps=20, lr=LR,
-                                   mc_step=MC_STEP, mc_iters=MC_ITERS, mc_adjust=True)
+                                   batch_size=BATCH_SIZE, train_steps=20, lr=LR,
+                                   mc_dt=MC_DT, mc_steps=MC_STEPS, mc_adjust=True)
     check_true("mc_adjust=True (MALA) trains finite",
                bool(all(jnp.isfinite(x).all() for x in jax.tree.leaves(flow_A)
                         if hasattr(x, "dtype") and jnp.issubdtype(x.dtype, jnp.floating))))
@@ -166,9 +166,9 @@ def main() -> None:
     g0 = new_flow(jax.random.key(1))
     loss_before = float(forward_KL_G(x_valid, u0, g0).mean())
     flow_G, ess_G = train_forward_KL_G(x_valid, u0, u1, g0,
-                                       batch_size=N_BATCH, train_steps=STEPS, lr=LR,
-                                       ladder=LADDER, mc_dt=MC_STEP, mc_steps=MC_ITERS)
-    check_true("ess history shape", ess_G.shape == (STEPS,), f"{ess_G.shape}")
+                                       batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR,
+                                       ladder=LADDER, mc_dt=MC_DT, mc_steps=MC_STEPS)
+    check_true("ess history shape", ess_G.shape == (TRAIN_STEPS,), f"{ess_G.shape}")
     expected_ess_G0 = first_forward_proposal_ess(x_valid, u0, u1, g0, 2, 2)
     check(
         "step-1 ESS is pre-AIS proposal ESS",
@@ -189,8 +189,8 @@ def main() -> None:
         jax.random.key(21), dimension=2, hidden=16, layer=2, rank=3, nt=4
     )
     _, ess_ode = train_forward_KL_G(
-        x_valid, u0, u1, ode0, n_batch=N_BATCH, steps=1, lr=0.0,
-        ladder=3, mc_step=MC_STEP, mc_iters=0,
+        x_valid, u0, u1, ode0, batch_size=BATCH_SIZE, train_steps=1, lr=0.0,
+        ladder=3, mc_dt=MC_DT, mc_steps=0,
     )
     expected_ode0 = first_forward_proposal_ess(
         x_valid, u0, u1, ode0, 2, 2
@@ -204,11 +204,11 @@ def main() -> None:
     log(f"train_forward_KLX_G (coeff_lambda = {COEFF_LAMBDA})")
     h0 = new_flow(jax.random.key(3))
     flow_X, ess_X = train_forward_KLX_G(x_valid, u0, u1, h0,
-                                        batch_size=N_BATCH, train_steps=STEPS, lr=LR,
-                                        ladder=LADDER, mc_dt=MC_STEP,
-                                        mc_steps=MC_ITERS,
+                                        batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR,
+                                        ladder=LADDER, mc_dt=MC_DT,
+                                        mc_steps=MC_STEPS,
                                         coeff_lambda=COEFF_LAMBDA)
-    check_true("ess history shape", ess_X.shape == (STEPS,), f"{ess_X.shape}")
+    check_true("ess history shape", ess_X.shape == (TRAIN_STEPS,), f"{ess_X.shape}")
     expected_ess_X0 = first_forward_proposal_ess(x_valid, u0, u1, h0, 5, 3)
     check(
         "step-1 ESS is pre-AIS proposal ESS",
@@ -224,23 +224,23 @@ def main() -> None:
     ess_full_X = float(compute_ESS(importance_weights(x_valid, u0, u1, flow_X, type="G")))
     check_true("final full-set ESS > 0.5", ess_full_X > 0.5, f"ESS = {ess_full_X:.4f}")
     flow_X2, _ = train_forward_KLX_G(x_valid, u0, u1, h0,
-                                     n_batch=N_BATCH, steps=STEPS, lr=LR,
-                                     ladder=LADDER, mc_step=MC_STEP,
-                                     mc_iters=MC_ITERS,
+                                     batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR,
+                                     ladder=LADDER, mc_dt=MC_DT,
+                                     mc_steps=MC_STEPS,
                                      coeff_lambda=COEFF_LAMBDA)
-    check("canonical/legacy keywords are identical",
+    check("same canonical call is reproducible",
           max_param_delta(flow_X, flow_X2), 0.0, tol=0)
 
     # ── train_forward_KLXX_G ──
     log(f"train_forward_KLXX_G (lambda {COEFF_LAMBDA}, alpha {COEFF_ALPHA}, "
         f"beta {COEFF_BETA})")
     flow_XX, ess_XX = train_forward_KLXX_G(
-        x_valid, u0, u1, h0, pool_size=N_POOL, batch_size=N_BATCH,
-        train_steps=STEPS, lr=LR, ladder=LADDER, melt=MELT,
-        opt_alpha=OPT_STEP, opt_steps=OPT_ITERS, mc_dt=MC_STEP,
-        mc_steps=MC_ITERS, coeff_lambda=COEFF_LAMBDA,
+        x_valid, u0, u1, h0, pool_size=POOL_SIZE, batch_size=BATCH_SIZE,
+        train_steps=TRAIN_STEPS, lr=LR, ladder=LADDER, melt=MELT,
+        opt_alpha=OPT_ALPHA, opt_steps=OPT_STEPS, mc_dt=MC_DT,
+        mc_steps=MC_STEPS, coeff_lambda=COEFF_LAMBDA,
         coeff_alpha=COEFF_ALPHA, coeff_beta=COEFF_BETA)
-    check_true("ess history shape", ess_XX.shape == (STEPS,), f"{ess_XX.shape}")
+    check_true("ess history shape", ess_XX.shape == (TRAIN_STEPS,), f"{ess_XX.shape}")
     expected_ess_XX0 = first_forward_proposal_ess(x_valid, u0, u1, h0, 7, 7)
     check(
         "step-1 ESS is pre-AIS proposal ESS",
@@ -256,11 +256,11 @@ def main() -> None:
     ess_full_XX = float(compute_ESS(importance_weights(x_valid, u0, u1, flow_XX, type="G")))
     check_true("final full-set ESS > 0.5", ess_full_XX > 0.5, f"ESS = {ess_full_XX:.4f}")
     flow_XX2, _ = train_forward_KLXX_G(
-        x_valid, u0, u1, h0, n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS,
-        lr=LR, ladder=LADDER, melt=MELT, opt_step=OPT_STEP, opt_iters=OPT_ITERS,
-        mc_step=MC_STEP, mc_iters=MC_ITERS, coeff_lambda=COEFF_LAMBDA,
+        x_valid, u0, u1, h0, pool_size=POOL_SIZE, batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS,
+        lr=LR, ladder=LADDER, melt=MELT, opt_alpha=OPT_ALPHA, opt_steps=OPT_STEPS,
+        mc_dt=MC_DT, mc_steps=MC_STEPS, coeff_lambda=COEFF_LAMBDA,
         coeff_alpha=COEFF_ALPHA, coeff_beta=COEFF_BETA)
-    check("canonical/legacy keywords are identical",
+    check("same canonical call is reproducible",
           max_param_delta(flow_XX, flow_XX2), 0.0, tol=0)
 
     # ── Monitor ──
@@ -272,8 +272,8 @@ def main() -> None:
         check_true("Monitor rejects every=0", True)
     lines: list[str] = []
     flow_M, _ = train_reverse_KL_F(x_valid, u0, u1, f0,
-                                   n_batch=N_BATCH, steps=20, lr=LR,
-                                   mc_step=MC_STEP, mc_iters=MC_ITERS,
+                                   batch_size=BATCH_SIZE, train_steps=20, lr=LR,
+                                   mc_dt=MC_DT, mc_steps=MC_STEPS,
                                    monitor=Monitor(5, "[mon] ", lines.append))
     jax.effects_barrier()
     check_true("reports steps // every lines", len(lines) == 4, f"{len(lines)} lines")
@@ -282,16 +282,16 @@ def main() -> None:
                    for ln in lines),
                lines[0] if lines else "(no lines)")
     flow_M0, _ = train_reverse_KL_F(x_valid, u0, u1, f0,
-                                    n_batch=N_BATCH, steps=20, lr=LR,
-                                    mc_step=MC_STEP, mc_iters=MC_ITERS)
+                                    batch_size=BATCH_SIZE, train_steps=20, lr=LR,
+                                    mc_dt=MC_DT, mc_steps=MC_STEPS)
     check("monitor does not change training", max_param_delta(flow_M, flow_M0), 0.0, tol=0)
 
     # coeff_alpha/beta are nonnegative resampling masses, not unrestricted
     # loss scalars. Invalid values must fail before constructing the QT pool.
     log("KLXX mixture-coefficient validation")
     tiny = dict(
-        n_pool=32, n_batch=16, steps=1, lr=0.0, ladder=1,
-        melt=0.0, opt_step=0.1, opt_iters=0, mc_step=MC_STEP, mc_iters=0,
+        pool_size=32, batch_size=16, train_steps=1, lr=0.0, ladder=1,
+        melt=0.0, opt_alpha=0.1, opt_steps=0, mc_dt=MC_DT, mc_steps=0,
     )
     for name, alpha, beta in (
         ("negative alpha", -0.1, 0.5),

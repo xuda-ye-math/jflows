@@ -33,7 +33,7 @@ For `CNF(exact=False)`, Hutchinson trace estimation uses one call-shared probe.
 The packed trainers replace its key every optimizer step, yielding stochastic
 trace gradients without letting the drift adapt to one frozen projection.
 Low-level loss calls accept an optional `trace_key`; omitting it retains the
-constructor key for backward-compatible, reproducible evaluation.
+constructor key for deterministic, reproducible evaluation.
 
 All subclass the same `Flow` abstract class (an `eqx.Module`, i.e. an immutable pytree). The flow itself is the user-facing object:
 
@@ -183,9 +183,7 @@ flow, batch_ess_hist = train_reverse_KL_F(
 Across the public API, `dt` denotes an integration step size and `steps` a
 count. Composite controls use `mc_dt` / `mc_steps`, `opt_alpha` /
 `opt_steps`, and `train_steps`; cardinalities use `batch_size`, `pool_size`,
-and `chunks`. The former `step` / `iters`, `mc_step` / `mc_iters`,
-`opt_step` / `opt_iters`, `n_batch`, `n_pool`, and `chunk` keywords remain
-accepted as compatibility aliases, and passing both spellings is an error.
+and `chunks`.
 
 **High level: the annealed Boltzmann generator.** On top of the stage trainers, `boltzmann_reverse_KL_F` runs the full annealed
 Boltzmann generator on the bridge ladder $U_t = (1-t)\,U_0 + t\,U_1$ with an
@@ -225,10 +223,10 @@ stage advancement, and fixed-shape flow operations retain the committed
 full-set importance-weight helper evaluates `chunks` partitions sequentially to
 bound peak memory.
 
-## Compatibility with zflows
+## Differences from zflows
 
-`jflows` is a mathematical JAX port, not a drop-in replacement for `zflows`.
-The main migration points are:
+`jflows` is a mathematical JAX implementation, not a drop-in replacement for
+`zflows`. Its main design differences are:
 
 - random operations take explicit key-first JAX PRNG arguments;
 - Equinox flows are immutable, so identity initialization must be rebound as
@@ -240,20 +238,13 @@ The main migration points are:
 - potential names, F/G dispatch, and checkpoint formats differ;
 - MCMC defaults to adjusted MALA, while zflows historically defaulted to ULA;
 - NCSF is a genuine torus flow with periodic conditioning and a shared seam
-  derivative, rather than the legacy raw-coordinate circular spline.
+  derivative, rather than a raw-coordinate circular spline.
 
-Forward-trainer `batch_ess_hist` means proposal-to-target importance ESS on the
-source minibatch immediately before AIS correction. The temporary stage-record
-alias `ess_history` contains only the accepted attempt's final row; new code
-should use `batch_ess_hist`. Histories from jflows
-before commit `f090ffa` used a post-AIS target-batch concentration statistic;
-commit `f090ffa` (still package version 0.1.0) instead reconstructed the
-pre-AIS proposal through a numerical inverse/forward round trip. Version 0.2.0
-evaluates that proposal directly during the original push, avoiding inverse
-integration error for CNF and OTFlow. These histories are not numerically
-interchangeable. Experiment artifacts should record the package version and
-commit and, for version 0.2.0 histories, the semantic tag
-`proposal_pre_ais_v1`.
+Forward-trainer `batch_ess_hist` is the proposal-to-target importance ESS on
+the source minibatch immediately before AIS correction. The proposal is
+evaluated directly during the original push, avoiding inverse-integration
+error for CNF and OTFlow. Experiment artifacts identify this quantity with the
+semantic tag `proposal_pre_ais_v1`.
 
 **Package layout.**
 
@@ -274,7 +265,6 @@ jflows
 ├── potential.py
 ├── train.py
 └── utils
-    ├── _compat.py
     ├── anneal.py
     ├── __init__.py
     ├── metrics.py
@@ -341,14 +331,6 @@ CNF PRNG state is stored as ordinary uint32 key data and is supported by the
 standard Equinox leaf serializer; reconstruct its skeleton with the same JAX
 PRNG implementation (`threefry2x32`, `rbg`, etc.), although the seed itself may
 differ.
-
-Checkpoints written by jflows versions before box bounds were normalized to a
-floating dtype need a one-time skeleton migration if their NSF/NCSF constructor
-used integer lists. Build the same skeleton, temporarily replace its `a` and
-`b` leaves with arrays of the legacy integer dtype via `eqx.tree_at`, deserialize,
-then cast those two informational leaves back to the flow's `center.dtype`.
-All transforms use the already-floating `center`/`halfwidth`; checkpoints made
-with floating bounds, and all new checkpoints, need no migration.
 
 **Importing.** Use the public submodules `flow`, `potential`, `loss`, `train`,
 `boltzmann`, and `utils`, and call `help(foo_name)` to read the documents. For

@@ -59,7 +59,7 @@ MONITOR_EVERY: int = 100  # print loss + proposal ESS every MONITOR_EVERY steps
 MC_DT: float = 1e-3  # Langevin step size (unused: MC_STEPS = 0)
 MC_STEPS: int = 0      # 0 -> no Langevin rejuvenation (plain reverse KL)
 CHECKPOINT: bool = True  # rematerialize the CNF exact-trace forward pass in the backward
-CHUNK: int = 4         # split the full-set ESS evaluation to bound peak memory
+CHUNKS: int = 4         # split the full-set ESS evaluation to bound peak memory
 
 # evaluation
 N_ESS: int = 20000     # held-out source set for the final ESS estimate
@@ -143,7 +143,7 @@ def main() -> None:
             )
             flow = jax.block_until_ready(flow)   # real wall time: wait for the device
             secs = time.perf_counter() - t0
-            log_w = importance_weights_log(x_ess, u0, u1, flow, type="F", chunks=CHUNK)
+            log_w = importance_weights_log(x_ess, u0, u1, flow, type="F", chunks=CHUNKS)
             ess = float(compute_ESS_log(log_w))
             results[name][d] = ess
             timings[name][d] = secs

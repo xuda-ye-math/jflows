@@ -55,7 +55,6 @@ from jax import Array, lax
 from .flow import Flow
 from .loss import forward_KL_G, reverse_KL_F
 from .potential import Potential
-from .utils._compat import inherit_implementation_doc, legacy_keywords
 from .utils.anneal import annealed_importance_sampling
 from .utils.metrics import compute_ESS_log, resample
 from .utils.quench import quench_and_temper
@@ -213,7 +212,7 @@ class Monitor:
 
 
 @eqx.filter_jit
-def _train_reverse_KL_F_impl(
+def train_reverse_KL_F(
     x_valid: Array,
     source: Potential,
     target: Potential,
@@ -318,7 +317,7 @@ def _train_reverse_KL_F_impl(
 
 
 @eqx.filter_jit
-def _train_forward_KL_G_impl(
+def train_forward_KL_G(
     x_valid: Array,
     source: Potential,
     target: Potential,
@@ -453,7 +452,7 @@ def _train_forward_KL_G_impl(
 
 
 @eqx.filter_jit
-def _train_forward_KLX_G_impl(
+def train_forward_KLX_G(
     x_valid: Array,
     source: Potential,
     target: Potential,
@@ -598,7 +597,7 @@ def _train_forward_KLX_G_impl(
 
 
 @eqx.filter_jit
-def _train_forward_KLXX_G_impl(
+def train_forward_KLXX_G(
     x_valid: Array,
     source: Potential,
     target: Potential,
@@ -812,138 +811,3 @@ def _train_forward_KLXX_G_impl(
         body, (params, m0, v0, updates0), ts
     )
     return eqx.combine(params, static), batch_ess_hist
-
-
-@legacy_keywords(
-    n_batch="batch_size", steps="train_steps",
-    mc_step="mc_dt", mc_iters="mc_steps",
-)
-def train_reverse_KL_F(
-    x_valid: Array,
-    source: Potential,
-    target: Potential,
-    flow: Flow,
-    batch_size: int,
-    train_steps: int,
-    lr: float,
-    mc_dt: float,
-    mc_steps: int,
-    mc_adjust: bool = True,
-    monitor: Monitor | None = None,
-    seed: int | Array = 0,
-    checkpoint: bool = False,
-) -> tuple[Flow, Array]:
-    """Train reverse KL; returns ``(flow, batch_ess_hist)``."""
-    return _train_reverse_KL_F_impl(
-        x_valid, source, target, flow, batch_size, train_steps, lr, mc_dt,
-        mc_steps, mc_adjust, monitor, seed, checkpoint,
-    )
-
-
-@legacy_keywords(
-    n_batch="batch_size", steps="train_steps",
-    mc_step="mc_dt", mc_iters="mc_steps",
-)
-def train_forward_KL_G(
-    x_valid: Array,
-    source: Potential,
-    target: Potential,
-    flow: Flow,
-    batch_size: int,
-    train_steps: int,
-    lr: float,
-    ladder: int,
-    mc_dt: float,
-    mc_steps: int,
-    mc_adjust: bool = True,
-    monitor: Monitor | None = None,
-    seed: int | Array = 0,
-    checkpoint: bool = False,
-    e_clip: float = float("inf"),
-    g_clip: float = float("inf"),
-) -> tuple[Flow, Array]:
-    """Train forward KL; returns ``(flow, batch_ess_hist)``."""
-    return _train_forward_KL_G_impl(
-        x_valid, source, target, flow, batch_size, train_steps, lr, ladder,
-        mc_dt, mc_steps, mc_adjust, monitor, seed, checkpoint, e_clip, g_clip,
-    )
-
-
-@legacy_keywords(
-    n_batch="batch_size", steps="train_steps",
-    mc_step="mc_dt", mc_iters="mc_steps",
-)
-def train_forward_KLX_G(
-    x_valid: Array,
-    source: Potential,
-    target: Potential,
-    flow: Flow,
-    batch_size: int,
-    train_steps: int,
-    lr: float,
-    ladder: int,
-    mc_dt: float,
-    mc_steps: int,
-    coeff_lambda: float = 1.0,
-    mc_adjust: bool = True,
-    monitor: Monitor | None = None,
-    seed: int | Array = 0,
-    checkpoint: bool = False,
-    e_clip: float = float("inf"),
-    g_clip: float = float("inf"),
-) -> tuple[Flow, Array]:
-    """Train forward KL+X; returns ``(flow, batch_ess_hist)``."""
-    return _train_forward_KLX_G_impl(
-        x_valid, source, target, flow, batch_size, train_steps, lr, ladder,
-        mc_dt, mc_steps, coeff_lambda, mc_adjust, monitor, seed, checkpoint,
-        e_clip, g_clip,
-    )
-
-
-@legacy_keywords(
-    n_pool="pool_size", n_batch="batch_size", steps="train_steps",
-    opt_step="opt_alpha", opt_iters="opt_steps",
-    mc_step="mc_dt", mc_iters="mc_steps",
-)
-def train_forward_KLXX_G(
-    x_valid: Array,
-    source: Potential,
-    target: Potential,
-    flow: Flow,
-    pool_size: int,
-    batch_size: int,
-    train_steps: int,
-    lr: float,
-    ladder: int,
-    melt: float,
-    opt_alpha: float,
-    opt_steps: int,
-    mc_dt: float,
-    mc_steps: int,
-    coeff_lambda: float = 1.0,
-    coeff_alpha: float = 0.5,
-    coeff_beta: float = 0.5,
-    mc_adjust: bool = True,
-    monitor: Monitor | None = None,
-    seed: int | Array = 0,
-    checkpoint: bool = False,
-    e_clip: float = float("inf"),
-    g_clip: float = float("inf"),
-) -> tuple[Flow, Array]:
-    """Train forward KL+X+X; returns ``(flow, batch_ess_hist)``."""
-    return _train_forward_KLXX_G_impl(
-        x_valid, source, target, flow, pool_size, batch_size, train_steps, lr,
-        ladder, melt, opt_alpha, opt_steps, mc_dt, mc_steps, coeff_lambda,
-        coeff_alpha, coeff_beta, mc_adjust, monitor, seed, checkpoint, e_clip,
-        g_clip,
-    )
-
-
-for _public, _implementation in (
-    (train_reverse_KL_F, _train_reverse_KL_F_impl),
-    (train_forward_KL_G, _train_forward_KL_G_impl),
-    (train_forward_KLX_G, _train_forward_KLX_G_impl),
-    (train_forward_KLXX_G, _train_forward_KLXX_G_impl),
-):
-    inherit_implementation_doc(_public, _implementation)
-del _public, _implementation

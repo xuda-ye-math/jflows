@@ -108,10 +108,10 @@ def main():
     source = Nlog_Gaussian([0.0] * 3, [1.0] * 3)
     target = Nlog_Gaussian([0.2] * 3, [1.3] * 3)
     lw1 = importance_weights_log(
-        x, source, target, flow, "F", chunk=1, trace_key=jax.random.key(22)
+        x, source, target, flow, "F", chunks=1, trace_key=jax.random.key(22)
     )
     lw3 = importance_weights_log(
-        x, source, target, flow, "F", chunk=3, trace_key=jax.random.key(22)
+        x, source, target, flow, "F", chunks=3, trace_key=jax.random.key(22)
     )
     check("approximate CNF keyed importance weights are chunk-invariant",
           close(lw1, lw3))
@@ -119,7 +119,7 @@ def main():
     # Packed training supplies a fresh trace key each optimizer step.
     trained, hist = train_reverse_KL_F(
         source.samples(jax.random.key(30), 64), source, target, flow.zeros(),
-        n_batch=16, steps=2, lr=1e-3, mc_step=1e-3, mc_iters=0,
+        batch_size=16, train_steps=2, lr=1e-3, mc_dt=1e-3, mc_steps=0,
     )
     check("approximate CNF packed training is finite",
           jnp.isfinite(hist).all()

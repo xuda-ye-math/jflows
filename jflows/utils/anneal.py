@@ -22,7 +22,6 @@ from jax import Array
 
 from ..flow import Flow
 from ..potential import Potential, linear_combination
-from ._compat import legacy_keywords
 from .metrics import _linear_weights_from_log, compute_ESS_log, resample
 from .rejuvenation import langevin
 
@@ -39,7 +38,6 @@ __all__ = [
 # SMC — annealed Langevin on a linear bridge of potentials (no flow)
 # ──────────────────────────────────────────────────────────────────────
 
-@legacy_keywords(step="mc_dt", iters="mc_steps", chunk="chunks")
 def sequential_monte_carlo(
     key: Array,
     samples: Array,
@@ -151,7 +149,6 @@ def sequential_monte_carlo(
 # AIS — flow-proposal SMC along the geometric path to the target
 # ──────────────────────────────────────────────────────────────────────
 
-@legacy_keywords(step="mc_dt", iters="mc_steps", chunk="chunks")
 def annealed_importance_sampling(
     key: Array,
     samples: Array,
