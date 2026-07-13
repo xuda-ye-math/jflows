@@ -113,9 +113,10 @@ from jflows.utils import (
     lbfgs, adamw,                                 # batched optimizers (+ init/step kernels)
 )
 
-log_w = importance_weights_log(samples, source, target, flow, type="F", chunk=1)
+log_w = importance_weights_log(samples, source, target, flow, type="F", chunks=1)
 ess   = compute_ESS_log(log_w)
-y     = ais(key, samples, source, target, flow, type="G", ladder=1, step=1e-3, iters=100)
+y     = ais(key, samples, source, target, flow, type="G",
+            ladder=1, mc_dt=1e-3, mc_steps=100)
 ```
 
 `sequential_monte_carlo` is classical potential-space SMC and rejuvenates at
@@ -129,7 +130,7 @@ push (including the matching Jacobian); later levels refresh latent pre-images
 after resampling/rejuvenation. This distinction matters for fixed-step CNF and
 OTFlow maps, whose numerical inverse is approximate.
 
-`chunk` splits batches along dim 0 (statistically equivalent to `chunk=1`). The
+`chunks` splits batches along dim 0 (statistically equivalent to `chunks=1`). The
 standalone importance-weight helper and the full-set weight evaluation used by
 the Boltzmann drivers iterate eagerly over compiled per-chunk kernels, which
 reliably bounds those operations' peak graph size. A chunk loop nested inside a
@@ -138,8 +139,8 @@ execution partition, but XLA may schedule buffers across chunks; it is not a
 strict peak-VRAM guarantee. Rejuvenation and optimizer routines retain their
 compiled-scan implementations.
 
-**Medium level: training drivers.** Every `jflows.train` stage driver is
-`eqx.filter_jit`-compiled and runs all Adam steps in one `lax.scan`. Sampling,
+**Medium level: training drivers.** Every `jflows.train` stage driver calls an
+`eqx.filter_jit`-compiled kernel that runs all Adam steps in one `lax.scan`. Sampling,
 loss/gradient evaluation, and the Adam update remain in that compiled stage.
 Every step draws a new subset and regenerates its training data, so no frozen
 batch is reused:
@@ -147,18 +148,22 @@ batch is reused:
 ```python
 from jflows.train import train_reverse_KL_F, train_forward_KL_G, Monitor
 
-# reverse KL: each step draws n_batch samples from the fixed set x_valid and
+# reverse KL: each step draws batch_size samples from the fixed set x_valid and
 # freshens them with Langevin rejuvenation at the source (flow fixed as F)
-flow, ess = train_reverse_KL_F(x_valid, source, target, flow,
-                               n_batch=2000, steps=200, lr=1e-3,
-                               mc_step=1e-3, mc_iters=100)
+flow, batch_ess_hist = train_reverse_KL_F(
+    x_valid, source, target, flow,
+    batch_size=2000, train_steps=200, lr=1e-3,
+    mc_dt=1e-3, mc_steps=100,
+)
 
 # forward KL: each step manufactures its target batch by one-level AIS
 # through the CURRENT flow (pushforward -> reweight -> resample -> Langevin;
 # flow fixed as G)
-flow, ess = train_forward_KL_G(x_valid, source, target, flow,
-                               n_batch=2000, steps=200, lr=1e-3,
-                               ladder=1, mc_step=1e-3, mc_iters=100)
+flow, batch_ess_hist = train_forward_KL_G(
+    x_valid, source, target, flow,
+    batch_size=2000, train_steps=200, lr=1e-3,
+    ladder=1, mc_dt=1e-3, mc_steps=100,
+)
 ```
 
 Both drivers are deterministic (per-step keys derive from a fixed internal
@@ -168,10 +173,19 @@ trained flow together with the per-step proposal-to-target batch-ESS history
 `Monitor` reports from inside the compiled scan via `jax.debug.callback`:
 
 ```python
-flow, ess = train_reverse_KL_F(..., monitor=Monitor(every=10, prefix="[reverse KL] "))
+flow, batch_ess_hist = train_reverse_KL_F(
+    ..., monitor=Monitor(every=10, prefix="[reverse KL] ")
+)
 # [reverse KL] step    10   loss = +4.7476e+00   ESS = 0.3542
 # [reverse KL] step    20   loss = +3.7126e+00   ESS = 0.4879
 ```
+
+Across the public API, `dt` denotes an integration step size and `steps` a
+count. Composite controls use `mc_dt` / `mc_steps`, `opt_alpha` /
+`opt_steps`, and `train_steps`; cardinalities use `batch_size`, `pool_size`,
+and `chunks`. The former `step` / `iters`, `mc_step` / `mc_iters`,
+`opt_step` / `opt_iters`, `n_batch`, `n_pool`, and `chunk` keywords remain
+accepted as compatibility aliases, and passing both spellings is an error.
 
 **High level: the annealed Boltzmann generator.** On top of the stage trainers, `boltzmann_reverse_KL_F` runs the full annealed
 Boltzmann generator on the bridge ladder $U_t = (1-t)\,U_0 + t\,U_1$ with an
@@ -189,21 +203,26 @@ from jflows.boltzmann import boltzmann_reverse_KL_F
 
 y_valid, stages = boltzmann_reverse_KL_F(
     x_valid, source, target, flow,
-    n_pool=24000, n_batch=2000, steps=500, lr=1e-4, ladder=1, mc_step=1e-3, mc_iters=100,
+    pool_size=24000, batch_size=2000, train_steps=500, lr=1e-4,
+    ladder=1, mc_dt=1e-3, mc_steps=100,
     bg_param={"t_safe": 0.1, "shrink_factor": 0.7, "enlarge_factor": 1.5, "tau_ess": 0.6},
+    flow_dir="run/flows",
 )
 # y_valid : advanced particle set (at target iff stages[-1]["t"] == 1)
-# stages  : per-stage records {"t", "ess", "flow", "ess_history", "imp_history"} —
-#           the coefficient, the accepted incremental ESS (trained or identity),
-#           the saved incremental map, its per-step training-ESS history, and the
-#           improvement over the identity fallback (max(0, trained - identity) ESS)
+# stages  : accepted-stage records. Full-validation scalars are
+#           valid_selected_ess, valid_trained_ess, and valid_identity_ess.
+#           Attempt-aligned diagnostics are t_hist, batch_ess_hist,
+#           valid_trained_ess_hist, and valid_identity_ess_hist.
+#           Every trained candidate, including rejected ones, is recoverable
+#           through trained_flow_path_hist; selected_flow_path names the
+#           committed trained-or-identity stage map.
 ```
 
 The adaptive coefficient/retry loop stays in Python, while every accepted or
 rejected training attempt invokes one compiled stage scan. Selection SMC,
 stage advancement, and fixed-shape flow operations retain the committed
 `filter_jit` treatment; retuned bridge coefficients are array leaves. The
-full-set importance-weight helper evaluates `chunk` partitions sequentially to
+full-set importance-weight helper evaluates `chunks` partitions sequentially to
 bound peak memory.
 
 ## Compatibility with zflows
@@ -223,8 +242,10 @@ The main migration points are:
 - NCSF is a genuine torus flow with periodic conditioning and a shared seam
   derivative, rather than the legacy raw-coordinate circular spline.
 
-Forward-trainer `ess_history` means proposal-to-target importance ESS on the
-source minibatch immediately before AIS correction. Histories from jflows
+Forward-trainer `batch_ess_hist` means proposal-to-target importance ESS on the
+source minibatch immediately before AIS correction. The temporary stage-record
+alias `ess_history` contains only the accepted attempt's final row; new code
+should use `batch_ess_hist`. Histories from jflows
 before commit `f090ffa` used a post-AIS target-batch concentration statistic;
 commit `f090ffa` (still package version 0.1.0) instead reconstructed the
 pre-AIS proposal through a numerical inverse/forward round trip. Version 0.2.0
@@ -238,6 +259,7 @@ commit and, for version 0.2.0 histories, the semantic tag
 
 ```
 jflows
+├── _artifacts.py
 ├── boltzmann.py
 ├── core
 │   ├── flows.py
@@ -252,6 +274,7 @@ jflows
 ├── potential.py
 ├── train.py
 └── utils
+    ├── _compat.py
     ├── anneal.py
     ├── __init__.py
     ├── metrics.py

@@ -24,6 +24,7 @@ from jax import Array
 
 from ..flow import Flow
 from ..potential import Potential
+from ._compat import legacy_keywords
 
 
 __all__ = [
@@ -75,13 +76,14 @@ def linear_weights_from_log(log_weights: Array) -> Array:
 # Importance weights — log/linear-space flow IS reweighting
 # ──────────────────────────────────────────────────────────────────────
 
+@legacy_keywords(chunk="chunks")
 def importance_weights_log(
     samples: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
     type: str,
-    chunk: int = 1,
+    chunks: int = 1,
     trace_key: Array | None = None,
 ) -> Array:
     """
@@ -109,11 +111,11 @@ def importance_weights_log(
         flow:    Flow           the normalizing flow
         type:    str            'F' if the flow maps source -> target;
                                 'G' if it maps target -> source
-        chunk:   int            split `samples` along dim 0 into this many
+        chunks:  int            split `samples` along dim 0 into this many
                                      chunks and concatenate the per-chunk
                                      log-weights. Reduces peak memory at the cost
                                      of wall time; statistically and numerically
-                                     equivalent to chunk=1 (each sample's
+                                     equivalent to chunks=1 (each sample's
                                      log-weight depends only on its own (x, F(x))).
         trace_key: Array | None optional base key for stochastic CNF
                                 log-Jacobian probes
@@ -126,20 +128,21 @@ def importance_weights_log(
         raise ValueError(f"importance_weights_log: type must be 'F' or 'G', got {type!r}")
     flow_trace = flow if trace_key is None else flow.with_trace_key(trace_key)
     out = []
-    for x in jnp.array_split(samples, chunk, axis=0):
+    for x in jnp.array_split(samples, chunks, axis=0):
         push = flow_trace.call_and_ladj if type == "F" else flow_trace.inv_and_ladj
         y, ladj = push(x)
         out.append(-target(y) + source(x) + ladj)
     return jnp.concatenate(out, axis=0)
 
 
+@legacy_keywords(chunk="chunks")
 def importance_weights(
     samples: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
     type: str,
-    chunk: int = 1,
+    chunks: int = 1,
     trace_key: Array | None = None,
 ) -> Array:
     """
@@ -162,7 +165,7 @@ def importance_weights(
         w: Array [N]   unnormalized importance weights in [0, 1].
     """
     log_w = importance_weights_log(
-        samples, source, target, flow, type, chunk=chunk, trace_key=trace_key
+        samples, source, target, flow, type, chunks=chunks, trace_key=trace_key
     )
     return _linear_weights_from_log(log_w)
 
@@ -246,7 +249,8 @@ def compute_ESS_log(log_weights: Array) -> Array:
 # coverage — k-NN mode-collapse diagnostic
 # ──────────────────────────────────────────────────────────────────────
 
-def coverage(y: Array, x: Array, k: int = 5, chunk: int = 1) -> Array:
+@legacy_keywords(chunk="chunks")
+def coverage(y: Array, x: Array, k: int = 5, chunks: int = 1) -> Array:
     """
     Coverage metric (Naeem et al., 2020): the fraction of reference
     points x_i whose k-NN ball (radius = distance to the k-th nearest
@@ -261,15 +265,15 @@ def coverage(y: Array, x: Array, k: int = 5, chunk: int = 1) -> Array:
     reached), whereas coverage against a wide-coverage reference set
     exposes the missing mode directly.
 
-    Memory: squared distances are computed in [P/chunk, P] and
-    [P/chunk, N] blocks from dot products — the [P, P, d] broadcast is
-    never formed. Peak memory is O(P (P + N) / chunk); raise `chunk`
-    for large sample sets (e.g. chunk >= P N / 1e8 at float32).
+    Memory: squared distances are computed in [P/chunks, P] and
+    [P/chunks, N] blocks from dot products — the [P, P, d] broadcast is
+    never formed. Peak memory is O(P (P + N) / chunks); raise `chunks`
+    for large sample sets (e.g. chunks >= P N / 1e8 at float32).
     Input:
         y: Array [N, d]   candidate samples (e.g. the flow's pushforward)
         x: Array [P, d]   reference samples (e.g. a wide-coverage measure)
         k: int            neighborhood order (default 5), 1 <= k < P
-        chunk: int        split the reference set into this many row blocks
+        chunks: int       split the reference set into this many row blocks
     Output:
         coverage: Array (scalar in [0, 1])
     """
@@ -279,27 +283,27 @@ def coverage(y: Array, x: Array, k: int = 5, chunk: int = 1) -> Array:
             "coverage: x/y must be non-empty rank-2 arrays with matching feature "
             f"dimensions and at least two reference rows; got x={x.shape}, y={y.shape}"
         )
-    if isinstance(k, bool) or isinstance(chunk, bool):
-        raise ValueError("coverage: k and chunk must be integers, not booleans")
+    if isinstance(k, bool) or isinstance(chunks, bool):
+        raise ValueError("coverage: k and chunks must be integers, not booleans")
     try:
         k = operator.index(k)
     except TypeError as exc:
         raise ValueError(f"coverage: k must be an integer, got {k!r}") from exc
     try:
-        chunk = operator.index(chunk)
+        chunks = operator.index(chunks)
     except TypeError as exc:
-        raise ValueError(f"coverage: chunk must be an integer, got {chunk!r}") from exc
+        raise ValueError(f"coverage: chunks must be an integer, got {chunks!r}") from exc
     if not (1 <= k < x.shape[0]):
         raise ValueError(f"coverage: k must satisfy 1 <= k < P={x.shape[0]}, got {k!r}")
-    if not (1 <= chunk <= x.shape[0]):
+    if not (1 <= chunks <= x.shape[0]):
         raise ValueError(
-            f"coverage: chunk must satisfy 1 <= chunk <= P={x.shape[0]}, got {chunk!r}"
+            f"coverage: chunks must satisfy 1 <= chunks <= P={x.shape[0]}, got {chunks!r}"
         )
     x2 = (x * x).sum(axis=-1)                                   # [P]
     y2 = (y * y).sum(axis=-1)                                   # [N]
     covered = []
     offset = 0
-    for xc in jnp.array_split(x, chunk, axis=0):
+    for xc in jnp.array_split(x, chunks, axis=0):
         c = xc.shape[0]
         xc2 = (xc * xc).sum(axis=-1)
         dxx2 = xc2[:, None] - 2.0 * (xc @ x.T) + x2[None, :]    # [c, P] squared distances

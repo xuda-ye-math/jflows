@@ -136,8 +136,8 @@ def main() -> None:
     f0 = new_flow(jax.random.key(0))
     loss_before = float(reverse_KL_F(x_valid, u1, f0).mean())
     flow_F, ess_F = train_reverse_KL_F(x_valid, u0, u1, f0,
-                                       n_batch=N_BATCH, steps=STEPS, lr=LR,
-                                       mc_step=MC_STEP, mc_iters=MC_ITERS)
+                                       batch_size=N_BATCH, train_steps=STEPS, lr=LR,
+                                       mc_dt=MC_STEP, mc_steps=MC_ITERS)
     loss_after = float(reverse_KL_F(x_valid, u1, flow_F).mean())
     check_true("ess history shape", ess_F.shape == (STEPS,), f"{ess_F.shape}")
     check_true("ess history in (0, 1]",
@@ -152,7 +152,8 @@ def main() -> None:
     flow_F2, _ = train_reverse_KL_F(x_valid, u0, u1, f0,
                                     n_batch=N_BATCH, steps=STEPS, lr=LR,
                                     mc_step=MC_STEP, mc_iters=MC_ITERS)
-    check("deterministic (same call twice)", max_param_delta(flow_F, flow_F2), 0.0, tol=0)
+    check("canonical/legacy keywords are identical",
+          max_param_delta(flow_F, flow_F2), 0.0, tol=0)
     flow_A, _ = train_reverse_KL_F(x_valid, u0, u1, f0,
                                    n_batch=N_BATCH, steps=20, lr=LR,
                                    mc_step=MC_STEP, mc_iters=MC_ITERS, mc_adjust=True)
@@ -165,8 +166,8 @@ def main() -> None:
     g0 = new_flow(jax.random.key(1))
     loss_before = float(forward_KL_G(x_valid, u0, g0).mean())
     flow_G, ess_G = train_forward_KL_G(x_valid, u0, u1, g0,
-                                       n_batch=N_BATCH, steps=STEPS, lr=LR,
-                                       ladder=LADDER, mc_step=MC_STEP, mc_iters=MC_ITERS)
+                                       batch_size=N_BATCH, train_steps=STEPS, lr=LR,
+                                       ladder=LADDER, mc_dt=MC_STEP, mc_steps=MC_ITERS)
     check_true("ess history shape", ess_G.shape == (STEPS,), f"{ess_G.shape}")
     expected_ess_G0 = first_forward_proposal_ess(x_valid, u0, u1, g0, 2, 2)
     check(
@@ -203,9 +204,9 @@ def main() -> None:
     log(f"train_forward_KLX_G (coeff_lambda = {COEFF_LAMBDA})")
     h0 = new_flow(jax.random.key(3))
     flow_X, ess_X = train_forward_KLX_G(x_valid, u0, u1, h0,
-                                        n_batch=N_BATCH, steps=STEPS, lr=LR,
-                                        ladder=LADDER, mc_step=MC_STEP,
-                                        mc_iters=MC_ITERS,
+                                        batch_size=N_BATCH, train_steps=STEPS, lr=LR,
+                                        ladder=LADDER, mc_dt=MC_STEP,
+                                        mc_steps=MC_ITERS,
                                         coeff_lambda=COEFF_LAMBDA)
     check_true("ess history shape", ess_X.shape == (STEPS,), f"{ess_X.shape}")
     expected_ess_X0 = first_forward_proposal_ess(x_valid, u0, u1, h0, 5, 3)
@@ -227,15 +228,17 @@ def main() -> None:
                                      ladder=LADDER, mc_step=MC_STEP,
                                      mc_iters=MC_ITERS,
                                      coeff_lambda=COEFF_LAMBDA)
-    check("deterministic (same call twice)", max_param_delta(flow_X, flow_X2), 0.0, tol=0)
+    check("canonical/legacy keywords are identical",
+          max_param_delta(flow_X, flow_X2), 0.0, tol=0)
 
     # ── train_forward_KLXX_G ──
     log(f"train_forward_KLXX_G (lambda {COEFF_LAMBDA}, alpha {COEFF_ALPHA}, "
         f"beta {COEFF_BETA})")
     flow_XX, ess_XX = train_forward_KLXX_G(
-        x_valid, u0, u1, h0, n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS,
-        lr=LR, ladder=LADDER, melt=MELT, opt_step=OPT_STEP, opt_iters=OPT_ITERS,
-        mc_step=MC_STEP, mc_iters=MC_ITERS, coeff_lambda=COEFF_LAMBDA,
+        x_valid, u0, u1, h0, pool_size=N_POOL, batch_size=N_BATCH,
+        train_steps=STEPS, lr=LR, ladder=LADDER, melt=MELT,
+        opt_alpha=OPT_STEP, opt_steps=OPT_ITERS, mc_dt=MC_STEP,
+        mc_steps=MC_ITERS, coeff_lambda=COEFF_LAMBDA,
         coeff_alpha=COEFF_ALPHA, coeff_beta=COEFF_BETA)
     check_true("ess history shape", ess_XX.shape == (STEPS,), f"{ess_XX.shape}")
     expected_ess_XX0 = first_forward_proposal_ess(x_valid, u0, u1, h0, 7, 7)
@@ -257,7 +260,8 @@ def main() -> None:
         lr=LR, ladder=LADDER, melt=MELT, opt_step=OPT_STEP, opt_iters=OPT_ITERS,
         mc_step=MC_STEP, mc_iters=MC_ITERS, coeff_lambda=COEFF_LAMBDA,
         coeff_alpha=COEFF_ALPHA, coeff_beta=COEFF_BETA)
-    check("deterministic (same call twice)", max_param_delta(flow_XX, flow_XX2), 0.0, tol=0)
+    check("canonical/legacy keywords are identical",
+          max_param_delta(flow_XX, flow_XX2), 0.0, tol=0)
 
     # ── Monitor ──
     log("Monitor")

@@ -15,6 +15,13 @@ that walks a caller-supplied fixed `t_list` from 0 to 1 with the adaptive
 machinery removed — no SMC pre-selection, no acceptance/rejection, just bare
 step-by-step training of each increment. The per-stage identity check and the
 output records are identical, so `(y_valid, stages)` is consumed the same way.
+
+Stage records expose unambiguous full-validation ESS values and aligned
+attempt histories. Passing ``flow_dir`` additionally writes every trained
+candidate (including rejected and identity-losing attempts), the accepted
+stage map, metadata, and an atomic run manifest. Persistence is eager and does
+not participate in JIT compilation or PRNG handling. The old ``ess``,
+``ess_history``, and ``imp_history`` record keys remain temporary aliases.
 """
 
 from __future__ import annotations
@@ -27,8 +34,10 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
+from ._artifacts import FlowArtifactWriter
 from .flow import Flow
 from .potential import Potential, linear_combination
+from .utils._compat import inherit_implementation_doc, legacy_keywords
 from .utils.anneal import sequential_monte_carlo
 from .utils.metrics import (_linear_weights_from_log, compute_ESS_log,
                             importance_weights_log, resample)
@@ -46,23 +55,23 @@ __all__ = ["boltzmann_forward_KL_G", "boltzmann_forward_KLX_G",
 _iw_log_kernel = eqx.filter_jit(importance_weights_log)
 
 
-def _iw_log_jit(samples, source, target, flow, type, chunk=1):
+def _iw_log_jit(samples, source, target, flow, type, chunks=1):
     """Full-set log importance weights, chunked eagerly: the compiled
     per-chunk kernel is looped in Python, so the device frees each chunk's
-    buffers before the next runs and the peak memory is one chunk's graph
+    buffers before the next runs and peak memory is one chunk's graph
     (an in-graph chunk loop is overlapped by the XLA scheduler, which
     reconstitutes the full-set peak). Statistically and numerically
     identical to a single full-set call."""
     return jnp.concatenate([
         _iw_log_kernel(x, source, target, flow, type)
-        for x in jnp.array_split(samples, chunk, axis=0)
+        for x in jnp.array_split(samples, chunks, axis=0)
     ], axis=0)
 
 
 _pot_diff_kernel = eqx.filter_jit(lambda y, source, target: source(y) - target(y))
 
 
-def _iw_log_identity(samples, source, target, chunk=1):
+def _iw_log_identity(samples, source, target, chunks=1):
     """Identity-map log importance weights source(y) - target(y), chunked
     eagerly. This is the increment's SMC (identity-map) reweighting from
     mu_{k-1} to mu_k: with the flow fixed to the identity the Jacobian term
@@ -73,7 +82,7 @@ def _iw_log_identity(samples, source, target, chunk=1):
     op). Only the trained flow pays for its inverse via `_iw_log_jit`."""
     return jnp.concatenate([
         _pot_diff_kernel(x, source, target)
-        for x in jnp.array_split(samples, chunk, axis=0)
+        for x in jnp.array_split(samples, chunks, axis=0)
     ], axis=0)
 
 
@@ -93,19 +102,99 @@ _smc_jit = eqx.filter_jit(sequential_monte_carlo)
 _langevin_jit = eqx.filter_jit(langevin)   # per-stage selection-pool rejuvenation
 
 
+def _new_attempt_hist() -> dict[str, list]:
+    """Host-side attempt diagnostics; never enters a compiled computation."""
+    return {
+        "t": [],
+        "batch_ess": [],
+        "valid_trained_ess": [],
+        "valid_identity_ess": [],
+        "status": [],
+        "trained_flow_path": [],
+    }
+
+
+def _record_attempt(
+    hist: dict[str, list],
+    artifacts: FlowArtifactWriter,
+    *,
+    stage: int,
+    attempt: int,
+    t: float,
+    batch_ess: Array,
+    candidate: Flow,
+    status: str,
+    selected: str,
+    valid_selected_ess: float,
+    valid_trained_ess: float,
+    valid_identity_ess: float,
+) -> None:
+    """Append one attempt and, when enabled, persist its trained candidate."""
+    path = artifacts.save_attempt(
+        stage, attempt, t, candidate, status=status, selected=selected,
+        valid_selected_ess=valid_selected_ess,
+        valid_trained_ess=valid_trained_ess,
+        valid_identity_ess=valid_identity_ess,
+        batch_ess=batch_ess,
+    )
+    hist["t"].append(float(t))
+    hist["batch_ess"].append(batch_ess)
+    hist["valid_trained_ess"].append(float(valid_trained_ess))
+    hist["valid_identity_ess"].append(float(valid_identity_ess))
+    hist["status"].append(status)
+    hist["trained_flow_path"].append(path)
+
+
+def _stage_record(
+    *,
+    t: float,
+    valid_selected_ess: float,
+    valid_trained_ess: float,
+    valid_identity_ess: float,
+    selected: str,
+    flow: Flow,
+    hist: dict[str, list],
+    selected_flow_path: str | None,
+) -> dict:
+    """Canonical stage record plus temporary aliases for old consumers."""
+    batch_ess_hist = jnp.stack(hist["batch_ess"], axis=0)
+    record = {
+        "t": float(t),
+        "valid_selected_ess": float(valid_selected_ess),
+        "valid_trained_ess": float(valid_trained_ess),
+        "valid_identity_ess": float(valid_identity_ess),
+        "selected": selected,
+        "flow": flow,
+        "t_hist": jnp.asarray(hist["t"]),
+        "batch_ess_hist": batch_ess_hist,
+        "valid_trained_ess_hist": jnp.asarray(hist["valid_trained_ess"]),
+        "valid_identity_ess_hist": jnp.asarray(hist["valid_identity_ess"]),
+        "attempt_status_hist": tuple(hist["status"]),
+        "trained_flow_path_hist": tuple(hist["trained_flow_path"]),
+        "selected_flow_path": selected_flow_path,
+    }
+    # Compatibility aliases. New code should use the explicit names above.
+    record["ess"] = record["valid_selected_ess"]
+    record["ess_history"] = batch_ess_hist[-1]
+    record["imp_history"] = max(
+        0.0, record["valid_trained_ess"] - record["valid_identity_ess"]
+    )
+    return record
+
+
 @eqx.filter_jit
-def _bg_advance(key_res, key_mc, y, log_w, flow, type, u_k, mc_step, mc_iters,
-                mc_adjust, chunk):
+def _bg_advance(key_res, key_mc, y, log_w, flow, type, u_k, mc_dt, mc_steps,
+                mc_adjust, chunks):
     """Stage advance: push the particle set through the increment (chunked),
     reweight by the stage log-weights, resample, Langevin-freshen at U_k
     (MALA when mc_adjust)."""
     push = flow.__call__ if type == "F" else flow.inv
     y_push = jnp.concatenate(
-        [push(c) for c in jnp.array_split(y, chunk, axis=0)], axis=0
+        [push(c) for c in jnp.array_split(y, chunks, axis=0)], axis=0
     )
     y_new = resample(key_res, y_push, _linear_weights_from_log(log_w))
-    return langevin(key_mc, y_new, u_k, step=mc_step, iters=mc_iters,
-                    adjust=mc_adjust, chunk=chunk)
+    return langevin(key_mc, y_new, u_k, dt=mc_dt, steps=mc_steps,
+                    adjust=mc_adjust, chunks=chunks)
 
 
 _BG_DEFAULTS = {
@@ -185,23 +274,24 @@ def _fixed_schedule(name: str, t_list) -> list[float]:
     return schedule
 
 
-def boltzmann_reverse_KL_F(
+def _boltzmann_reverse_KL_F_impl(
     x_valid: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
-    n_pool: int,
-    n_batch: int,
-    steps: int,
+    pool_size: int,
+    batch_size: int,
+    train_steps: int,
     lr: float,
     ladder: int,
-    mc_step: float,
-    mc_iters: int,
+    mc_dt: float,
+    mc_steps: int,
     mc_adjust: bool = True,
     monitor: Monitor | None = None,
     bg_param: dict | None = None,
-    chunk: int = 1,
+    chunks: int = 1,
     checkpoint: bool = False,
+    flow_dir=None,
 ) -> tuple[Array, list[dict]]:
     """
     Annealed Boltzmann generator on the reverse KL, with the flow fixed
@@ -217,7 +307,7 @@ def boltzmann_reverse_KL_F(
 
         1. selection:       when tau_smc > 0, a `ladder`-level SMC check
                             from U_{t_{k-1}} to the candidate bridge on an
-                            `n_pool`-sized selection pool — drawn with
+                            `pool_size`-sized selection pool — drawn with
                             replacement from the particle set and
                             Langevin-rejuvenated at U_{t_{k-1}} — shrinks
                             t_k until its MINIMUM per-level ESS clears
@@ -270,18 +360,18 @@ def boltzmann_reverse_KL_F(
         target:   Potential      negative log-density of the target (up to const)
         flow:     Flow           the normalizing flow to train, applied as F
                                  (source -> target)
-        n_pool:   int            selection-pool size: the tau_smc gate runs on
+        pool_size:   int            selection-pool size: the tau_smc gate runs on
                                  this many particles drawn (with replacement)
                                  from the particle set per stage
-        n_batch:  int            samples drawn from the particle set per Adam step
-        steps:    int            Adam steps per stage attempt
+        batch_size:  int            samples drawn from the particle set per Adam step
+        train_steps: int            Adam updates per stage attempt
         lr:       float          Adam learning rate
         ladder:   int            SMC levels of the tau_smc selection gate (the
                                  gate accepts on the minimum per-level ESS)
-        mc_step:  float          Langevin step size (batch rejuvenation inside
+        mc_dt:  float          Langevin step size (batch rejuvenation inside
                                  training, the SMC gate, AND the particle-set
                                  advance)
-        mc_iters: int            Langevin steps (same uses)
+        mc_steps: int            Langevin steps (same uses)
         mc_adjust: bool          False: unadjusted ULA; True: MALA in the
                                  trainer's batch rejuvenation and the
                                  particle-set advance — rejects proposals into
@@ -294,7 +384,7 @@ def boltzmann_reverse_KL_F(
                                  {t_safe, shrink_factor, enlarge_factor,
                                  tau_smc, tau_ess, t_tol, max_stages,
                                  max_retry}
-        chunk:    int            split full-set stage operations into this many
+        chunks:    int            split full-set stage operations into this many
                                  execution chunks. Weight evaluation iterates
                                  eagerly and bounds that graph; push/Langevin
                                  run inside the compiled advancement and are
@@ -309,30 +399,34 @@ def boltzmann_reverse_KL_F(
                              generator's sample output: at the target on a
                              complete ladder, at the last accepted bridge on
                              an incomplete one
-        stages:  list[dict]  one record per accepted stage:
-                             {"t": float, "ess": float, "flow": Flow,
-                             "ess_history": Array [steps], "imp_history": float}
-                             — the coefficient; the accepted incremental ESS
-                             (see below); the SAVED stage flow
-                             (stages[-1]["flow"] is the last incremental map);
-                             the full per-step proposal-minibatch ESS history
-                             of the accepted attempt; and the identity
-                             improvement (below). The ladder is complete iff
-                             stages[-1]["t"] == 1.
+        stages:  list[dict]  one record per accepted stage. Canonical scalar
+                             fields are ``t``, ``valid_selected_ess``,
+                             ``valid_trained_ess``, ``valid_identity_ess``,
+                             ``selected``, and ``flow``. Attempt-aligned fields
+                             are ``t_hist``, ``batch_ess_hist``,
+                             ``valid_trained_ess_hist``,
+                             ``valid_identity_ess_hist``,
+                             ``attempt_status_hist``, and
+                             ``trained_flow_path_hist``. ``selected_flow_path``
+                             names the separately saved accepted map, or is
+                             None when ``flow_dir`` is disabled. The ladder is
+                             complete iff stages[-1]["t"] == 1.
 
                              Identity check: after training, each stage keeps
                              whichever of the trained flow and the identity map
                              (pure SMC reweighting) has the higher incremental
-                             ESS on the particle set. So "ess" is
+                             ESS on the particle set. So
+                             ``valid_selected_ess`` is
                              max(trained ESS, identity ESS) — the ACCEPTED map's
                              ESS, not necessarily the trained flow's — "flow" is
                              the identity map when the fallback wins, and
-                             "imp_history" = max(0, trained ESS - identity ESS)
-                             is the (non-negative) improvement over SMC. The
-                             identity ESS costs two potential evaluations and no
-                             flow inverse.
+                             the identity ESS costs two potential evaluations
+                             and no flow inverse. ``ess``, ``ess_history``, and
+                             ``imp_history`` are temporary aliases for old
+                             consumers.
     """
     p = _bg_parameters("boltzmann_reverse_KL_F", bg_param)
+    artifacts = FlowArtifactWriter(flow_dir, "boltzmann_reverse_KL_F")
 
     status = monitor.printer if monitor is not None else print
     key = jax.random.key(3)  # the ladder's own base stream (distinct from the trainers)
@@ -343,6 +437,7 @@ def boltzmann_reverse_KL_F(
     t_prev = 0.0
     while t_prev < 1.0 and len(stages) < p["max_stages"]:
         k = len(stages) + 1
+        artifacts.start_stage(k, t_prev)
         # initial guess: t_safe on stage 1, thereafter the enlarge-factor
         # extrapolation over the last two accepted coefficients
         hist = [0.0] + [s["t"] for s in stages]
@@ -354,19 +449,20 @@ def boltzmann_reverse_KL_F(
         if not (t_prev < t_k <= 1.0):
             status(f"[stage {k}] candidate t={t_k!r} does not advance past "
                    f"t={t_prev!r} — ladder INCOMPLETE")
+            artifacts.fail_stage(k, "nonadvancing_candidate", t=t_k)
             break
         u_prev = linear_combination([target, source], [t_prev, 1.0 - t_prev])
         # (1) selection pool + SMC pre-selection of t_k (the reference
-        # adaptive_step): the gate runs on an n_pool-sized pool drawn with
+        # adaptive_step): the gate runs on a pool_size-sized pool drawn with
         # replacement from the particle set and rejuvenated at U_{t_{k-1}}
         # (the set is exact mu_0 at t = 0); shrink t_k until the pool's
         # minimum per-level SMC ESS clears tau_smc
         if p["tau_smc"] > 0.0:
             key_pool, key_mc_pool = jax.random.split(jax.random.fold_in(key, 20_000 + k))
-            pool = y_valid[jax.random.randint(key_pool, (n_pool,), 0, y_valid.shape[0])]
+            pool = y_valid[jax.random.randint(key_pool, (pool_size,), 0, y_valid.shape[0])]
             if t_prev > 0.0:
-                pool = _langevin_jit(key_mc_pool, pool, u_prev, step=mc_step,
-                                     iters=mc_iters, adjust=mc_adjust, chunk=chunk)
+                pool = _langevin_jit(key_mc_pool, pool, u_prev, dt=mc_dt,
+                                     steps=mc_steps, adjust=mc_adjust, chunks=chunks)
             smc_base = jax.random.fold_in(key, 10_000 + k)  # disjoint from the advance keys
             ok_smc = False
             for s_i in range(60):                           # max_shrinks, as in the reference
@@ -374,8 +470,8 @@ def boltzmann_reverse_KL_F(
                     break
                 u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
                 _, smc_ess = _smc_jit(jax.random.fold_in(smc_base, s_i), pool,
-                                      u_prev, u_k, ladder=ladder, step=mc_step,
-                                      iters=mc_iters, adjust=mc_adjust, chunk=chunk)
+                                      u_prev, u_k, ladder=ladder, mc_dt=mc_dt,
+                                      mc_steps=mc_steps, adjust=mc_adjust, chunks=chunks)
                 ess_smc = float(smc_ess.min())
                 ok_smc = ess_smc >= p["tau_smc"]
                 status(f"[stage {k}] [select] t_k={t_k:.4f}  SMC ESS = {ess_smc:.3f} "
@@ -386,8 +482,11 @@ def boltzmann_reverse_KL_F(
             if not ok_smc:
                 status(f"[stage {k}] SMC selection failed after 60 shrinks "
                        f"(last t={t_k:.6g}) — ladder INCOMPLETE")
+                artifacts.fail_stage(k, "smc_selection_failed", t=t_k)
                 break
         accepted = False
+        attempt_hist = _new_attempt_hist()
+        ess_k = float("nan")
         for attempt in range(1, p["max_retry"] + 1):
             if not t_k > t_prev:
                 status(f"[stage {k}] rejected-step shrink made no floating-point "
@@ -398,43 +497,61 @@ def boltzmann_reverse_KL_F(
                    f"(attempt {attempt}/{p['max_retry']}) training the increment ...")
             seed = jnp.uint32(k * p["max_retry"] + attempt)  # fresh stream per attempt
             cand, ess_hist = train_reverse_KL_F(y_valid, u_prev, u_k, flow,
-                                                n_batch, steps, lr, mc_step, mc_iters,
+                                                batch_size, train_steps, lr, mc_dt, mc_steps,
                                                 mc_adjust, monitor,
                                                 seed=seed, checkpoint=checkpoint)
-            log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "F", chunk=chunk)
+            log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "F", chunks=chunks)
             ess_tr = float(compute_ESS_log(log_w_tr))
-            log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunk=chunk)
+            log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunks=chunks)
             ess_id = float(compute_ESS_log(log_w_id))
             jax.effects_barrier()  # keep monitor lines ahead of the stage status
             # identity check: keep the better of the trained flow and the
             # identity map (pure SMC), so a stage is never worse than SMC
             if ess_tr >= ess_id:
                 stage_flow, next_flow, log_w, ess_k = cand, cand, log_w_tr, ess_tr
+                selected = "trained"
             else:
                 stage_flow, next_flow, log_w, ess_k = (
                     identity_flow, _trainable_identity(flow), log_w_id, ess_id
                 )
+                selected = "identity"
             imp = ess_k - ess_id  # improvement over identity, always >= 0
             status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
                    f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f}; "
                    f"tau_ess = {p['tau_ess']:.2f})")
-            if ess_k >= p["tau_ess"]:
+            attempt_status = "accepted" if ess_k >= p["tau_ess"] else "rejected"
+            _record_attempt(
+                attempt_hist, artifacts, stage=k, attempt=attempt, t=t_k,
+                batch_ess=ess_hist, candidate=cand, status=attempt_status,
+                selected=selected, valid_selected_ess=ess_k,
+                valid_trained_ess=ess_tr, valid_identity_ess=ess_id,
+            )
+            if attempt_status == "accepted":
                 accepted = True
                 break
             status(f"[stage {k}] t={t_k:.4f} REJECTED -> shrink")
             t_k = t_prev + p["shrink_factor"] * (t_k - t_prev)
         if not accepted:
-            status(f"[stage {k}] gave up after {p['max_retry']} attempts "
-                   f"(last t={t_k:.4f}, ESS = {ess_k:.3f}) — ladder INCOMPLETE")
+            failed_t = attempt_hist["t"][-1] if attempt_hist["t"] else t_k
+            artifacts.fail_stage(k, "failed", t=failed_t, valid_selected_ess=ess_k)
+            status(f"[stage {k}] gave up after {len(attempt_hist['t'])} attempts "
+                   f"(last attempted t={failed_t:.4f}, ESS = {ess_k:.3f}) "
+                   "— ladder INCOMPLETE")
             break
         # advance the particle set: push through the increment, reweight,
         # resample, and freshen with Langevin (MALA when mc_adjust) at U_{t_k}
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
         y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, stage_flow, "F", u_k,
-                              mc_step, mc_iters, mc_adjust, chunk)
+                              mc_dt, mc_steps, mc_adjust, chunks)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage, not the next
-        stages.append({"t": t_k, "ess": ess_k, "flow": stage_flow,
-                       "ess_history": ess_hist, "imp_history": imp})
+        selected_path = artifacts.accept_stage(
+            k, t_k, stage_flow, selected=selected, valid_selected_ess=ess_k
+        )
+        stages.append(_stage_record(
+            t=t_k, valid_selected_ess=ess_k, valid_trained_ess=ess_tr,
+            valid_identity_ess=ess_id, selected=selected, flow=stage_flow,
+            hist=attempt_hist, selected_flow_path=selected_path,
+        ))
         flow = next_flow
         status(f"[stage {k}] t={t_k:.4f} ACCEPTED (attempt {attempt}): "
                f"stage flow saved; particle set advanced")
@@ -445,28 +562,31 @@ def boltzmann_reverse_KL_F(
     else:
         status(f"boltzmann_reverse_KL_F: ladder COMPLETE ({len(stages)} stages); "
                f"particle set at the target")
+    artifacts.finish(complete=t_prev == 1.0, last_t=t_prev,
+                     accepted_stages=len(stages))
     return y_valid, stages
 
 
-def boltzmann_forward_KL_G(
+def _boltzmann_forward_KL_G_impl(
     x_valid: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
-    n_pool: int,
-    n_batch: int,
-    steps: int,
+    pool_size: int,
+    batch_size: int,
+    train_steps: int,
     lr: float,
     ladder: int,
-    mc_step: float,
-    mc_iters: int,
+    mc_dt: float,
+    mc_steps: int,
     mc_adjust: bool = True,
     monitor: Monitor | None = None,
     bg_param: dict | None = None,
-    chunk: int = 1,
+    chunks: int = 1,
     checkpoint: bool = False,
     e_clip: float = float("inf"),
     g_clip: float = float("inf"),
+    flow_dir=None,
 ) -> tuple[Array, list[dict]]:
     """
     Annealed Boltzmann generator on the forward KL, with the flow fixed
@@ -482,12 +602,12 @@ def boltzmann_forward_KL_G(
 
         1. selection:       when tau_smc > 0, a `ladder`-level SMC check
                             from U_{t_{k-1}} to the candidate bridge on an
-                            `n_pool`-sized selection pool drawn from the
+                            `pool_size`-sized selection pool drawn from the
                             particle set shrinks t_k until its MINIMUM
                             per-level ESS clears tau_smc (at most 60 shrinks);
         2. training:        `train_forward_KL_G(y, U_{t_{k-1}}, U_{t_k},
                             flow, ...)` — each Adam step draws an
-                            `n_batch` subset of the particle set and
+                            `batch_size` subset of the particle set and
                             manufactures its target batch by
                             `ladder`-level AIS through the CURRENT flow
                             (SMC gate and AIS share the same `ladder`);
@@ -515,10 +635,11 @@ def boltzmann_forward_KL_G(
             particle-set advance, and `e_clip` / `g_clip` (the energy screen
             and global gradient-norm clip) forwarded to every stage's
             `train_forward_KL_G` (default inf / inf: no screen, no clip).
-    Output: as `boltzmann_reverse_KL_F` — (y_valid, stages) with per-stage
-            records {"t", "ess", "flow", "ess_history", "imp_history"}.
+    Output: as `boltzmann_reverse_KL_F` — (y_valid, stages) with the common
+            full-validation/attempt-history stage schema.
     """
     p = _bg_parameters("boltzmann_forward_KL_G", bg_param)
+    artifacts = FlowArtifactWriter(flow_dir, "boltzmann_forward_KL_G")
 
     status = monitor.printer if monitor is not None else print
     key = jax.random.key(4)  # this ladder's own base stream
@@ -529,6 +650,7 @@ def boltzmann_forward_KL_G(
     t_prev = 0.0
     while t_prev < 1.0 and len(stages) < p["max_stages"]:
         k = len(stages) + 1
+        artifacts.start_stage(k, t_prev)
         hist = [0.0] + [s["t"] for s in stages]
         t_k = p["t_safe"] if not stages else min(
             hist[-1] + p["enlarge_factor"] * (hist[-1] - hist[-2]), 1.0
@@ -538,16 +660,17 @@ def boltzmann_forward_KL_G(
         if not (t_prev < t_k <= 1.0):
             status(f"[stage {k}] candidate t={t_k!r} does not advance past "
                    f"t={t_prev!r} — ladder INCOMPLETE")
+            artifacts.fail_stage(k, "nonadvancing_candidate", t=t_k)
             break
         u_prev = linear_combination([target, source], [t_prev, 1.0 - t_prev])
-        # (1) SMC pre-selection of t_k on an n_pool-sized selection pool
+        # (1) SMC pre-selection of t_k on a pool_size-sized selection pool
         # (drawn with replacement, rejuvenated at U_{t_{k-1}} when t > 0)
         if p["tau_smc"] > 0.0:
             key_pool, key_mc_pool = jax.random.split(jax.random.fold_in(key, 20_000 + k))
-            pool = y_valid[jax.random.randint(key_pool, (n_pool,), 0, y_valid.shape[0])]
+            pool = y_valid[jax.random.randint(key_pool, (pool_size,), 0, y_valid.shape[0])]
             if t_prev > 0.0:
-                pool = _langevin_jit(key_mc_pool, pool, u_prev, step=mc_step,
-                                     iters=mc_iters, adjust=mc_adjust, chunk=chunk)
+                pool = _langevin_jit(key_mc_pool, pool, u_prev, dt=mc_dt,
+                                     steps=mc_steps, adjust=mc_adjust, chunks=chunks)
             smc_base = jax.random.fold_in(key, 10_000 + k)  # disjoint from the advance keys
             ok_smc = False
             for s_i in range(60):                           # max_shrinks, as in the reference
@@ -555,8 +678,8 @@ def boltzmann_forward_KL_G(
                     break
                 u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
                 _, smc_ess = _smc_jit(jax.random.fold_in(smc_base, s_i), pool,
-                                      u_prev, u_k, ladder=ladder, step=mc_step,
-                                      iters=mc_iters, adjust=mc_adjust, chunk=chunk)
+                                      u_prev, u_k, ladder=ladder, mc_dt=mc_dt,
+                                      mc_steps=mc_steps, adjust=mc_adjust, chunks=chunks)
                 ess_smc = float(smc_ess.min())
                 ok_smc = ess_smc >= p["tau_smc"]
                 status(f"[stage {k}] [select] t_k={t_k:.4f}  SMC ESS = {ess_smc:.3f} "
@@ -567,8 +690,11 @@ def boltzmann_forward_KL_G(
             if not ok_smc:
                 status(f"[stage {k}] SMC selection failed after 60 shrinks "
                        f"(last t={t_k:.6g}) — ladder INCOMPLETE")
+                artifacts.fail_stage(k, "smc_selection_failed", t=t_k)
                 break
         accepted = False
+        attempt_hist = _new_attempt_hist()
+        ess_k = float("nan")
         for attempt in range(1, p["max_retry"] + 1):
             if not t_k > t_prev:
                 status(f"[stage {k}] rejected-step shrink made no floating-point "
@@ -579,42 +705,60 @@ def boltzmann_forward_KL_G(
                    f"(attempt {attempt}/{p['max_retry']}) training the increment ...")
             seed = jnp.uint32(k * p["max_retry"] + attempt)  # fresh stream per attempt
             cand, ess_hist = train_forward_KL_G(y_valid, u_prev, u_k, flow,
-                                                n_batch, steps, lr, ladder, mc_step,
-                                                mc_iters, mc_adjust, monitor,
+                                                batch_size, train_steps, lr, ladder, mc_dt,
+                                                mc_steps, mc_adjust, monitor,
                                                 seed=seed, checkpoint=checkpoint,
                                                 e_clip=e_clip, g_clip=g_clip)
-            log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunk=chunk)
+            log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunks=chunks)
             ess_tr = float(compute_ESS_log(log_w_tr))
-            log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunk=chunk)
+            log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunks=chunks)
             ess_id = float(compute_ESS_log(log_w_id))
             jax.effects_barrier()  # keep monitor lines ahead of the stage status
             # identity check: keep the better of the trained flow and the
             # identity map (pure SMC), so a stage is never worse than SMC
             if ess_tr >= ess_id:
                 stage_flow, next_flow, log_w, ess_k = cand, cand, log_w_tr, ess_tr
+                selected = "trained"
             else:
                 stage_flow, next_flow, log_w, ess_k = (
                     identity_flow, _trainable_identity(flow), log_w_id, ess_id
                 )
+                selected = "identity"
             imp = ess_k - ess_id  # improvement over identity, always >= 0
             status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
                    f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f}; "
                    f"tau_ess = {p['tau_ess']:.2f})")
-            if ess_k >= p["tau_ess"]:
+            attempt_status = "accepted" if ess_k >= p["tau_ess"] else "rejected"
+            _record_attempt(
+                attempt_hist, artifacts, stage=k, attempt=attempt, t=t_k,
+                batch_ess=ess_hist, candidate=cand, status=attempt_status,
+                selected=selected, valid_selected_ess=ess_k,
+                valid_trained_ess=ess_tr, valid_identity_ess=ess_id,
+            )
+            if attempt_status == "accepted":
                 accepted = True
                 break
             status(f"[stage {k}] t={t_k:.4f} REJECTED -> shrink")
             t_k = t_prev + p["shrink_factor"] * (t_k - t_prev)
         if not accepted:
-            status(f"[stage {k}] gave up after {p['max_retry']} attempts "
-                   f"(last t={t_k:.4f}, ESS = {ess_k:.3f}) — ladder INCOMPLETE")
+            failed_t = attempt_hist["t"][-1] if attempt_hist["t"] else t_k
+            artifacts.fail_stage(k, "failed", t=failed_t, valid_selected_ess=ess_k)
+            status(f"[stage {k}] gave up after {len(attempt_hist['t'])} attempts "
+                   f"(last attempted t={failed_t:.4f}, ESS = {ess_k:.3f}) "
+                   "— ladder INCOMPLETE")
             break
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
         y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, stage_flow, "G", u_k,
-                              mc_step, mc_iters, mc_adjust, chunk)
+                              mc_dt, mc_steps, mc_adjust, chunks)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage, not the next
-        stages.append({"t": t_k, "ess": ess_k, "flow": stage_flow,
-                       "ess_history": ess_hist, "imp_history": imp})
+        selected_path = artifacts.accept_stage(
+            k, t_k, stage_flow, selected=selected, valid_selected_ess=ess_k
+        )
+        stages.append(_stage_record(
+            t=t_k, valid_selected_ess=ess_k, valid_trained_ess=ess_tr,
+            valid_identity_ess=ess_id, selected=selected, flow=stage_flow,
+            hist=attempt_hist, selected_flow_path=selected_path,
+        ))
         flow = next_flow
         status(f"[stage {k}] t={t_k:.4f} ACCEPTED (attempt {attempt}): stage flow saved")
         t_prev = t_k
@@ -624,29 +768,32 @@ def boltzmann_forward_KL_G(
     else:
         status(f"boltzmann_forward_KL_G: ladder COMPLETE ({len(stages)} stages); "
                f"particle set at the target")
+    artifacts.finish(complete=t_prev == 1.0, last_t=t_prev,
+                     accepted_stages=len(stages))
     return y_valid, stages
 
 
-def boltzmann_forward_KLX_G(
+def _boltzmann_forward_KLX_G_impl(
     x_valid: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
-    n_pool: int,
-    n_batch: int,
-    steps: int,
+    pool_size: int,
+    batch_size: int,
+    train_steps: int,
     lr: float,
     ladder: int,
-    mc_step: float,
-    mc_iters: int,
+    mc_dt: float,
+    mc_steps: int,
     coeff_lambda: float = 1.0,
     mc_adjust: bool = True,
     monitor: Monitor | None = None,
     bg_param: dict | None = None,
-    chunk: int = 1,
+    chunks: int = 1,
     checkpoint: bool = False,
     e_clip: float = float("inf"),
     g_clip: float = float("inf"),
+    flow_dir=None,
 ) -> tuple[Array, list[dict]]:
     """
     X-regularized forward KL Boltzmann generator — `boltzmann_forward_KL_G`
@@ -663,10 +810,11 @@ def boltzmann_forward_KLX_G(
             `coeff_lambda` — the X functional weight — and
             `e_clip` / `g_clip` (energy screen and gradient-norm clip)
             forwarded to every stage's `train_forward_KLX_G`.
-    Output: as `boltzmann_forward_KL_G` — (y_valid, stages) with per-stage
-            records {"t", "ess", "flow", "ess_history", "imp_history"}.
+    Output: as `boltzmann_forward_KL_G` — (y_valid, stages) with the common
+            full-validation/attempt-history stage schema.
     """
     p = _bg_parameters("boltzmann_forward_KLX_G", bg_param)
+    artifacts = FlowArtifactWriter(flow_dir, "boltzmann_forward_KLX_G")
 
     status = monitor.printer if monitor is not None else print
     key = jax.random.key(6)  # this ladder's own base stream
@@ -677,6 +825,7 @@ def boltzmann_forward_KLX_G(
     t_prev = 0.0
     while t_prev < 1.0 and len(stages) < p["max_stages"]:
         k = len(stages) + 1
+        artifacts.start_stage(k, t_prev)
         hist = [0.0] + [s["t"] for s in stages]
         t_k = p["t_safe"] if not stages else min(
             hist[-1] + p["enlarge_factor"] * (hist[-1] - hist[-2]), 1.0
@@ -686,16 +835,17 @@ def boltzmann_forward_KLX_G(
         if not (t_prev < t_k <= 1.0):
             status(f"[stage {k}] candidate t={t_k!r} does not advance past "
                    f"t={t_prev!r} — ladder INCOMPLETE")
+            artifacts.fail_stage(k, "nonadvancing_candidate", t=t_k)
             break
         u_prev = linear_combination([target, source], [t_prev, 1.0 - t_prev])
-        # (1) SMC pre-selection of t_k on an n_pool-sized selection pool
+        # (1) SMC pre-selection of t_k on a pool_size-sized selection pool
         # (drawn with replacement, rejuvenated at U_{t_{k-1}} when t > 0)
         if p["tau_smc"] > 0.0:
             key_pool, key_mc_pool = jax.random.split(jax.random.fold_in(key, 20_000 + k))
-            pool = y_valid[jax.random.randint(key_pool, (n_pool,), 0, y_valid.shape[0])]
+            pool = y_valid[jax.random.randint(key_pool, (pool_size,), 0, y_valid.shape[0])]
             if t_prev > 0.0:
-                pool = _langevin_jit(key_mc_pool, pool, u_prev, step=mc_step,
-                                     iters=mc_iters, adjust=mc_adjust, chunk=chunk)
+                pool = _langevin_jit(key_mc_pool, pool, u_prev, dt=mc_dt,
+                                     steps=mc_steps, adjust=mc_adjust, chunks=chunks)
             smc_base = jax.random.fold_in(key, 10_000 + k)  # disjoint from the advance keys
             ok_smc = False
             for s_i in range(60):                           # max_shrinks, as in the reference
@@ -703,8 +853,8 @@ def boltzmann_forward_KLX_G(
                     break
                 u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
                 _, smc_ess = _smc_jit(jax.random.fold_in(smc_base, s_i), pool,
-                                      u_prev, u_k, ladder=ladder, step=mc_step,
-                                      iters=mc_iters, adjust=mc_adjust, chunk=chunk)
+                                      u_prev, u_k, ladder=ladder, mc_dt=mc_dt,
+                                      mc_steps=mc_steps, adjust=mc_adjust, chunks=chunks)
                 ess_smc = float(smc_ess.min())
                 ok_smc = ess_smc >= p["tau_smc"]
                 status(f"[stage {k}] [select] t_k={t_k:.4f}  SMC ESS = {ess_smc:.3f} "
@@ -715,8 +865,11 @@ def boltzmann_forward_KLX_G(
             if not ok_smc:
                 status(f"[stage {k}] SMC selection failed after 60 shrinks "
                        f"(last t={t_k:.6g}) — ladder INCOMPLETE")
+                artifacts.fail_stage(k, "smc_selection_failed", t=t_k)
                 break
         accepted = False
+        attempt_hist = _new_attempt_hist()
+        ess_k = float("nan")
         for attempt in range(1, p["max_retry"] + 1):
             if not t_k > t_prev:
                 status(f"[stage {k}] rejected-step shrink made no floating-point "
@@ -727,42 +880,60 @@ def boltzmann_forward_KLX_G(
                    f"(attempt {attempt}/{p['max_retry']}) training the increment ...")
             seed = jnp.uint32(k * p["max_retry"] + attempt)  # fresh stream per attempt
             cand, ess_hist = train_forward_KLX_G(y_valid, u_prev, u_k, flow,
-                                                 n_batch, steps, lr, ladder, mc_step,
-                                                 mc_iters, coeff_lambda, mc_adjust, monitor,
+                                                 batch_size, train_steps, lr, ladder, mc_dt,
+                                                 mc_steps, coeff_lambda, mc_adjust, monitor,
                                                  seed=seed, checkpoint=checkpoint,
                                                  e_clip=e_clip, g_clip=g_clip)
-            log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunk=chunk)
+            log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunks=chunks)
             ess_tr = float(compute_ESS_log(log_w_tr))
-            log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunk=chunk)
+            log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunks=chunks)
             ess_id = float(compute_ESS_log(log_w_id))
             jax.effects_barrier()  # keep monitor lines ahead of the stage status
             # identity check: keep the better of the trained flow and the
             # identity map (pure SMC), so a stage is never worse than SMC
             if ess_tr >= ess_id:
                 stage_flow, next_flow, log_w, ess_k = cand, cand, log_w_tr, ess_tr
+                selected = "trained"
             else:
                 stage_flow, next_flow, log_w, ess_k = (
                     identity_flow, _trainable_identity(flow), log_w_id, ess_id
                 )
+                selected = "identity"
             imp = ess_k - ess_id  # improvement over identity, always >= 0
             status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
                    f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f}; "
                    f"tau_ess = {p['tau_ess']:.2f})")
-            if ess_k >= p["tau_ess"]:
+            attempt_status = "accepted" if ess_k >= p["tau_ess"] else "rejected"
+            _record_attempt(
+                attempt_hist, artifacts, stage=k, attempt=attempt, t=t_k,
+                batch_ess=ess_hist, candidate=cand, status=attempt_status,
+                selected=selected, valid_selected_ess=ess_k,
+                valid_trained_ess=ess_tr, valid_identity_ess=ess_id,
+            )
+            if attempt_status == "accepted":
                 accepted = True
                 break
             status(f"[stage {k}] t={t_k:.4f} REJECTED -> shrink")
             t_k = t_prev + p["shrink_factor"] * (t_k - t_prev)
         if not accepted:
-            status(f"[stage {k}] gave up after {p['max_retry']} attempts "
-                   f"(last t={t_k:.4f}, ESS = {ess_k:.3f}) — ladder INCOMPLETE")
+            failed_t = attempt_hist["t"][-1] if attempt_hist["t"] else t_k
+            artifacts.fail_stage(k, "failed", t=failed_t, valid_selected_ess=ess_k)
+            status(f"[stage {k}] gave up after {len(attempt_hist['t'])} attempts "
+                   f"(last attempted t={failed_t:.4f}, ESS = {ess_k:.3f}) "
+                   "— ladder INCOMPLETE")
             break
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
         y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, stage_flow, "G", u_k,
-                              mc_step, mc_iters, mc_adjust, chunk)
+                              mc_dt, mc_steps, mc_adjust, chunks)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage, not the next
-        stages.append({"t": t_k, "ess": ess_k, "flow": stage_flow,
-                       "ess_history": ess_hist, "imp_history": imp})
+        selected_path = artifacts.accept_stage(
+            k, t_k, stage_flow, selected=selected, valid_selected_ess=ess_k
+        )
+        stages.append(_stage_record(
+            t=t_k, valid_selected_ess=ess_k, valid_trained_ess=ess_tr,
+            valid_identity_ess=ess_id, selected=selected, flow=stage_flow,
+            hist=attempt_hist, selected_flow_path=selected_path,
+        ))
         flow = next_flow
         status(f"[stage {k}] t={t_k:.4f} ACCEPTED (attempt {attempt}): stage flow saved")
         t_prev = t_k
@@ -772,34 +943,37 @@ def boltzmann_forward_KLX_G(
     else:
         status(f"boltzmann_forward_KLX_G: ladder COMPLETE ({len(stages)} stages); "
                f"particle set at the target")
+    artifacts.finish(complete=t_prev == 1.0, last_t=t_prev,
+                     accepted_stages=len(stages))
     return y_valid, stages
 
 
-def boltzmann_forward_KLXX_G(
+def _boltzmann_forward_KLXX_G_impl(
     x_valid: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
-    n_pool: int,
-    n_batch: int,
-    steps: int,
+    pool_size: int,
+    batch_size: int,
+    train_steps: int,
     lr: float,
     ladder: int,
     melt: float,
-    opt_step: float,
-    opt_iters: int,
-    mc_step: float,
-    mc_iters: int,
+    opt_alpha: float,
+    opt_steps: int,
+    mc_dt: float,
+    mc_steps: int,
     coeff_lambda: float = 1.0,
     coeff_alpha: float = 0.5,
     coeff_beta: float = 0.5,
     mc_adjust: bool = True,
     monitor: Monitor | None = None,
     bg_param: dict | None = None,
-    chunk: int = 1,
+    chunks: int = 1,
     checkpoint: bool = False,
     e_clip: float = float("inf"),
     g_clip: float = float("inf"),
+    flow_dir=None,
 ) -> tuple[Array, list[dict]]:
     """
     X-regularized forward KL Boltzmann generator with the full mixture
@@ -810,8 +984,8 @@ def boltzmann_forward_KLXX_G(
 
     on the increment mu_{t_{k-1}} -> mu_{t_k}. Each stage attempt rebuilds
     its quench-and-temper pool on the stage bridge U_{t_k} (melt scale
-    `melt`, armijo L-BFGS `opt_step` x `opt_iters`) from n_pool particles,
-    so mode discovery tracks the deforming bridge; `n_pool` sizes both this
+    `melt`, armijo L-BFGS `opt_alpha` x `opt_steps`) from pool_size particles,
+    so mode discovery tracks the deforming bridge; `pool_size` sizes both this
     hat_mu pool and the tau_smc selection pool. The flow is fixed as the
     inverse map G (target -> source); the bridge ladder, the SMC selection
     gate, the t schedule (t_safe / shrink_factor / enlarge_factor / t_tol),
@@ -821,12 +995,12 @@ def boltzmann_forward_KLXX_G(
     the trainer per stage attempt.
 
     Input:  as `boltzmann_forward_KL_G`, with
-            the quench-and-temper family (`melt`, `opt_step`, `opt_iters`),
+            the quench-and-temper family (`melt`, `opt_alpha`, `opt_steps`),
             the loss weights (`coeff_lambda`, `coeff_alpha`, `coeff_beta`),
             and `e_clip` / `g_clip` (energy screen and gradient-norm clip)
             forwarded to every stage's `train_forward_KLXX_G`.
-    Output: as `boltzmann_forward_KL_G` — (y_valid, stages) with per-stage
-            records {"t", "ess", "flow", "ess_history", "imp_history"}.
+    Output: as `boltzmann_forward_KL_G` — (y_valid, stages) with the common
+            full-validation/attempt-history stage schema.
     """
     if not (0.0 <= coeff_alpha < float("inf")):
         raise ValueError(
@@ -837,6 +1011,7 @@ def boltzmann_forward_KLXX_G(
             "boltzmann_forward_KLXX_G: coeff_beta must be finite and non-negative"
         )
     p = _bg_parameters("boltzmann_forward_KLXX_G", bg_param)
+    artifacts = FlowArtifactWriter(flow_dir, "boltzmann_forward_KLXX_G")
 
     status = monitor.printer if monitor is not None else print
     key = jax.random.key(8)  # this ladder's own base stream
@@ -847,6 +1022,7 @@ def boltzmann_forward_KLXX_G(
     t_prev = 0.0
     while t_prev < 1.0 and len(stages) < p["max_stages"]:
         k = len(stages) + 1
+        artifacts.start_stage(k, t_prev)
         hist = [0.0] + [s["t"] for s in stages]
         t_k = p["t_safe"] if not stages else min(
             hist[-1] + p["enlarge_factor"] * (hist[-1] - hist[-2]), 1.0
@@ -856,16 +1032,17 @@ def boltzmann_forward_KLXX_G(
         if not (t_prev < t_k <= 1.0):
             status(f"[stage {k}] candidate t={t_k!r} does not advance past "
                    f"t={t_prev!r} — ladder INCOMPLETE")
+            artifacts.fail_stage(k, "nonadvancing_candidate", t=t_k)
             break
         u_prev = linear_combination([target, source], [t_prev, 1.0 - t_prev])
-        # (1) SMC pre-selection of t_k on an n_pool-sized selection pool
+        # (1) SMC pre-selection of t_k on a pool_size-sized selection pool
         # (drawn with replacement, rejuvenated at U_{t_{k-1}} when t > 0)
         if p["tau_smc"] > 0.0:
             key_pool, key_mc_pool = jax.random.split(jax.random.fold_in(key, 20_000 + k))
-            pool = y_valid[jax.random.randint(key_pool, (n_pool,), 0, y_valid.shape[0])]
+            pool = y_valid[jax.random.randint(key_pool, (pool_size,), 0, y_valid.shape[0])]
             if t_prev > 0.0:
-                pool = _langevin_jit(key_mc_pool, pool, u_prev, step=mc_step,
-                                     iters=mc_iters, adjust=mc_adjust, chunk=chunk)
+                pool = _langevin_jit(key_mc_pool, pool, u_prev, dt=mc_dt,
+                                     steps=mc_steps, adjust=mc_adjust, chunks=chunks)
             smc_base = jax.random.fold_in(key, 10_000 + k)  # disjoint from the advance keys
             ok_smc = False
             for s_i in range(60):                           # max_shrinks, as in the reference
@@ -873,8 +1050,8 @@ def boltzmann_forward_KLXX_G(
                     break
                 u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
                 _, smc_ess = _smc_jit(jax.random.fold_in(smc_base, s_i), pool,
-                                      u_prev, u_k, ladder=ladder, step=mc_step,
-                                      iters=mc_iters, adjust=mc_adjust, chunk=chunk)
+                                      u_prev, u_k, ladder=ladder, mc_dt=mc_dt,
+                                      mc_steps=mc_steps, adjust=mc_adjust, chunks=chunks)
                 ess_smc = float(smc_ess.min())
                 ok_smc = ess_smc >= p["tau_smc"]
                 status(f"[stage {k}] [select] t_k={t_k:.4f}  SMC ESS = {ess_smc:.3f} "
@@ -885,8 +1062,11 @@ def boltzmann_forward_KLXX_G(
             if not ok_smc:
                 status(f"[stage {k}] SMC selection failed after 60 shrinks "
                        f"(last t={t_k:.6g}) — ladder INCOMPLETE")
+                artifacts.fail_stage(k, "smc_selection_failed", t=t_k)
                 break
         accepted = False
+        attempt_hist = _new_attempt_hist()
+        ess_k = float("nan")
         for attempt in range(1, p["max_retry"] + 1):
             if not t_k > t_prev:
                 status(f"[stage {k}] rejected-step shrink made no floating-point "
@@ -897,44 +1077,62 @@ def boltzmann_forward_KLXX_G(
                    f"(attempt {attempt}/{p['max_retry']}) training the increment ...")
             seed = jnp.uint32(k * p["max_retry"] + attempt)  # fresh stream per attempt
             cand, ess_hist = train_forward_KLXX_G(y_valid, u_prev, u_k, flow,
-                                                  n_pool, n_batch, steps, lr, ladder,
-                                                  melt, opt_step, opt_iters, mc_step,
-                                                  mc_iters, coeff_lambda, coeff_alpha,
+                                                  pool_size, batch_size, train_steps, lr, ladder,
+                                                  melt, opt_alpha, opt_steps, mc_dt,
+                                                  mc_steps, coeff_lambda, coeff_alpha,
                                                   coeff_beta, mc_adjust, monitor,
                                                   seed=seed, checkpoint=checkpoint,
                                                   e_clip=e_clip, g_clip=g_clip)
-            log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunk=chunk)
+            log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunks=chunks)
             ess_tr = float(compute_ESS_log(log_w_tr))
-            log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunk=chunk)
+            log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunks=chunks)
             ess_id = float(compute_ESS_log(log_w_id))
             jax.effects_barrier()  # keep monitor lines ahead of the stage status
             # identity check: keep the better of the trained flow and the
             # identity map (pure SMC), so a stage is never worse than SMC
             if ess_tr >= ess_id:
                 stage_flow, next_flow, log_w, ess_k = cand, cand, log_w_tr, ess_tr
+                selected = "trained"
             else:
                 stage_flow, next_flow, log_w, ess_k = (
                     identity_flow, _trainable_identity(flow), log_w_id, ess_id
                 )
+                selected = "identity"
             imp = ess_k - ess_id  # improvement over identity, always >= 0
             status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
                    f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f}; "
                    f"tau_ess = {p['tau_ess']:.2f})")
-            if ess_k >= p["tau_ess"]:
+            attempt_status = "accepted" if ess_k >= p["tau_ess"] else "rejected"
+            _record_attempt(
+                attempt_hist, artifacts, stage=k, attempt=attempt, t=t_k,
+                batch_ess=ess_hist, candidate=cand, status=attempt_status,
+                selected=selected, valid_selected_ess=ess_k,
+                valid_trained_ess=ess_tr, valid_identity_ess=ess_id,
+            )
+            if attempt_status == "accepted":
                 accepted = True
                 break
             status(f"[stage {k}] t={t_k:.4f} REJECTED -> shrink")
             t_k = t_prev + p["shrink_factor"] * (t_k - t_prev)
         if not accepted:
-            status(f"[stage {k}] gave up after {p['max_retry']} attempts "
-                   f"(last t={t_k:.4f}, ESS = {ess_k:.3f}) — ladder INCOMPLETE")
+            failed_t = attempt_hist["t"][-1] if attempt_hist["t"] else t_k
+            artifacts.fail_stage(k, "failed", t=failed_t, valid_selected_ess=ess_k)
+            status(f"[stage {k}] gave up after {len(attempt_hist['t'])} attempts "
+                   f"(last attempted t={failed_t:.4f}, ESS = {ess_k:.3f}) "
+                   "— ladder INCOMPLETE")
             break
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
         y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, stage_flow, "G", u_k,
-                              mc_step, mc_iters, mc_adjust, chunk)
+                              mc_dt, mc_steps, mc_adjust, chunks)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage, not the next
-        stages.append({"t": t_k, "ess": ess_k, "flow": stage_flow,
-                       "ess_history": ess_hist, "imp_history": imp})
+        selected_path = artifacts.accept_stage(
+            k, t_k, stage_flow, selected=selected, valid_selected_ess=ess_k
+        )
+        stages.append(_stage_record(
+            t=t_k, valid_selected_ess=ess_k, valid_trained_ess=ess_tr,
+            valid_identity_ess=ess_id, selected=selected, flow=stage_flow,
+            hist=attempt_hist, selected_flow_path=selected_path,
+        ))
         flow = next_flow
         status(f"[stage {k}] t={t_k:.4f} ACCEPTED (attempt {attempt}): stage flow saved")
         t_prev = t_k
@@ -944,24 +1142,27 @@ def boltzmann_forward_KLXX_G(
     else:
         status(f"boltzmann_forward_KLXX_G: ladder COMPLETE ({len(stages)} stages); "
                f"particle set at the target")
+    artifacts.finish(complete=t_prev == 1.0, last_t=t_prev,
+                     accepted_stages=len(stages))
     return y_valid, stages
 
 
-def boltzmann_reverse_KL_F_fixed(
+def _boltzmann_reverse_KL_F_fixed_impl(
     x_valid: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
-    n_batch: int,
-    steps: int,
+    batch_size: int,
+    train_steps: int,
     lr: float,
-    mc_step: float,
-    mc_iters: int,
+    mc_dt: float,
+    mc_steps: int,
     t_list,
     mc_adjust: bool = True,
     monitor: Monitor | None = None,
-    chunk: int = 1,
+    chunks: int = 1,
     checkpoint: bool = False,
+    flow_dir=None,
 ) -> tuple[Array, list[dict]]:
     """
     Fixed-schedule variant of `boltzmann_reverse_KL_F`: train the increment
@@ -969,17 +1170,18 @@ def boltzmann_reverse_KL_F_fixed(
     NO acceptance/rejection — bare step-by-step training on a caller-supplied
     ladder. Every stage still keeps the better of the trained flow and the
     identity map (the cheap identity check, no flow inverse), advances the
-    particle set, and records the same {"t", "ess", "flow", "ess_history",
-    "imp_history"}, so `(y_valid, stages)` is consumed identically downstream.
+    particle set, and records the common full-validation/attempt-history
+    schema, so `(y_valid, stages)` is consumed identically downstream.
 
     Input:  as `boltzmann_reverse_KL_F` but without the adaptive machinery
-            (`n_pool`, `ladder`, `bg_param` dropped) and with
+            (`pool_size`, `ladder`, `bg_param` dropped) and with
             `t_list` — the fixed schedule, a strictly increasing sequence in
             (0, 1] (a leading 0 is dropped); the last value should be 1.0 for
             a complete ladder, else the particle set stops at the last bridge.
     Output: as `boltzmann_reverse_KL_F` — (y_valid, stages).
     """
     t_list = _fixed_schedule("boltzmann_reverse_KL_F_fixed", t_list)
+    artifacts = FlowArtifactWriter(flow_dir, "boltzmann_reverse_KL_F_fixed")
 
     status = monitor.printer if monitor is not None else print
     key = jax.random.key(3)  # same base stream as boltzmann_reverse_KL_F
@@ -992,77 +1194,97 @@ def boltzmann_reverse_KL_F_fixed(
     stages: list[dict] = []
     t_prev = 0.0
     for k, t_k in enumerate(t_list, start=1):
+        artifacts.start_stage(k, t_prev)
+        attempt_hist = _new_attempt_hist()
         u_prev = linear_combination([target, source], [t_prev, 1.0 - t_prev])
         u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
         status(f"[stage {k}] t={t_prev:.4f} -> {t_k:.4f} training the increment (fixed) ...")
         seed = jnp.uint32(k)
         cand, ess_hist = train_reverse_KL_F(y_valid, u_prev, u_k, flow,
-                                            n_batch, steps, lr, mc_step, mc_iters,
+                                            batch_size, train_steps, lr, mc_dt, mc_steps,
                                             mc_adjust, monitor,
                                             seed=seed, checkpoint=checkpoint)
-        log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "F", chunk=chunk)
+        log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "F", chunks=chunks)
         ess_tr = float(compute_ESS_log(log_w_tr))
-        log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunk=chunk)
+        log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunks=chunks)
         ess_id = float(compute_ESS_log(log_w_id))
         jax.effects_barrier()  # keep monitor lines ahead of the stage status
         # identity check: keep the better of the trained flow and the
         # identity map (pure SMC), so a stage is never worse than SMC
         if ess_tr >= ess_id:
             stage_flow, next_flow, log_w, ess_k = cand, cand, log_w_tr, ess_tr
+            selected = "trained"
         else:
             stage_flow, next_flow, log_w, ess_k = (
                 identity_flow, _trainable_identity(flow), log_w_id, ess_id
             )
+            selected = "identity"
         imp = ess_k - ess_id  # improvement over identity, always >= 0
         status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
                f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f})")
+        _record_attempt(
+            attempt_hist, artifacts, stage=k, attempt=1, t=t_k,
+            batch_ess=ess_hist, candidate=cand, status="accepted",
+            selected=selected, valid_selected_ess=ess_k,
+            valid_trained_ess=ess_tr, valid_identity_ess=ess_id,
+        )
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
         y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, stage_flow, "F", u_k,
-                              mc_step, mc_iters, mc_adjust, chunk)
+                              mc_dt, mc_steps, mc_adjust, chunks)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage
-        stages.append({"t": t_k, "ess": ess_k, "flow": stage_flow,
-                       "ess_history": ess_hist, "imp_history": imp})
+        selected_path = artifacts.accept_stage(
+            k, t_k, stage_flow, selected=selected, valid_selected_ess=ess_k
+        )
+        stages.append(_stage_record(
+            t=t_k, valid_selected_ess=ess_k, valid_trained_ess=ess_tr,
+            valid_identity_ess=ess_id, selected=selected, flow=stage_flow,
+            hist=attempt_hist, selected_flow_path=selected_path,
+        ))
         flow = next_flow
         status(f"[stage {k}] t={t_k:.4f} DONE: stage flow saved; particle set advanced")
         t_prev = t_k
     status(f"boltzmann_reverse_KL_F_fixed: fixed ladder DONE "
            f"({len(stages)} stages, {'COMPLETE' if t_list[-1] == 1.0 else 'INCOMPLETE'})")
+    artifacts.finish(complete=t_list[-1] == 1.0, last_t=t_prev,
+                     accepted_stages=len(stages))
     return y_valid, stages
 
 
-def boltzmann_forward_KL_G_fixed(
+def _boltzmann_forward_KL_G_fixed_impl(
     x_valid: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
-    n_batch: int,
-    steps: int,
+    batch_size: int,
+    train_steps: int,
     lr: float,
     ladder: int,
-    mc_step: float,
-    mc_iters: int,
+    mc_dt: float,
+    mc_steps: int,
     t_list,
     mc_adjust: bool = True,
     monitor: Monitor | None = None,
-    chunk: int = 1,
+    chunks: int = 1,
     checkpoint: bool = False,
     e_clip: float = float("inf"),
     g_clip: float = float("inf"),
+    flow_dir=None,
 ) -> tuple[Array, list[dict]]:
     """
     Fixed-schedule variant of `boltzmann_forward_KL_G`: bare step-by-step
     forward KL training along the caller-supplied `t_list`, with NO SMC
     pre-selection and NO acceptance/rejection. `ladder` is retained (it feeds
-    the trainer's per-step AIS); `n_pool` and `bg_param` are dropped. Every
+    the trainer's per-step AIS); `pool_size` and `bg_param` are dropped. Every
     stage keeps the better of the trained flow and the identity map and
-    records the same {"t", "ess", "flow", "ess_history", "imp_history"}, so
+    records the common full-validation/attempt-history schema, so
     `(y_valid, stages)` is consumed identically downstream.
 
-    Input:  as `boltzmann_forward_KL_G`, minus `n_pool`/`bg_param`, plus
+    Input:  as `boltzmann_forward_KL_G`, minus `pool_size`/`bg_param`, plus
             `t_list` (strictly increasing in (0, 1], ideally ending at 1.0).
     Output: as `boltzmann_forward_KL_G` — (y_valid, stages).
     """
     t_list = _fixed_schedule("boltzmann_forward_KL_G_fixed", t_list)
+    artifacts = FlowArtifactWriter(flow_dir, "boltzmann_forward_KL_G_fixed")
 
     status = monitor.printer if monitor is not None else print
     key = jax.random.key(4)  # same base stream as boltzmann_forward_KL_G
@@ -1075,77 +1297,97 @@ def boltzmann_forward_KL_G_fixed(
     stages: list[dict] = []
     t_prev = 0.0
     for k, t_k in enumerate(t_list, start=1):
+        artifacts.start_stage(k, t_prev)
+        attempt_hist = _new_attempt_hist()
         u_prev = linear_combination([target, source], [t_prev, 1.0 - t_prev])
         u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
         status(f"[stage {k}] t={t_prev:.4f} -> {t_k:.4f} training the increment (fixed) ...")
         seed = jnp.uint32(k)
         cand, ess_hist = train_forward_KL_G(y_valid, u_prev, u_k, flow,
-                                            n_batch, steps, lr, ladder, mc_step,
-                                            mc_iters, mc_adjust, monitor,
+                                            batch_size, train_steps, lr, ladder, mc_dt,
+                                            mc_steps, mc_adjust, monitor,
                                             seed=seed, checkpoint=checkpoint,
                                             e_clip=e_clip, g_clip=g_clip)
-        log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunk=chunk)
+        log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunks=chunks)
         ess_tr = float(compute_ESS_log(log_w_tr))
-        log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunk=chunk)
+        log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunks=chunks)
         ess_id = float(compute_ESS_log(log_w_id))
         jax.effects_barrier()  # keep monitor lines ahead of the stage status
         # identity check: keep the better of the trained flow and the
         # identity map (pure SMC), so a stage is never worse than SMC
         if ess_tr >= ess_id:
             stage_flow, next_flow, log_w, ess_k = cand, cand, log_w_tr, ess_tr
+            selected = "trained"
         else:
             stage_flow, next_flow, log_w, ess_k = (
                 identity_flow, _trainable_identity(flow), log_w_id, ess_id
             )
+            selected = "identity"
         imp = ess_k - ess_id  # improvement over identity, always >= 0
         status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
                f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f})")
+        _record_attempt(
+            attempt_hist, artifacts, stage=k, attempt=1, t=t_k,
+            batch_ess=ess_hist, candidate=cand, status="accepted",
+            selected=selected, valid_selected_ess=ess_k,
+            valid_trained_ess=ess_tr, valid_identity_ess=ess_id,
+        )
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
         y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, stage_flow, "G", u_k,
-                              mc_step, mc_iters, mc_adjust, chunk)
+                              mc_dt, mc_steps, mc_adjust, chunks)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage
-        stages.append({"t": t_k, "ess": ess_k, "flow": stage_flow,
-                       "ess_history": ess_hist, "imp_history": imp})
+        selected_path = artifacts.accept_stage(
+            k, t_k, stage_flow, selected=selected, valid_selected_ess=ess_k
+        )
+        stages.append(_stage_record(
+            t=t_k, valid_selected_ess=ess_k, valid_trained_ess=ess_tr,
+            valid_identity_ess=ess_id, selected=selected, flow=stage_flow,
+            hist=attempt_hist, selected_flow_path=selected_path,
+        ))
         flow = next_flow
         status(f"[stage {k}] t={t_k:.4f} DONE: stage flow saved; particle set advanced")
         t_prev = t_k
     status(f"boltzmann_forward_KL_G_fixed: fixed ladder DONE "
            f"({len(stages)} stages, {'COMPLETE' if t_list[-1] == 1.0 else 'INCOMPLETE'})")
+    artifacts.finish(complete=t_list[-1] == 1.0, last_t=t_prev,
+                     accepted_stages=len(stages))
     return y_valid, stages
 
 
-def boltzmann_forward_KLX_G_fixed(
+def _boltzmann_forward_KLX_G_fixed_impl(
     x_valid: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
-    n_batch: int,
-    steps: int,
+    batch_size: int,
+    train_steps: int,
     lr: float,
     ladder: int,
-    mc_step: float,
-    mc_iters: int,
+    mc_dt: float,
+    mc_steps: int,
     t_list,
     coeff_lambda: float = 1.0,
     mc_adjust: bool = True,
     monitor: Monitor | None = None,
-    chunk: int = 1,
+    chunks: int = 1,
     checkpoint: bool = False,
     e_clip: float = float("inf"),
     g_clip: float = float("inf"),
+    flow_dir=None,
 ) -> tuple[Array, list[dict]]:
     """
     Fixed-schedule variant of `boltzmann_forward_KLX_G`: bare step-by-step
     X-regularized forward KL training along `t_list`, no SMC pre-selection and
     no acceptance/rejection. `ladder` and `coeff_lambda` are retained (the
-    trainer's AIS and X weight); `n_pool` and `bg_param` are dropped. Same
+    trainer's AIS and X weight); `pool_size` and `bg_param` are dropped. Same
     stage records and output as the adaptive version.
 
-    Input:  as `boltzmann_forward_KLX_G`, minus `n_pool`/`bg_param`, plus
+    Input:  as `boltzmann_forward_KLX_G`, minus `pool_size`/`bg_param`, plus
             `t_list` (strictly increasing in (0, 1], ideally ending at 1.0).
     Output: as `boltzmann_forward_KLX_G` — (y_valid, stages).
     """
     t_list = _fixed_schedule("boltzmann_forward_KLX_G_fixed", t_list)
+    artifacts = FlowArtifactWriter(flow_dir, "boltzmann_forward_KLX_G_fixed")
 
     status = monitor.printer if monitor is not None else print
     key = jax.random.key(6)  # same base stream as boltzmann_forward_KLX_G
@@ -1158,76 +1400,95 @@ def boltzmann_forward_KLX_G_fixed(
     stages: list[dict] = []
     t_prev = 0.0
     for k, t_k in enumerate(t_list, start=1):
+        artifacts.start_stage(k, t_prev)
+        attempt_hist = _new_attempt_hist()
         u_prev = linear_combination([target, source], [t_prev, 1.0 - t_prev])
         u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
         status(f"[stage {k}] t={t_prev:.4f} -> {t_k:.4f} training the increment (fixed) ...")
         seed = jnp.uint32(k)
         cand, ess_hist = train_forward_KLX_G(y_valid, u_prev, u_k, flow,
-                                             n_batch, steps, lr, ladder, mc_step,
-                                             mc_iters, coeff_lambda, mc_adjust, monitor,
+                                             batch_size, train_steps, lr, ladder, mc_dt,
+                                             mc_steps, coeff_lambda, mc_adjust, monitor,
                                              seed=seed, checkpoint=checkpoint,
                                              e_clip=e_clip, g_clip=g_clip)
-        log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunk=chunk)
+        log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunks=chunks)
         ess_tr = float(compute_ESS_log(log_w_tr))
-        log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunk=chunk)
+        log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunks=chunks)
         ess_id = float(compute_ESS_log(log_w_id))
         jax.effects_barrier()  # keep monitor lines ahead of the stage status
         # identity check: keep the better of the trained flow and the
         # identity map (pure SMC), so a stage is never worse than SMC
         if ess_tr >= ess_id:
             stage_flow, next_flow, log_w, ess_k = cand, cand, log_w_tr, ess_tr
+            selected = "trained"
         else:
             stage_flow, next_flow, log_w, ess_k = (
                 identity_flow, _trainable_identity(flow), log_w_id, ess_id
             )
+            selected = "identity"
         imp = ess_k - ess_id  # improvement over identity, always >= 0
         status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
                f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f})")
+        _record_attempt(
+            attempt_hist, artifacts, stage=k, attempt=1, t=t_k,
+            batch_ess=ess_hist, candidate=cand, status="accepted",
+            selected=selected, valid_selected_ess=ess_k,
+            valid_trained_ess=ess_tr, valid_identity_ess=ess_id,
+        )
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
         y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, stage_flow, "G", u_k,
-                              mc_step, mc_iters, mc_adjust, chunk)
+                              mc_dt, mc_steps, mc_adjust, chunks)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage
-        stages.append({"t": t_k, "ess": ess_k, "flow": stage_flow,
-                       "ess_history": ess_hist, "imp_history": imp})
+        selected_path = artifacts.accept_stage(
+            k, t_k, stage_flow, selected=selected, valid_selected_ess=ess_k
+        )
+        stages.append(_stage_record(
+            t=t_k, valid_selected_ess=ess_k, valid_trained_ess=ess_tr,
+            valid_identity_ess=ess_id, selected=selected, flow=stage_flow,
+            hist=attempt_hist, selected_flow_path=selected_path,
+        ))
         flow = next_flow
         status(f"[stage {k}] t={t_k:.4f} DONE: stage flow saved; particle set advanced")
         t_prev = t_k
     status(f"boltzmann_forward_KLX_G_fixed: fixed ladder DONE "
            f"({len(stages)} stages, {'COMPLETE' if t_list[-1] == 1.0 else 'INCOMPLETE'})")
+    artifacts.finish(complete=t_list[-1] == 1.0, last_t=t_prev,
+                     accepted_stages=len(stages))
     return y_valid, stages
 
 
-def boltzmann_forward_KLXX_G_fixed(
+def _boltzmann_forward_KLXX_G_fixed_impl(
     x_valid: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
-    n_pool: int,
-    n_batch: int,
-    steps: int,
+    pool_size: int,
+    batch_size: int,
+    train_steps: int,
     lr: float,
     ladder: int,
     melt: float,
-    opt_step: float,
-    opt_iters: int,
-    mc_step: float,
-    mc_iters: int,
+    opt_alpha: float,
+    opt_steps: int,
+    mc_dt: float,
+    mc_steps: int,
     t_list,
     coeff_lambda: float = 1.0,
     coeff_alpha: float = 0.5,
     coeff_beta: float = 0.5,
     mc_adjust: bool = True,
     monitor: Monitor | None = None,
-    chunk: int = 1,
+    chunks: int = 1,
     checkpoint: bool = False,
     e_clip: float = float("inf"),
     g_clip: float = float("inf"),
+    flow_dir=None,
 ) -> tuple[Array, list[dict]]:
     """
     Fixed-schedule variant of `boltzmann_forward_KLXX_G`: bare step-by-step
     training of the full mixture loss along `t_list`, no SMC pre-selection and
-    no acceptance/rejection. The quench-and-temper family (`n_pool`, `melt`,
-    `opt_step`, `opt_iters`), `ladder`, and the loss weights are retained (all
+    no acceptance/rejection. The quench-and-temper family (`pool_size`, `melt`,
+    `opt_alpha`, `opt_steps`), `ladder`, and the loss weights are retained (all
     feed the stage trainer); only `bg_param` is dropped. Same stage records
     and output as the adaptive version.
 
@@ -1244,6 +1505,7 @@ def boltzmann_forward_KLXX_G_fixed(
             "boltzmann_forward_KLXX_G_fixed: coeff_beta must be finite and non-negative"
         )
     t_list = _fixed_schedule("boltzmann_forward_KLXX_G_fixed", t_list)
+    artifacts = FlowArtifactWriter(flow_dir, "boltzmann_forward_KLXX_G_fixed")
 
     status = monitor.printer if monitor is not None else print
     key = jax.random.key(8)  # same base stream as boltzmann_forward_KLXX_G
@@ -1256,42 +1518,345 @@ def boltzmann_forward_KLXX_G_fixed(
     stages: list[dict] = []
     t_prev = 0.0
     for k, t_k in enumerate(t_list, start=1):
+        artifacts.start_stage(k, t_prev)
+        attempt_hist = _new_attempt_hist()
         u_prev = linear_combination([target, source], [t_prev, 1.0 - t_prev])
         u_k = linear_combination([target, source], [t_k, 1.0 - t_k])
         status(f"[stage {k}] t={t_prev:.4f} -> {t_k:.4f} training the increment (fixed) ...")
         seed = jnp.uint32(k)
         cand, ess_hist = train_forward_KLXX_G(y_valid, u_prev, u_k, flow,
-                                              n_pool, n_batch, steps, lr, ladder,
-                                              melt, opt_step, opt_iters, mc_step,
-                                              mc_iters, coeff_lambda, coeff_alpha,
+                                              pool_size, batch_size, train_steps, lr, ladder,
+                                              melt, opt_alpha, opt_steps, mc_dt,
+                                              mc_steps, coeff_lambda, coeff_alpha,
                                               coeff_beta, mc_adjust, monitor,
                                               seed=seed, checkpoint=checkpoint,
                                               e_clip=e_clip, g_clip=g_clip)
-        log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunk=chunk)
+        log_w_tr = _iw_log_jit(y_valid, u_prev, u_k, cand, "G", chunks=chunks)
         ess_tr = float(compute_ESS_log(log_w_tr))
-        log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunk=chunk)
+        log_w_id = _iw_log_identity(y_valid, u_prev, u_k, chunks=chunks)
         ess_id = float(compute_ESS_log(log_w_id))
         jax.effects_barrier()  # keep monitor lines ahead of the stage status
         # identity check: keep the better of the trained flow and the
         # identity map (pure SMC), so a stage is never worse than SMC
         if ess_tr >= ess_id:
             stage_flow, next_flow, log_w, ess_k = cand, cand, log_w_tr, ess_tr
+            selected = "trained"
         else:
             stage_flow, next_flow, log_w, ess_k = (
                 identity_flow, _trainable_identity(flow), log_w_id, ess_id
             )
+            selected = "identity"
         imp = ess_k - ess_id  # improvement over identity, always >= 0
         status(f"[stage {k}] t={t_k:.4f} validation: ESS = {ess_k:.3f} "
                f"(trained {ess_tr:.3f} / identity {ess_id:.3f}, imp {imp:+.3f})")
+        _record_attempt(
+            attempt_hist, artifacts, stage=k, attempt=1, t=t_k,
+            batch_ess=ess_hist, candidate=cand, status="accepted",
+            selected=selected, valid_selected_ess=ess_k,
+            valid_trained_ess=ess_tr, valid_identity_ess=ess_id,
+        )
         key_res, key_mc = jax.random.split(jax.random.fold_in(key, k))
         y_valid = _bg_advance(key_res, key_mc, y_valid, log_w, stage_flow, "G", u_k,
-                              mc_step, mc_iters, mc_adjust, chunk)
+                              mc_dt, mc_steps, mc_adjust, chunks)
         y_valid = jax.block_until_ready(y_valid)  # errors surface at THIS stage
-        stages.append({"t": t_k, "ess": ess_k, "flow": stage_flow,
-                       "ess_history": ess_hist, "imp_history": imp})
+        selected_path = artifacts.accept_stage(
+            k, t_k, stage_flow, selected=selected, valid_selected_ess=ess_k
+        )
+        stages.append(_stage_record(
+            t=t_k, valid_selected_ess=ess_k, valid_trained_ess=ess_tr,
+            valid_identity_ess=ess_id, selected=selected, flow=stage_flow,
+            hist=attempt_hist, selected_flow_path=selected_path,
+        ))
         flow = next_flow
         status(f"[stage {k}] t={t_k:.4f} DONE: stage flow saved; particle set advanced")
         t_prev = t_k
     status(f"boltzmann_forward_KLXX_G_fixed: fixed ladder DONE "
            f"({len(stages)} stages, {'COMPLETE' if t_list[-1] == 1.0 else 'INCOMPLETE'})")
+    artifacts.finish(complete=t_list[-1] == 1.0, last_t=t_prev,
+                     accepted_stages=len(stages))
     return y_valid, stages
+@legacy_keywords(
+    n_pool="pool_size", n_batch="batch_size", steps="train_steps",
+    mc_step="mc_dt", mc_iters="mc_steps", chunk="chunks",
+)
+def boltzmann_reverse_KL_F(
+    x_valid: Array,
+    source: Potential,
+    target: Potential,
+    flow: Flow,
+    pool_size: int,
+    batch_size: int,
+    train_steps: int,
+    lr: float,
+    ladder: int,
+    mc_dt: float,
+    mc_steps: int,
+    mc_adjust: bool = True,
+    monitor: Monitor | None = None,
+    bg_param: dict | None = None,
+    chunks: int = 1,
+    checkpoint: bool = False,
+    flow_dir=None,
+) -> tuple[Array, list[dict]]:
+    """Adaptive reverse-KL Boltzmann generator."""
+    return _boltzmann_reverse_KL_F_impl(
+        x_valid, source, target, flow, pool_size, batch_size, train_steps, lr,
+        ladder, mc_dt, mc_steps, mc_adjust, monitor, bg_param, chunks,
+        checkpoint, flow_dir,
+    )
+
+
+@legacy_keywords(
+    n_pool="pool_size", n_batch="batch_size", steps="train_steps",
+    mc_step="mc_dt", mc_iters="mc_steps", chunk="chunks",
+)
+def boltzmann_forward_KL_G(
+    x_valid: Array,
+    source: Potential,
+    target: Potential,
+    flow: Flow,
+    pool_size: int,
+    batch_size: int,
+    train_steps: int,
+    lr: float,
+    ladder: int,
+    mc_dt: float,
+    mc_steps: int,
+    mc_adjust: bool = True,
+    monitor: Monitor | None = None,
+    bg_param: dict | None = None,
+    chunks: int = 1,
+    checkpoint: bool = False,
+    e_clip: float = float("inf"),
+    g_clip: float = float("inf"),
+    flow_dir=None,
+) -> tuple[Array, list[dict]]:
+    """Adaptive forward-KL Boltzmann generator."""
+    return _boltzmann_forward_KL_G_impl(
+        x_valid, source, target, flow, pool_size, batch_size, train_steps, lr,
+        ladder, mc_dt, mc_steps, mc_adjust, monitor, bg_param, chunks,
+        checkpoint, e_clip, g_clip, flow_dir,
+    )
+
+
+@legacy_keywords(
+    n_pool="pool_size", n_batch="batch_size", steps="train_steps",
+    mc_step="mc_dt", mc_iters="mc_steps", chunk="chunks",
+)
+def boltzmann_forward_KLX_G(
+    x_valid: Array,
+    source: Potential,
+    target: Potential,
+    flow: Flow,
+    pool_size: int,
+    batch_size: int,
+    train_steps: int,
+    lr: float,
+    ladder: int,
+    mc_dt: float,
+    mc_steps: int,
+    coeff_lambda: float = 1.0,
+    mc_adjust: bool = True,
+    monitor: Monitor | None = None,
+    bg_param: dict | None = None,
+    chunks: int = 1,
+    checkpoint: bool = False,
+    e_clip: float = float("inf"),
+    g_clip: float = float("inf"),
+    flow_dir=None,
+) -> tuple[Array, list[dict]]:
+    """Adaptive X-regularized forward-KL Boltzmann generator."""
+    return _boltzmann_forward_KLX_G_impl(
+        x_valid, source, target, flow, pool_size, batch_size, train_steps, lr,
+        ladder, mc_dt, mc_steps, coeff_lambda, mc_adjust, monitor, bg_param,
+        chunks, checkpoint, e_clip, g_clip, flow_dir,
+    )
+
+
+@legacy_keywords(
+    n_pool="pool_size", n_batch="batch_size", steps="train_steps",
+    opt_step="opt_alpha", opt_iters="opt_steps", mc_step="mc_dt",
+    mc_iters="mc_steps", chunk="chunks",
+)
+def boltzmann_forward_KLXX_G(
+    x_valid: Array,
+    source: Potential,
+    target: Potential,
+    flow: Flow,
+    pool_size: int,
+    batch_size: int,
+    train_steps: int,
+    lr: float,
+    ladder: int,
+    melt: float,
+    opt_alpha: float,
+    opt_steps: int,
+    mc_dt: float,
+    mc_steps: int,
+    coeff_lambda: float = 1.0,
+    coeff_alpha: float = 0.5,
+    coeff_beta: float = 0.5,
+    mc_adjust: bool = True,
+    monitor: Monitor | None = None,
+    bg_param: dict | None = None,
+    chunks: int = 1,
+    checkpoint: bool = False,
+    e_clip: float = float("inf"),
+    g_clip: float = float("inf"),
+    flow_dir=None,
+) -> tuple[Array, list[dict]]:
+    """Adaptive full-mixture forward-KLXX Boltzmann generator."""
+    return _boltzmann_forward_KLXX_G_impl(
+        x_valid, source, target, flow, pool_size, batch_size, train_steps, lr,
+        ladder, melt, opt_alpha, opt_steps, mc_dt, mc_steps, coeff_lambda,
+        coeff_alpha, coeff_beta, mc_adjust, monitor, bg_param, chunks,
+        checkpoint, e_clip, g_clip, flow_dir,
+    )
+
+
+@legacy_keywords(
+    n_batch="batch_size", steps="train_steps", mc_step="mc_dt",
+    mc_iters="mc_steps", chunk="chunks",
+)
+def boltzmann_reverse_KL_F_fixed(
+    x_valid: Array,
+    source: Potential,
+    target: Potential,
+    flow: Flow,
+    batch_size: int,
+    train_steps: int,
+    lr: float,
+    mc_dt: float,
+    mc_steps: int,
+    t_list,
+    mc_adjust: bool = True,
+    monitor: Monitor | None = None,
+    chunks: int = 1,
+    checkpoint: bool = False,
+    flow_dir=None,
+) -> tuple[Array, list[dict]]:
+    """Fixed-schedule reverse-KL Boltzmann generator."""
+    return _boltzmann_reverse_KL_F_fixed_impl(
+        x_valid, source, target, flow, batch_size, train_steps, lr, mc_dt,
+        mc_steps, t_list, mc_adjust, monitor, chunks, checkpoint, flow_dir,
+    )
+
+
+@legacy_keywords(
+    n_batch="batch_size", steps="train_steps", mc_step="mc_dt",
+    mc_iters="mc_steps", chunk="chunks",
+)
+def boltzmann_forward_KL_G_fixed(
+    x_valid: Array,
+    source: Potential,
+    target: Potential,
+    flow: Flow,
+    batch_size: int,
+    train_steps: int,
+    lr: float,
+    ladder: int,
+    mc_dt: float,
+    mc_steps: int,
+    t_list,
+    mc_adjust: bool = True,
+    monitor: Monitor | None = None,
+    chunks: int = 1,
+    checkpoint: bool = False,
+    e_clip: float = float("inf"),
+    g_clip: float = float("inf"),
+    flow_dir=None,
+) -> tuple[Array, list[dict]]:
+    """Fixed-schedule forward-KL Boltzmann generator."""
+    return _boltzmann_forward_KL_G_fixed_impl(
+        x_valid, source, target, flow, batch_size, train_steps, lr, ladder,
+        mc_dt, mc_steps, t_list, mc_adjust, monitor, chunks, checkpoint,
+        e_clip, g_clip, flow_dir,
+    )
+
+
+@legacy_keywords(
+    n_batch="batch_size", steps="train_steps", mc_step="mc_dt",
+    mc_iters="mc_steps", chunk="chunks",
+)
+def boltzmann_forward_KLX_G_fixed(
+    x_valid: Array,
+    source: Potential,
+    target: Potential,
+    flow: Flow,
+    batch_size: int,
+    train_steps: int,
+    lr: float,
+    ladder: int,
+    mc_dt: float,
+    mc_steps: int,
+    t_list,
+    coeff_lambda: float = 1.0,
+    mc_adjust: bool = True,
+    monitor: Monitor | None = None,
+    chunks: int = 1,
+    checkpoint: bool = False,
+    e_clip: float = float("inf"),
+    g_clip: float = float("inf"),
+    flow_dir=None,
+) -> tuple[Array, list[dict]]:
+    """Fixed-schedule X-regularized forward-KL Boltzmann generator."""
+    return _boltzmann_forward_KLX_G_fixed_impl(
+        x_valid, source, target, flow, batch_size, train_steps, lr, ladder,
+        mc_dt, mc_steps, t_list, coeff_lambda, mc_adjust, monitor, chunks,
+        checkpoint, e_clip, g_clip, flow_dir,
+    )
+
+
+@legacy_keywords(
+    n_pool="pool_size", n_batch="batch_size", steps="train_steps",
+    opt_step="opt_alpha", opt_iters="opt_steps", mc_step="mc_dt",
+    mc_iters="mc_steps", chunk="chunks",
+)
+def boltzmann_forward_KLXX_G_fixed(
+    x_valid: Array,
+    source: Potential,
+    target: Potential,
+    flow: Flow,
+    pool_size: int,
+    batch_size: int,
+    train_steps: int,
+    lr: float,
+    ladder: int,
+    melt: float,
+    opt_alpha: float,
+    opt_steps: int,
+    mc_dt: float,
+    mc_steps: int,
+    t_list,
+    coeff_lambda: float = 1.0,
+    coeff_alpha: float = 0.5,
+    coeff_beta: float = 0.5,
+    mc_adjust: bool = True,
+    monitor: Monitor | None = None,
+    chunks: int = 1,
+    checkpoint: bool = False,
+    e_clip: float = float("inf"),
+    g_clip: float = float("inf"),
+    flow_dir=None,
+) -> tuple[Array, list[dict]]:
+    """Fixed-schedule full-mixture forward-KLXX Boltzmann generator."""
+    return _boltzmann_forward_KLXX_G_fixed_impl(
+        x_valid, source, target, flow, pool_size, batch_size, train_steps, lr,
+        ladder, melt, opt_alpha, opt_steps, mc_dt, mc_steps, t_list,
+        coeff_lambda, coeff_alpha, coeff_beta, mc_adjust, monitor, chunks,
+        checkpoint, e_clip, g_clip, flow_dir,
+    )
+
+
+for _public, _implementation in (
+    (boltzmann_reverse_KL_F, _boltzmann_reverse_KL_F_impl),
+    (boltzmann_forward_KL_G, _boltzmann_forward_KL_G_impl),
+    (boltzmann_forward_KLX_G, _boltzmann_forward_KLX_G_impl),
+    (boltzmann_forward_KLXX_G, _boltzmann_forward_KLXX_G_impl),
+    (boltzmann_reverse_KL_F_fixed, _boltzmann_reverse_KL_F_fixed_impl),
+    (boltzmann_forward_KL_G_fixed, _boltzmann_forward_KL_G_fixed_impl),
+    (boltzmann_forward_KLX_G_fixed, _boltzmann_forward_KLX_G_fixed_impl),
+    (boltzmann_forward_KLXX_G_fixed, _boltzmann_forward_KLXX_G_fixed_impl),
+):
+    inherit_implementation_doc(_public, _implementation)
+del _public, _implementation

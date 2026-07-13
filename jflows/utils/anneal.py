@@ -22,6 +22,7 @@ from jax import Array
 
 from ..flow import Flow
 from ..potential import Potential, linear_combination
+from ._compat import legacy_keywords
 from .metrics import _linear_weights_from_log, compute_ESS_log, resample
 from .rejuvenation import langevin
 
@@ -38,17 +39,18 @@ __all__ = [
 # SMC — annealed Langevin on a linear bridge of potentials (no flow)
 # ──────────────────────────────────────────────────────────────────────
 
+@legacy_keywords(step="mc_dt", iters="mc_steps", chunk="chunks")
 def sequential_monte_carlo(
     key: Array,
     samples: Array,
     source: Potential,
     target: Potential,
     ladder: int = 1,
-    step: float = 1e-3,
-    iters: int = 100,
+    mc_dt: float = 1e-3,
+    mc_steps: int = 100,
     adjust: bool = True,
     taming: float = 0,
-    chunk: int = 1,
+    chunks: int = 1,
 ) -> tuple[Array, Array]:
     """
     Sequential Monte Carlo (annealed Langevin) that transports the input
@@ -70,7 +72,7 @@ def sequential_monte_carlo(
          exponentiated after subtracting the max for numerical stability.
       2. Multinomial resampling of x by w.
       3. Langevin rejuvenation targeting exp(-u_k) — i.e. ON THE
-         BRIDGE POTENTIAL u_k itself — for `iters` steps, with the tamed
+         BRIDGE POTENTIAL u_k itself — for `mc_steps` steps, with the tamed
          drift when `taming > 0`.
     After the final level the particles approximate exp(-target).
 
@@ -89,17 +91,17 @@ def sequential_monte_carlo(
                                 single reweight + resample + Langevin hop
                                 straight from source to target; larger M
                                 bridges low-overlap source/target pairs.
-        step:    float          Langevin step size, shared across levels
-        iters:   int            Langevin steps per level
+        mc_dt:   float          Langevin step size, shared across levels
+        mc_steps: int           Langevin steps per level
         adjust:  bool           if True, MALA rejuvenation on each bridge
                                 (unbiased); if False, ULA (see `langevin`)
         taming:  float          if > 0, tamed Langevin drift
                                 grad u_k / (1 + taming * ||grad u_k||) —
                                 stabilizes the rejuvenation on potentials
                                 whose gradients grow super-linearly
-        chunk:   int            split along dim 0 into this many execution
+        chunks:  int            split along dim 0 into this many execution
                                 chunks inside each Langevin call
-                                (statistically equivalent to chunk=1; when the
+                                (statistically equivalent to chunks=1; when the
                                 enclosing routine is jitted this is not a
                                 strict peak-memory guarantee)
     Output:
@@ -112,11 +114,14 @@ def sequential_monte_carlo(
     """
     if ladder < 1:
         raise ValueError(f"sequential_monte_carlo: ladder must be positive, got {ladder!r}")
-    if iters < 0:
-        raise ValueError(f"sequential_monte_carlo: iters must be non-negative, got {iters!r}")
-    if chunk < 1 or chunk > samples.shape[0]:
+    if mc_steps < 0:
         raise ValueError(
-            f"sequential_monte_carlo: chunk must lie in [1, N], got {chunk!r} "
+            "sequential_monte_carlo: mc_steps must be non-negative, "
+            f"got {mc_steps!r}"
+        )
+    if chunks < 1 or chunks > samples.shape[0]:
+        raise ValueError(
+            f"sequential_monte_carlo: chunks must lie in [1, N], got {chunks!r} "
             f"for N={samples.shape[0]}"
         )
     M = ladder
@@ -135,7 +140,10 @@ def sequential_monte_carlo(
         #     ON the bridge u_k to obtain fresh samples ~ exp(-u_k).
         key_r, key_l = jax.random.split(jax.random.fold_in(key, k))
         x = resample(key_r, x, w)
-        x = langevin(key_l, x, u_k, step=step, iters=iters, adjust=adjust, taming=taming, chunk=chunk)
+        x = langevin(
+            key_l, x, u_k, dt=mc_dt, steps=mc_steps, adjust=adjust,
+            taming=taming, chunks=chunks,
+        )
     return x, jnp.stack(ess)
 
 
@@ -143,6 +151,7 @@ def sequential_monte_carlo(
 # AIS — flow-proposal SMC along the geometric path to the target
 # ──────────────────────────────────────────────────────────────────────
 
+@legacy_keywords(step="mc_dt", iters="mc_steps", chunk="chunks")
 def annealed_importance_sampling(
     key: Array,
     samples: Array,
@@ -151,11 +160,11 @@ def annealed_importance_sampling(
     flow: Flow,
     type: str,
     ladder: int = 1,
-    step: float = 1e-3,
-    iters: int = 100,
+    mc_dt: float = 1e-3,
+    mc_steps: int = 100,
     adjust: bool = True,
     taming: float = 0,
-    chunk: int = 1,
+    chunks: int = 1,
     trace_key: Array | None = None,
     return_initial_log_weights: bool = False,
 ) -> Array | tuple[Array, Array]:
@@ -216,16 +225,16 @@ def annealed_importance_sampling(
         ladder:    int               number of annealing levels M (>= 1). M=1 is
                                      a single reweight + resample + Langevin hop
                                      from the flow proposal to the target.
-        step:      float             Langevin step size, shared across levels
-        iters:     int               Langevin steps per level
+        mc_dt:     float             Langevin step size, shared across levels
+        mc_steps:  int               Langevin steps per level
         adjust:    bool              if True, MALA rejuvenation invariant for
                                      mu_1; if False, ULA (see `langevin`)
         taming:    float             if > 0, tamed Langevin drift on the target
                                      (see `langevin`)
-        chunk:     int               split along dim 0 into this many execution
+        chunks:    int               split along dim 0 into this many execution
                                      chunks for the pushforward / inverse /
                                      weight passes and Langevin calls
-                                     (statistically equivalent to chunk=1;
+                                     (statistically equivalent to chunks=1;
                                      nested compiled loops are not a strict
                                      peak-memory guarantee)
         trace_key: Array | None      optional base key for stochastic CNF
@@ -255,13 +264,14 @@ def annealed_importance_sampling(
         raise ValueError(
             f"annealed_importance_sampling: ladder must be positive, got {ladder!r}"
         )
-    if iters < 0:
+    if mc_steps < 0:
         raise ValueError(
-            f"annealed_importance_sampling: iters must be non-negative, got {iters!r}"
+            "annealed_importance_sampling: mc_steps must be non-negative, "
+            f"got {mc_steps!r}"
         )
-    if chunk < 1 or chunk > samples.shape[0]:
+    if chunks < 1 or chunks > samples.shape[0]:
         raise ValueError(
-            f"annealed_importance_sampling: chunk must lie in [1, N], got {chunk!r} "
+            f"annealed_importance_sampling: chunks must lie in [1, N], got {chunks!r} "
             f"for N={samples.shape[0]}"
         )
     M = ladder
@@ -279,7 +289,7 @@ def annealed_importance_sampling(
     flow_1 = level_flow(1)
     y_parts = []
     initial_parts = []
-    for xc in jnp.array_split(samples, chunk, axis=0):
+    for xc in jnp.array_split(samples, chunks, axis=0):
         push = flow_1.call_and_ladj if type == "F" else flow_1.inv_and_ladj
         yc, ladj = push(xc)
         y_parts.append(yc)
@@ -296,7 +306,7 @@ def annealed_importance_sampling(
         else:
             parts = []
             flow_k = level_flow(k)
-            for yc in jnp.array_split(y, chunk, axis=0):
+            for yc in jnp.array_split(y, chunks, axis=0):
                 if type == "F":
                     xc = flow_k.inv(yc)                 # x = F^{-1}(y)
                     _, ladj = flow_k.call_and_ladj(xc)  # log|det J_F(x)|
@@ -310,7 +320,10 @@ def annealed_importance_sampling(
         # (2) resample onto high-weight particles, then rejuvenate in mu_1.
         key_r, key_l = jax.random.split(jax.random.fold_in(key, k))
         y = resample(key_r, y, w)
-        y = langevin(key_l, y, target, step=step, iters=iters, adjust=adjust, taming=taming, chunk=chunk)
+        y = langevin(
+            key_l, y, target, dt=mc_dt, steps=mc_steps, adjust=adjust,
+            taming=taming, chunks=chunks,
+        )
     if return_initial_log_weights:
         return y, initial_log_weights
     return y

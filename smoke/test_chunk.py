@@ -97,13 +97,13 @@ def main() -> None:
             importance_weights_log(xs, u0, u1, flow, type_))
         for c in (2, 7):
             got = jax.block_until_ready(
-                _iw_log_jit(xs, u0, u1, flow, type_, chunk=c))
+                _iw_log_jit(xs, u0, u1, flow, type_, chunks=c))
             check(f"eager chunk={c} == full call (type {type_})", got, ref, tol=1e-3)
 
     # 2 — memory: the eager per-chunk loop runs FIRST (smallest working
     # set), so every later high-water mark is attributable to the in-jit
     # calls it is compared against
-    lw_eager = jax.block_until_ready(_iw_log_jit(x, u0, u1, flow, "G", chunk=8))
+    lw_eager = jax.block_until_ready(_iw_log_jit(x, u0, u1, flow, "G", chunks=8))
     p_eager = peak_gib()
     eager_delta = p_eager - p0
     log(f"peak after EAGER chunk=8  'G' on {NSAMP}: {p_eager:.3f} GiB "
@@ -113,7 +113,7 @@ def main() -> None:
     # scheduler overlaps the chunk subgraphs, so the peak must land far
     # above the eager loop's
     full_jit = eqx.filter_jit(importance_weights_log)
-    lw_injit = jax.block_until_ready(full_jit(x, u0, u1, flow, "G", chunk=8))
+    lw_injit = jax.block_until_ready(full_jit(x, u0, u1, flow, "G", chunks=8))
     p_injit = peak_gib()
     injit_delta = p_injit - p0
     log(f"peak after IN-JIT chunk=8 'G' on {NSAMP}: {p_injit:.3f} GiB "

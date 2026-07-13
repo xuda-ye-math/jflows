@@ -28,7 +28,7 @@ For boltzmann_reverse_KL_F (the adaptive-ladder annealed BG):
        temper pool, gated ladder — completes with the same record
        contract;
     10. adaptive KLX plus fixed-schedule KL, KLX, reverse KL, and KLXX
-        interfaces all satisfy the same five-key stage-record contract;
+        interfaces all satisfy the same explicit stage-record contract;
     11. rejection of bad arguments: unknown bg_param keys, invalid
         shrink_factor.
 
@@ -73,6 +73,15 @@ MELT, OPT_STEP, OPT_ITERS = 2.0, 0.5, 100
 COEFF_LAMBDA, COEFF_ALPHA, COEFF_BETA = 0.7, 0.8, 0.3
 TAU = 0.5
 BG = {"t_safe": 0.3, "tau_ess": TAU}
+
+STAGE_KEYS = {
+    "t", "valid_selected_ess", "valid_trained_ess", "valid_identity_ess",
+    "selected", "flow", "t_hist", "batch_ess_hist",
+    "valid_trained_ess_hist", "valid_identity_ess_hist",
+    "attempt_status_hist", "trained_flow_path_hist", "selected_flow_path",
+    # Temporary compatibility aliases.
+    "ess", "ess_history", "imp_history",
+}
 
 
 def log(msg: str) -> None:
@@ -141,8 +150,27 @@ def main() -> None:
     # ── per-stage records ──
     log("per-stage records")
     check_true("stage flows saved", all(isinstance(s["flow"], NSF) for s in stages))
-    check_true("record keys are t/ess/flow/ess_history/imp_history",
-               all(set(s.keys()) == {"t", "ess", "flow", "ess_history", "imp_history"} for s in stages))
+    check_true("stage record keys are canonical plus compatibility aliases",
+               all(set(s) == STAGE_KEYS for s in stages))
+    check_true(
+        "adaptive attempt histories are aligned",
+        all(
+            len(s["t_hist"]) == s["batch_ess_hist"].shape[0]
+            == len(s["valid_trained_ess_hist"])
+            == len(s["valid_identity_ess_hist"])
+            == len(s["attempt_status_hist"])
+            == len(s["trained_flow_path_hist"])
+            for s in stages
+        ),
+    )
+    check_true(
+        "saving-disabled paths remain aligned None values",
+        all(
+            s["selected_flow_path"] is None
+            and all(path is None for path in s["trained_flow_path_hist"])
+            for s in stages
+        ),
+    )
     check_true("imp_history >= 0 (stages)",
                all(float(s["imp_history"]) >= 0.0 for s in stages))
 
@@ -196,8 +224,8 @@ def main() -> None:
                f"t = {[round(t, 3) for t in tsf]}")
     check_true("forward stage ESS >= tau_ess", all(s["ess"] >= TAU for s in stages_f),
                f"ESS = {[round(s['ess'], 3) for s in stages_f]}")
-    check_true("forward record keys are t/ess/flow/ess_history/imp_history",
-               all(set(s.keys()) == {"t", "ess", "flow", "ess_history", "imp_history"} for s in stages_f))
+    check_true("forward stage record keys",
+               all(set(s) == STAGE_KEYS for s in stages_f))
     check_true("imp_history >= 0 (stages_f)",
                all(float(s["imp_history"]) >= 0.0 for s in stages_f))
     check_true("forward particle set full-size and finite",
@@ -222,8 +250,8 @@ def main() -> None:
                f"t = {[round(t, 3) for t in tsxx]}")
     check_true("KLXX stage ESS >= tau_ess", all(s["ess"] >= TAU for s in stages_xx),
                f"ESS = {[round(s['ess'], 3) for s in stages_xx]}")
-    check_true("KLXX record keys are t/ess/flow/ess_history/imp_history",
-               all(set(s.keys()) == {"t", "ess", "flow", "ess_history", "imp_history"} for s in stages_xx))
+    check_true("KLXX stage record keys",
+               all(set(s) == STAGE_KEYS for s in stages_xx))
     check_true("imp_history >= 0 (stages_xx)",
                all(float(s["imp_history"]) >= 0.0 for s in stages_xx))
     check_true("KLXX particle set full-size and finite",
@@ -243,9 +271,9 @@ def main() -> None:
         bg_param={"t_safe": 1.0, "tau_ess": 0.0, "max_stages": 1},
         **small,
     )
-    check_true("KLX adaptive: complete 5-key finite output",
+    check_true("KLX adaptive: complete stage record and finite output",
                len(s_kx) == 1 and s_kx[-1]["t"] == 1.0
-               and set(s_kx[-1]) == {"t", "ess", "flow", "ess_history", "imp_history"}
+               and set(s_kx[-1]) == STAGE_KEYS
                and bool(jnp.isfinite(y_kx).all()))
     for name, fn, extra in (
         ("KL fixed", boltzmann_forward_KL_G_fixed, {}),
@@ -255,9 +283,9 @@ def main() -> None:
         y_probe, s_probe = fn(
             x_small, u0, u1, flow0, t_list=[1.0], **small, **extra
         )
-        check_true(f"{name}: complete 5-key finite output",
+        check_true(f"{name}: complete stage record and finite output",
                    len(s_probe) == 1 and s_probe[-1]["t"] == 1.0
-                   and set(s_probe[-1]) == {"t", "ess", "flow", "ess_history", "imp_history"}
+                   and set(s_probe[-1]) == STAGE_KEYS
                    and bool(jnp.isfinite(y_probe).all()))
 
     # ── OTFlow identity fallback remains exact but the next warm start trains ──
@@ -271,8 +299,8 @@ def main() -> None:
         ot_inputs.append(float(jnp.linalg.norm(flow_arg._ot.phi.A)))
         return flow_arg, jnp.zeros((int(args[5]),))
 
-    def force_bad_trained_weights(samples, source, target, flow, type, chunk=1):
-        del source, target, flow, type, chunk
+    def force_bad_trained_weights(samples, source, target, flow, type, chunks=1):
+        del source, target, flow, type, chunks
         return jnp.linspace(-20.0, 20.0, samples.shape[0])
 
     try:
@@ -365,13 +393,18 @@ def main() -> None:
     check_true("fixed: stage ts equal the given t_list",
                [round(s["t"], 6) for s in stages_fx] == t_list,
                f"t = {[s['t'] for s in stages_fx]}")
-    check_true("fixed: record keys are the 5 keys",
-               all(set(s.keys()) == {"t", "ess", "flow", "ess_history", "imp_history"}
-                   for s in stages_fx))
+    check_true("fixed: stage record keys",
+               all(set(s) == STAGE_KEYS for s in stages_fx))
     check_true("fixed: imp_history >= 0",
                all(float(s["imp_history"]) >= 0.0 for s in stages_fx))
     check_true("fixed: ess_history length == steps",
                all(len(s["ess_history"]) == STEPS for s in stages_fx))
+    check_true("fixed: attempt-history outer length is one",
+               all(s["batch_ess_hist"].shape == (1, STEPS)
+                   and len(s["t_hist"]) == 1
+                   and len(s["valid_trained_ess_hist"]) == 1
+                   and len(s["valid_identity_ess_hist"]) == 1
+                   for s in stages_fx))
     check_true("fixed: particle set finite and advanced",
                yfx.shape == x_valid.shape and bool(jnp.isfinite(yfx).all())
                and float(jnp.abs(yfx - x_valid).max()) > 1.0, f"{yfx.shape}")
@@ -386,10 +419,9 @@ def main() -> None:
         mc_step=MC_STEP, mc_iters=MC_ITERS, t_list=[0.5, 1.0],
         coeff_lambda=COEFF_LAMBDA, coeff_alpha=COEFF_ALPHA, coeff_beta=COEFF_BETA,
     )
-    check_true("KLXX_fixed: 2 stages, complete, 5-key, imp>=0, finite",
+    check_true("KLXX_fixed: 2 stages, complete records, imp>=0, finite",
                len(stages_xfx) == 2 and stages_xfx[-1]["t"] == 1.0
-               and all(set(s.keys()) == {"t", "ess", "flow", "ess_history", "imp_history"}
-                       for s in stages_xfx)
+               and all(set(s) == STAGE_KEYS for s in stages_xfx)
                and all(float(s["imp_history"]) >= 0.0 for s in stages_xfx)
                and bool(jnp.isfinite(yxfx).all()),
                f"t = {[round(s['t'], 3) for s in stages_xfx]}")

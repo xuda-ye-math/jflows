@@ -2,13 +2,13 @@
 
 Packs one training stage into a single compiled call: Adam on the
 flow's array leaves, the whole step loop under one `lax.scan`
-(one compilation regardless of `steps`), returning the trained flow
+(one compilation regardless of `train_steps`), returning the trained flow
 and the per-step ESS history. Only the flow is updated, and the
 buffer-like leaves (the NSF/NCSF center shifts, spline bounds,
 time-embedding frequencies) are gradient-protected and stay fixed.
 
 Both drivers implement the X-regularization data pipeline on a fixed
-source set: every Adam step draws a fresh `n_batch`-sized subset and
+source set: every Adam step draws a fresh `batch_size`-sized subset and
 regenerates its training data on the fly — no frozen batch is ever
 reused, so a single packed call does not memorize per-sample
 corrections.
@@ -27,15 +27,16 @@ Public API:
                        KL + coeff_lambda * X_mu
                        + X_{coeff_alpha * hat_mu + coeff_beta * bar_nu},
                        with hat_mu a quench-and-temper pool of size
-                       n_pool and bar_nu the detached pushforward
+                       pool_size and bar_nu the detached pushforward
     Monitor          — live training-status reporter (loss + batch ESS
                        every `every` steps, from inside the compiled loop)
 
 The annealed Boltzmann generators that chain these stage trainers into the
 full adaptive-temperature ladder live in `jflows.boltzmann`.
 
-Both trainers are `eqx.filter_jit`-compiled: python scalars (`n_batch`,
-`steps`, `lr`, `mc_*`, `type`) and the Monitor instance are static, so
+The numerical kernels behind all trainers are `eqx.filter_jit`-compiled:
+python scalars (`batch_size`,
+`train_steps`, `lr`, `mc_*`, `type`) and the Monitor instance are static, so
 repeated calls with the same configuration — every stage of a
 boltzmann ladder, retuned bridge coefficients included — reuse one XLA
 executable. Memory caveat: training a MAF-style flow (NSF/NCSF) in its
@@ -54,6 +55,7 @@ from jax import Array, lax
 from .flow import Flow
 from .loss import forward_KL_G, reverse_KL_F
 from .potential import Potential
+from .utils._compat import inherit_implementation_doc, legacy_keywords
 from .utils.anneal import annealed_importance_sampling
 from .utils.metrics import compute_ESS_log, resample
 from .utils.quench import quench_and_temper
@@ -211,16 +213,16 @@ class Monitor:
 
 
 @eqx.filter_jit
-def train_reverse_KL_F(
+def _train_reverse_KL_F_impl(
     x_valid: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
-    n_batch: int,
-    steps: int,
+    batch_size: int,
+    train_steps: int,
     lr: float,
-    mc_step: float,
-    mc_iters: int,
+    mc_dt: float,
+    mc_steps: int,
     mc_adjust: bool = True,
     monitor: Monitor | None = None,
     seed: int | Array = 0,
@@ -229,13 +231,13 @@ def train_reverse_KL_F(
     """
     Single-stage reverse KL training of a flow on a fixed source set,
     with the flow fixed as the forward map F (source -> target): minimize
-    `reverse_KL_F(x, target, flow).mean()` with Adam for `steps`
+    `reverse_KL_F(x, target, flow).mean()` with Adam for `train_steps`
     iterations and return the trained flow with the per-step ESS history.
 
-    Every Adam iteration draws a fresh `n_batch`-sized subset of
+    Every Adam iteration draws a fresh `batch_size`-sized subset of
     `x_valid` (without replacement; note the draw sorts the full pool
     per step — at pools beyond ~1e6 prefer an external batching scheme)
-    and freshens it with `mc_iters` Langevin steps at the source
+    and freshens it with `mc_steps` Langevin steps at the source
     potential before the gradient step. Deterministic: the per-step
     keys derive from this driver's own base stream folded with `seed`
     (distinct base streams per driver — no cross-driver collisions);
@@ -256,11 +258,11 @@ def train_reverse_KL_F(
         target:   Potential      negative log-density of the target (up to const)
         flow:     Flow           the normalizing flow to train, applied as F
                                  (source -> target)
-        n_batch:  int            samples drawn from the fixed set per Adam step
-        steps:    int            number of Adam optimization steps
-        lr:       float          Adam learning rate
-        mc_step:  float          Langevin rejuvenation step size
-        mc_iters: int            Langevin rejuvenation steps per batch
+        batch_size: int          samples drawn from the fixed set per Adam step
+        train_steps: int         number of Adam optimization steps
+        lr: float                Adam learning rate
+        mc_dt: float             Langevin rejuvenation step size
+        mc_steps: int            Langevin rejuvenation steps per batch
         mc_adjust: bool          False: unadjusted ULA; True: MALA — the
                                  Metropolis gate rejects proposals into steep
                                  walls (the reference guard for near-singular
@@ -275,7 +277,7 @@ def train_reverse_KL_F(
                                  exact-trace or non-native-direction training
     Output:
         flow: Flow          the trained flow
-        ess:  Array [steps] per-step batch ESS (before that step's update)
+        batch_ess_hist: Array [train_steps] per-step batch ESS (before that step's update)
     """
     key = jax.random.fold_in(jax.random.key(1), seed)  # driver-specific base stream
     N = x_valid.shape[0]
@@ -289,8 +291,8 @@ def train_reverse_KL_F(
         step_key = jax.random.fold_in(key, t)
         key_idx, key_mc = jax.random.split(step_key)
         key_trace = jax.random.fold_in(step_key, 101)
-        x = x_valid[jax.random.choice(key_idx, N, (n_batch,), replace=False)]
-        x = langevin(key_mc, x, source, step=mc_step, iters=mc_iters, adjust=mc_adjust)
+        x = x_valid[jax.random.choice(key_idx, N, (batch_size,), replace=False)]
+        x = langevin(key_mc, x, source, dt=mc_dt, steps=mc_steps, adjust=mc_adjust)
 
         def loss_fn(p):
             losses = reverse_KL_F(
@@ -308,23 +310,25 @@ def train_reverse_KL_F(
         )
         return (params, m, v, updates), ess
 
-    ts = jnp.arange(1, steps + 1)  # traced outer-step counter for per-step keys
-    (params, _, _, _), ess = lax.scan(body, (params, m0, v0, updates0), ts)
-    return eqx.combine(params, static), ess
+    ts = jnp.arange(1, train_steps + 1)  # traced outer-step counter for per-step keys
+    (params, _, _, _), batch_ess_hist = lax.scan(
+        body, (params, m0, v0, updates0), ts
+    )
+    return eqx.combine(params, static), batch_ess_hist
 
 
 @eqx.filter_jit
-def train_forward_KL_G(
+def _train_forward_KL_G_impl(
     x_valid: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
-    n_batch: int,
-    steps: int,
+    batch_size: int,
+    train_steps: int,
     lr: float,
     ladder: int,
-    mc_step: float,
-    mc_iters: int,
+    mc_dt: float,
+    mc_steps: int,
     mc_adjust: bool = True,
     monitor: Monitor | None = None,
     seed: int | Array = 0,
@@ -335,14 +339,14 @@ def train_forward_KL_G(
     """
     Single-stage forward KL training of a flow on a fixed source set,
     with the flow fixed as the inverse map G (target -> source): minimize
-    `forward_KL_G(y, source, flow).mean()` with Adam for `steps`
+    `forward_KL_G(y, source, flow).mean()` with Adam for `train_steps`
     iterations and return the trained flow with the per-step ESS history.
 
     The target samples y ~ mu_1 are manufactured internally: every Adam
-    iteration draws a fresh `n_batch`-sized subset of `x_valid` (without
+    iteration draws a fresh `batch_size`-sized subset of `x_valid` (without
     replacement) and runs annealed importance sampling through the
     CURRENT flow (`ladder` levels, Langevin rejuvenation at the target
-    with `mc_iters` steps of size `mc_step`). No gradient flows through
+    with `mc_steps` steps of size `mc_dt`). No gradient flows through
     the data generation; the flow is differentiated in its native G
     direction only (see `forward_KL_G`). Deterministic (no PRNG key): the
     per-step keys are derived internally from a fixed seed. The loop
@@ -362,12 +366,12 @@ def train_forward_KL_G(
         target:   Potential      negative log-density of the target (up to const)
         flow:     Flow           the normalizing flow to train, applied as G
                                  (target -> source)
-        n_batch:  int            samples drawn from the fixed set per Adam step
-        steps:    int            number of Adam optimization steps
-        lr:       float          Adam learning rate
-        ladder:   int            AIS levels per manufactured batch
-        mc_step:  float          Langevin rejuvenation step size
-        mc_iters: int            Langevin rejuvenation steps per level
+        batch_size: int          samples drawn from the fixed set per Adam step
+        train_steps: int         number of Adam optimization steps
+        lr: float                Adam learning rate
+        ladder: int              AIS levels per manufactured batch
+        mc_dt: float             Langevin rejuvenation step size
+        mc_steps: int            Langevin rejuvenation steps per level
         mc_adjust: bool          False: unadjusted ULA in the AIS
                                  rejuvenation; True: MALA (the Metropolis
                                  gate for near-singular targets)
@@ -392,7 +396,7 @@ def train_forward_KL_G(
                                  leaves the gradient untouched
     Output:
         flow: Flow          the trained flow
-        ess:  Array [steps] per-step batch ESS (before that step's update)
+        batch_ess_hist: Array [train_steps] per-step batch ESS (before that step's update)
     """
     if not (g_clip >= 0):
         raise ValueError(f"train_forward_KL_G: g_clip must be non-negative, got {g_clip!r}")
@@ -411,10 +415,10 @@ def train_forward_KL_G(
         key_idx, key_ais = jax.random.split(step_key)
         key_trace = jax.random.fold_in(step_key, 101)
         key_trace_ais = jax.random.fold_in(step_key, 102)
-        x = x_valid[jax.random.choice(key_idx, N, (n_batch,), replace=False)]
+        x = x_valid[jax.random.choice(key_idx, N, (batch_size,), replace=False)]
         y, proposal_log_weight = annealed_importance_sampling(
             key_ais, x, source, target, eqx.combine(params, static), "G",
-            ladder=ladder, step=mc_step, iters=mc_iters, adjust=mc_adjust,
+            ladder=ladder, mc_dt=mc_dt, mc_steps=mc_steps, adjust=mc_adjust,
             trace_key=key_trace_ais,
             return_initial_log_weights=True,
         )
@@ -441,23 +445,25 @@ def train_forward_KL_G(
         )
         return (params, m, v, updates), ess
 
-    ts = jnp.arange(1, steps + 1)  # traced outer-step counter for per-step keys
-    (params, _, _, _), ess = lax.scan(body, (params, m0, v0, updates0), ts)
-    return eqx.combine(params, static), ess
+    ts = jnp.arange(1, train_steps + 1)  # traced outer-step counter for per-step keys
+    (params, _, _, _), batch_ess_hist = lax.scan(
+        body, (params, m0, v0, updates0), ts
+    )
+    return eqx.combine(params, static), batch_ess_hist
 
 
 @eqx.filter_jit
-def train_forward_KLX_G(
+def _train_forward_KLX_G_impl(
     x_valid: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
-    n_batch: int,
-    steps: int,
+    batch_size: int,
+    train_steps: int,
     lr: float,
     ladder: int,
-    mc_step: float,
-    mc_iters: int,
+    mc_dt: float,
+    mc_steps: int,
     coeff_lambda: float = 1.0,
     mc_adjust: bool = True,
     monitor: Monitor | None = None,
@@ -470,7 +476,7 @@ def train_forward_KLX_G(
     Single-stage X-regularized forward KL training of a flow on a fixed
     source set, with the flow fixed as the inverse map G (target -> source):
     minimize `forward_KLX_G(y, source, target, flow, key, coeff_lambda).mean()`
-    with Adam for `steps` iterations and return the trained flow with the
+    with Adam for `train_steps` iterations and return the trained flow with the
     per-step ESS history.
 
     Identical to `train_forward_KL_G` except the objective adds the
@@ -482,10 +488,10 @@ def train_forward_KLX_G(
     and an element-wise difference (see `forward_KLX_G`).
 
     The target samples y ~ mu_1 are manufactured internally: every Adam
-    iteration draws a fresh `n_batch`-sized subset of `x_valid` (without
+    iteration draws a fresh `batch_size`-sized subset of `x_valid` (without
     replacement) and runs annealed importance sampling through the CURRENT
-    flow (`ladder` levels, Langevin rejuvenation at the target with `mc_iters`
-    steps of size `mc_step`). No gradient flows through the data generation;
+    flow (`ladder` levels, Langevin rejuvenation at the target with `mc_steps`
+    steps of size `mc_dt`). No gradient flows through the data generation;
     the flow is differentiated in its native G direction only. Deterministic:
     the per-step keys (batch draw, AIS, permutation) derive from this driver's
     own base stream folded with `seed`. The loop runs under a single
@@ -502,12 +508,12 @@ def train_forward_KLX_G(
         source:   Potential      negative log-density of the source (up to const)
         target:   Potential      negative log-density of the target (up to const)
         flow:     Flow           the normalizing flow to train, applied as G
-        n_batch:  int            samples drawn from the fixed set per Adam step
-        steps:    int            number of Adam optimization steps
-        lr:       float          Adam learning rate
-        ladder:   int            AIS levels per manufactured batch
-        mc_step:  float          Langevin rejuvenation step size
-        mc_iters: int            Langevin rejuvenation steps per level
+        batch_size: int          samples drawn from the fixed set per Adam step
+        train_steps: int         number of Adam optimization steps
+        lr: float                Adam learning rate
+        ladder: int              AIS levels per manufactured batch
+        mc_dt: float             Langevin rejuvenation step size
+        mc_steps: int            Langevin rejuvenation steps per level
         coeff_lambda: float      weight of the X functional term
         mc_adjust: bool          False: unadjusted ULA in the AIS
                                  rejuvenation; True: MALA (the Metropolis
@@ -528,7 +534,7 @@ def train_forward_KLX_G(
                                  (default inf: none)
     Output:
         flow: Flow          the trained flow
-        ess:  Array [steps] per-step batch ESS (before that step's update)
+        batch_ess_hist: Array [train_steps] per-step batch ESS (before that step's update)
     """
     if not (g_clip >= 0):
         raise ValueError(f"train_forward_KLX_G: g_clip must be non-negative, got {g_clip!r}")
@@ -547,14 +553,14 @@ def train_forward_KLX_G(
         key_idx, key_ais, key_perm = jax.random.split(step_key, 3)
         key_trace = jax.random.fold_in(step_key, 101)
         key_trace_ais = jax.random.fold_in(step_key, 102)
-        x = x_valid[jax.random.choice(key_idx, N, (n_batch,), replace=False)]
+        x = x_valid[jax.random.choice(key_idx, N, (batch_size,), replace=False)]
         y, proposal_log_weight = annealed_importance_sampling(
             key_ais, x, source, target, eqx.combine(params, static), "G",
-            ladder=ladder, step=mc_step, iters=mc_iters, adjust=mc_adjust,
+            ladder=ladder, mc_dt=mc_dt, mc_steps=mc_steps, adjust=mc_adjust,
             trace_key=key_trace_ais,
             return_initial_log_weights=True,
         )
-        perm = jax.random.permutation(key_perm, n_batch)
+        perm = jax.random.permutation(key_perm, batch_size)
         keep = _mask_keep(target, y, e_clip) if e_clip != float("inf") else None
 
         def loss_fn(p):
@@ -584,27 +590,29 @@ def train_forward_KLX_G(
         )
         return (params, m, v, updates), ess
 
-    ts = jnp.arange(1, steps + 1)  # traced outer-step counter for per-step keys
-    (params, _, _, _), ess = lax.scan(body, (params, m0, v0, updates0), ts)
-    return eqx.combine(params, static), ess
+    ts = jnp.arange(1, train_steps + 1)  # traced outer-step counter for per-step keys
+    (params, _, _, _), batch_ess_hist = lax.scan(
+        body, (params, m0, v0, updates0), ts
+    )
+    return eqx.combine(params, static), batch_ess_hist
 
 
 @eqx.filter_jit
-def train_forward_KLXX_G(
+def _train_forward_KLXX_G_impl(
     x_valid: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
-    n_pool: int,
-    n_batch: int,
-    steps: int,
+    pool_size: int,
+    batch_size: int,
+    train_steps: int,
     lr: float,
     ladder: int,
     melt: float,
-    opt_step: float,
-    opt_iters: int,
-    mc_step: float,
-    mc_iters: int,
+    opt_alpha: float,
+    opt_steps: int,
+    mc_dt: float,
+    mc_steps: int,
     coeff_lambda: float = 1.0,
     coeff_alpha: float = 0.5,
     coeff_beta: float = 0.5,
@@ -621,7 +629,7 @@ def train_forward_KLXX_G(
 
         KL + coeff_lambda * X_mu + X_{coeff_alpha hat_mu + coeff_beta bar_nu}
 
-    with Adam for `steps` iterations and return the trained flow with the
+    with Adam for `train_steps` iterations and return the trained flow with the
     per-step ESS history. Writing the per-sample log-ratio
     z = source(G(y)) - target(y) - log|det J_G(y)|, each Adam step computes
 
@@ -634,16 +642,16 @@ def train_forward_KLXX_G(
 
     The three sampling measures are supplied as follows. The mu batch is
     manufactured per step exactly as in `train_forward_KLX_G`: a fresh
-    `n_batch`-sized subset of `x_valid` pushed by `ladder`-level AIS through
-    the CURRENT flow. The wide-coverage measure hat_mu is an `n_pool`-sized
-    pool built ONCE per call by `quench_and_temper` on `n_pool` source
-    samples (melt scale `melt`, armijo L-BFGS quench `opt_step` x
-    `opt_iters`, Langevin temper `mc_step` x `mc_iters`); every step
-    resamples `n_batch` particles from the pool (with replacement) and
-    freshens them with `mc_iters` Langevin steps at the target. The frozen
+    `batch_size`-sized subset of `x_valid` pushed by `ladder`-level AIS through
+    the CURRENT flow. The wide-coverage measure hat_mu is a `pool_size`-sized
+    pool built ONCE per call by `quench_and_temper` on `pool_size` source
+    samples (melt scale `melt`, armijo L-BFGS quench `opt_alpha` x
+    `opt_steps`, Langevin temper `mc_dt` x `mc_steps`); every step
+    resamples `batch_size` particles from the pool (with replacement) and
+    freshens them with `mc_steps` Langevin steps at the target. The frozen
     pushforward bar_nu is free: the step's source subset pushed through the
     CURRENT flow outside the loss gradient, a stop-gradient copy. The
-    mixture batch draws `n_batch` particles from the hat/bar stack by
+    mixture batch draws `batch_size` particles from the hat/bar stack by
     multinomial resampling with weights coeff_alpha (hat half) and
     coeff_beta (bar half). No gradient flows through any data generation;
     the flow is differentiated in its native G direction only.
@@ -665,20 +673,20 @@ def train_forward_KLXX_G(
         source:   Potential      negative log-density of the source (up to const)
         target:   Potential      negative log-density of the target (up to const)
         flow:     Flow           the normalizing flow to train, applied as G
-        n_pool:   int            quench-and-temper pool size (hat_mu particles,
+        pool_size: int           quench-and-temper pool size (hat_mu particles,
                                  built once per call)
-        n_batch:  int            samples per Adam step (mu batch and mixture
+        batch_size: int          samples per Adam step (mu batch and mixture
                                  batch alike)
-        steps:    int            number of Adam optimization steps
-        lr:       float          Adam learning rate
-        ladder:   int            AIS levels per manufactured mu batch
-        melt:     float          quench-and-temper melt scale (std of the
+        train_steps: int         number of Adam optimization steps
+        lr: float                Adam learning rate
+        ladder: int              AIS levels per manufactured mu batch
+        melt: float              quench-and-temper melt scale (std of the
                                  Gaussian scatter)
-        opt_step: float          L-BFGS trial alpha of the quench (armijo)
-        opt_iters: int           L-BFGS iterations of the quench
-        mc_step:  float          Langevin step size (AIS rejuvenation, the
+        opt_alpha: float         L-BFGS trial alpha of the quench (armijo)
+        opt_steps: int           L-BFGS iterations of the quench
+        mc_dt: float             Langevin step size (AIS rejuvenation, the
                                  temper, AND the per-step hat_mu freshening)
-        mc_iters: int            Langevin steps (same uses)
+        mc_steps: int            Langevin steps (same uses)
         coeff_lambda: float      weight of the X_mu term
         coeff_alpha: float       hat_mu weight of the mixture term
         coeff_beta: float        bar_nu weight of the mixture term
@@ -702,7 +710,7 @@ def train_forward_KLXX_G(
                                  (default inf: none)
     Output:
         flow: Flow          the trained flow
-        ess:  Array [steps] per-step batch ESS (before that step's update)
+        batch_ess_hist: Array [train_steps] per-step batch ESS (before that step's update)
     """
     if not (g_clip >= 0):
         raise ValueError(f"train_forward_KLXX_G: g_clip must be non-negative, got {g_clip!r}")
@@ -725,13 +733,13 @@ def train_forward_KLXX_G(
 
     # hat_mu: the quench-and-temper wide-coverage pool, built once per call
     key_qt_idx, key_qt = jax.random.split(jax.random.fold_in(key, 0))
-    pool = x_valid[jax.random.randint(key_qt_idx, (n_pool,), 0, N)]
-    hat_pool = quench_and_temper(key_qt, pool, target, melt, opt_step, opt_iters,
-                                 mc_step, mc_iters, mc_adjust)
+    pool = x_valid[jax.random.randint(key_qt_idx, (pool_size,), 0, N)]
+    hat_pool = quench_and_temper(key_qt, pool, target, melt, opt_alpha, opt_steps,
+                                 mc_dt, mc_steps, mc_adjust)
 
-    # mixture weights of the hat/bar stack (constant across steps)
-    w_mix = jnp.concatenate([jnp.full(n_batch, coeff_alpha),
-                             jnp.full(n_batch, coeff_beta)])
+    # mixture weights of the hat/bar stack (constant across training steps)
+    w_mix = jnp.concatenate([jnp.full(batch_size, coeff_alpha),
+                             jnp.full(batch_size, coeff_beta)])
 
     def body(carry, t):
         params, m, v, updates = carry
@@ -742,23 +750,23 @@ def train_forward_KLXX_G(
         key_trace_mix = jax.random.fold_in(step_key, 102)
         key_trace_ais = jax.random.fold_in(step_key, 103)
         flow_now = eqx.combine(params, static)
-        x = x_valid[jax.random.choice(key_idx, N, (n_batch,), replace=False)]
+        x = x_valid[jax.random.choice(key_idx, N, (batch_size,), replace=False)]
         y, proposal_log_weight = annealed_importance_sampling(
             key_ais, x, source, target, flow_now, "G",
-            ladder=ladder, step=mc_step, iters=mc_iters, adjust=mc_adjust,
+            ladder=ladder, mc_dt=mc_dt, mc_steps=mc_steps, adjust=mc_adjust,
             trace_key=key_trace_ais,
             return_initial_log_weights=True,
         )
-        perm = jax.random.permutation(key_perm, n_batch)
+        perm = jax.random.permutation(key_perm, batch_size)
         # mixture batch: freshened hat_mu draw + detached pushforward bar_nu,
         # resampled by the (coeff_alpha, coeff_beta) weights
-        y_hat = hat_pool[jax.random.randint(key_hat, (n_batch,), 0, n_pool)]
-        y_hat = langevin(key_hat_mc, y_hat, target, step=mc_step, iters=mc_iters,
+        y_hat = hat_pool[jax.random.randint(key_hat, (batch_size,), 0, pool_size)]
+        y_hat = langevin(key_hat_mc, y_hat, target, dt=mc_dt, steps=mc_steps,
                          adjust=mc_adjust)
         y_bar = flow_now.inv(x)          # stop-gradient copy (outside the loss grad)
         y_mix = resample(key_mix, jnp.concatenate([y_hat, y_bar], axis=0),
-                         w_mix, N=n_batch)
-        perm2 = jax.random.permutation(key_perm2, n_batch)
+                         w_mix, N=batch_size)
+        perm2 = jax.random.permutation(key_perm2, batch_size)
         screen = e_clip != float("inf")
         keep = _mask_keep(target, y, e_clip) if screen else None
         keep_mix = _mask_keep(target, y_mix, e_clip) if screen else None
@@ -799,6 +807,143 @@ def train_forward_KLXX_G(
         )
         return (params, m, v, updates), ess
 
-    ts = jnp.arange(1, steps + 1)  # traced outer-step counter for per-step keys
-    (params, _, _, _), ess = lax.scan(body, (params, m0, v0, updates0), ts)
-    return eqx.combine(params, static), ess
+    ts = jnp.arange(1, train_steps + 1)  # traced outer-step counter for per-step keys
+    (params, _, _, _), batch_ess_hist = lax.scan(
+        body, (params, m0, v0, updates0), ts
+    )
+    return eqx.combine(params, static), batch_ess_hist
+
+
+@legacy_keywords(
+    n_batch="batch_size", steps="train_steps",
+    mc_step="mc_dt", mc_iters="mc_steps",
+)
+def train_reverse_KL_F(
+    x_valid: Array,
+    source: Potential,
+    target: Potential,
+    flow: Flow,
+    batch_size: int,
+    train_steps: int,
+    lr: float,
+    mc_dt: float,
+    mc_steps: int,
+    mc_adjust: bool = True,
+    monitor: Monitor | None = None,
+    seed: int | Array = 0,
+    checkpoint: bool = False,
+) -> tuple[Flow, Array]:
+    """Train reverse KL; returns ``(flow, batch_ess_hist)``."""
+    return _train_reverse_KL_F_impl(
+        x_valid, source, target, flow, batch_size, train_steps, lr, mc_dt,
+        mc_steps, mc_adjust, monitor, seed, checkpoint,
+    )
+
+
+@legacy_keywords(
+    n_batch="batch_size", steps="train_steps",
+    mc_step="mc_dt", mc_iters="mc_steps",
+)
+def train_forward_KL_G(
+    x_valid: Array,
+    source: Potential,
+    target: Potential,
+    flow: Flow,
+    batch_size: int,
+    train_steps: int,
+    lr: float,
+    ladder: int,
+    mc_dt: float,
+    mc_steps: int,
+    mc_adjust: bool = True,
+    monitor: Monitor | None = None,
+    seed: int | Array = 0,
+    checkpoint: bool = False,
+    e_clip: float = float("inf"),
+    g_clip: float = float("inf"),
+) -> tuple[Flow, Array]:
+    """Train forward KL; returns ``(flow, batch_ess_hist)``."""
+    return _train_forward_KL_G_impl(
+        x_valid, source, target, flow, batch_size, train_steps, lr, ladder,
+        mc_dt, mc_steps, mc_adjust, monitor, seed, checkpoint, e_clip, g_clip,
+    )
+
+
+@legacy_keywords(
+    n_batch="batch_size", steps="train_steps",
+    mc_step="mc_dt", mc_iters="mc_steps",
+)
+def train_forward_KLX_G(
+    x_valid: Array,
+    source: Potential,
+    target: Potential,
+    flow: Flow,
+    batch_size: int,
+    train_steps: int,
+    lr: float,
+    ladder: int,
+    mc_dt: float,
+    mc_steps: int,
+    coeff_lambda: float = 1.0,
+    mc_adjust: bool = True,
+    monitor: Monitor | None = None,
+    seed: int | Array = 0,
+    checkpoint: bool = False,
+    e_clip: float = float("inf"),
+    g_clip: float = float("inf"),
+) -> tuple[Flow, Array]:
+    """Train forward KL+X; returns ``(flow, batch_ess_hist)``."""
+    return _train_forward_KLX_G_impl(
+        x_valid, source, target, flow, batch_size, train_steps, lr, ladder,
+        mc_dt, mc_steps, coeff_lambda, mc_adjust, monitor, seed, checkpoint,
+        e_clip, g_clip,
+    )
+
+
+@legacy_keywords(
+    n_pool="pool_size", n_batch="batch_size", steps="train_steps",
+    opt_step="opt_alpha", opt_iters="opt_steps",
+    mc_step="mc_dt", mc_iters="mc_steps",
+)
+def train_forward_KLXX_G(
+    x_valid: Array,
+    source: Potential,
+    target: Potential,
+    flow: Flow,
+    pool_size: int,
+    batch_size: int,
+    train_steps: int,
+    lr: float,
+    ladder: int,
+    melt: float,
+    opt_alpha: float,
+    opt_steps: int,
+    mc_dt: float,
+    mc_steps: int,
+    coeff_lambda: float = 1.0,
+    coeff_alpha: float = 0.5,
+    coeff_beta: float = 0.5,
+    mc_adjust: bool = True,
+    monitor: Monitor | None = None,
+    seed: int | Array = 0,
+    checkpoint: bool = False,
+    e_clip: float = float("inf"),
+    g_clip: float = float("inf"),
+) -> tuple[Flow, Array]:
+    """Train forward KL+X+X; returns ``(flow, batch_ess_hist)``."""
+    return _train_forward_KLXX_G_impl(
+        x_valid, source, target, flow, pool_size, batch_size, train_steps, lr,
+        ladder, melt, opt_alpha, opt_steps, mc_dt, mc_steps, coeff_lambda,
+        coeff_alpha, coeff_beta, mc_adjust, monitor, seed, checkpoint, e_clip,
+        g_clip,
+    )
+
+
+for _public, _implementation in (
+    (train_reverse_KL_F, _train_reverse_KL_F_impl),
+    (train_forward_KL_G, _train_forward_KL_G_impl),
+    (train_forward_KLX_G, _train_forward_KLX_G_impl),
+    (train_forward_KLXX_G, _train_forward_KLXX_G_impl),
+):
+    inherit_implementation_doc(_public, _implementation)
+del _public, _implementation

@@ -27,6 +27,7 @@ import jax.numpy as jnp
 from jax import Array, lax
 
 from ..potential import Potential
+from ._compat import legacy_keywords
 
 
 __all__ = [
@@ -100,10 +101,11 @@ def lbfgs_init(x: Array, potential: Potential, memory: int = 6) -> LBFGS_State:
     )
 
 
+@legacy_keywords(step="alpha")
 def lbfgs_step(
     state: LBFGS_State,
     potential: Potential,
-    step: float = 1.0,
+    alpha: float = 1.0,
     armijo: bool = False,
 ) -> LBFGS_State:
     """
@@ -115,12 +117,12 @@ def lbfgs_step(
          direction d_k = -H_k^{-1} g_k, where H_0^k = gamma_k * I and
          gamma_k = (s_last . y_last) / ||y_last||^2 (= 1 on the fresh
          state).
-      2. Update x. With `armijo=False`, a fixed step `x - step * r`.
+      2. Update x. With `armijo=False`, a fixed step `x - alpha * r`.
          With `armijo=True`, per-particle masked Armijo backtracking:
-         start at alpha = step * state.step_scale, halve until
+         start at trial_alpha = alpha * state.step_scale, halve until
             U(x + alpha * d) <= U(x) + C1 * alpha * (d . g),  C1 = 1e-4,
          all particles running K_MAX = 7 trials in lockstep. The last
-         trial evaluates step / 64; particles that never satisfy Armijo
+         trial evaluates alpha / 64; particles that never satisfy Armijo
          stay at their current state and carry the next untested smaller
          alpha into the following iteration. Costs one batched grad +
          K_MAX batched energy evaluations.
@@ -130,7 +132,7 @@ def lbfgs_step(
     Input:
         state:     LBFGS_State   from `lbfgs_init` or a previous step
         potential: Potential     target potential U
-        step:      float         step multiplier / initial Armijo trial
+        alpha:     float         direction multiplier / initial Armijo trial
         armijo:    bool          masked backtracking line search
     Output:
         state: LBFGS_State   after one update
@@ -164,15 +166,15 @@ def lbfgs_step(
         # run K_MAX trials in lockstep.
         d = -r  # search direction
         dg = (d * g).sum(axis=-1)  # [N], < 0 for a descent direction
-        alpha = jnp.asarray(step, dtype=x.dtype) * state.step_scale
+        trial_alpha = jnp.asarray(alpha, dtype=x.dtype) * state.step_scale
         done = jnp.zeros(x.shape[0], dtype=bool)
         for _ in range(_K_MAX):
-            x_trial = x + alpha[:, None] * d
+            x_trial = x + trial_alpha[:, None] * d
             U_trial = potential(x_trial)
             finite = jnp.isfinite(U_trial) & jnp.all(jnp.isfinite(x_trial), axis=-1)
-            ok = finite & (U_trial <= state.U + _C1 * alpha * dg)  # [N] bool
+            ok = finite & (U_trial <= state.U + _C1 * trial_alpha * dg)  # [N] bool
             done = done | ok
-            alpha = jnp.where(done, alpha, alpha * _SHRINK)
+            trial_alpha = jnp.where(done, trial_alpha, trial_alpha * _SHRINK)
         # Accepted particles keep their alpha, so the final trial repeats
         # their accepted state. Never accept a failed/uphill fallback: a row
         # that exhausts the bounded search remains self-consistently at x.
@@ -184,7 +186,7 @@ def lbfgs_step(
             state.step_scale * (_SHRINK ** _K_MAX),
         )
     else:
-        x_new, U_new = x - step * r, state.U
+        x_new, U_new = x - alpha * r, state.U
         step_scale_new = jnp.ones_like(state.step_scale)
 
     g_new = potential.grad(x_new)
@@ -205,14 +207,15 @@ def lbfgs_step(
     )
 
 
+@legacy_keywords(step="alpha", iters="steps", chunk="chunks")
 def lbfgs(
     samples: Array,
     potential: Potential,
-    step: float = 1.0,
-    iters: int = 100,
+    alpha: float = 1.0,
+    steps: int = 100,
     memory: int = 6,
     armijo: bool = False,
-    chunk: int = 1,
+    chunks: int = 1,
 ) -> Array:
     """
     Batched L-BFGS for mode-finding / MAP refinement on the target
@@ -225,22 +228,22 @@ def lbfgs(
     L-BFGS builds a rank-`memory` approximation of the inverse Hessian
     from the last `memory` gradient differences, giving superlinear
     convergence on smooth potentials — contrast with Adam-style sign
-    descent, which is O(init_err / step) just to reach the basin.
+    descent, which is O(init_err / alpha) just to reach the basin.
 
     Exactly a `lax.scan` over `lbfgs_step` started from
     `lbfgs_init(x, potential, memory)` — compose those two directly for
-    custom loops (per-iteration step schedules, convergence monitoring).
+    custom loops (per-iteration alpha schedules, convergence monitoring).
 
     Input:
         samples:   Array [N, d]   initial particles
         potential: Potential      target potential U
-        step:      float          multiplier on the L-BFGS direction.
-                                  With armijo=False: fixed per-iter step.
+        alpha:     float          multiplier on the L-BFGS direction.
+                                  With armijo=False: fixed per-iteration alpha.
                                   With armijo=True: initial trial alpha
                                   for the backtracking line search.
                                   1.0 ~ pure Newton step; reduce
                                   (e.g. 0.5, 0.1) for stiff problems.
-        iters:     int            number of L-BFGS iterations
+        steps:     int            number of L-BFGS iterations
         memory:    int            curvature pairs (s, y) kept per
                                   particle (Nocedal's `m`). Typical 3-20;
                                   larger = better Hessian approximation
@@ -255,23 +258,23 @@ def lbfgs(
                                   when the line-search-free update is
                                   unstable (first-iter blow-up, very
                                   non-convex landscapes).
-        chunk:     int            split `samples` along dim 0 into this
+        chunks:    int            split `samples` along dim 0 into this
                                   many chunks and run sequentially.
                                   Reduces peak memory at the cost of wall
-                                  time; equivalent to chunk=1 (each
+                                  time; equivalent to chunks=1 (each
                                   particle's history is independent, and
                                   there is no noise).
     Output:
-        samples: Array [N, d]   particles after `iters` L-BFGS updates
+        samples: Array [N, d]   particles after `steps` L-BFGS updates
     """
     out = []
-    for x in jnp.array_split(samples, chunk, axis=0):
+    for x in jnp.array_split(samples, chunks, axis=0):
         state = lbfgs_init(x, potential, memory=memory)
 
         def body(s, _):
-            return lbfgs_step(s, potential, step=step, armijo=armijo), None
+            return lbfgs_step(s, potential, alpha=alpha, armijo=armijo), None
 
-        state, _ = lax.scan(body, state, None, length=iters)
+        state, _ = lax.scan(body, state, None, length=steps)
         out.append(state.x)
     return jnp.concatenate(out, axis=0)
 
@@ -317,10 +320,11 @@ def adamw_init(x: Array) -> AdamW_State:
     )
 
 
+@legacy_keywords(step="lr")
 def adamw_step(
     state: AdamW_State,
     potential: Potential,
-    step: float = 1e-2,
+    lr: float = 1e-2,
     beta1: float = 0.9,
     beta2: float = 0.999,
     eps: float = 1e-8,
@@ -331,7 +335,7 @@ def adamw_step(
 
         m <- beta1 * m + (1 - beta1) * grad U(x)
         v <- beta2 * v + (1 - beta2) * grad U(x)^2
-        x <- x - step * ( m_hat / (sqrt(v_hat) + eps) + weight_decay * x ),
+        x <- x - lr * ( m_hat / (sqrt(v_hat) + eps) + weight_decay * x ),
 
     with the standard bias-corrected m_hat / v_hat (Loshchilov & Hutter,
     2019 — the weight decay is decoupled from the gradient).
@@ -339,7 +343,7 @@ def adamw_step(
     Input:
         state:        AdamW_State   from `adamw_init` or a previous step
         potential:    Potential     target potential U
-        step:         float         learning rate
+        lr:           float         learning rate
         beta1:        float         first-moment decay
         beta2:        float         second-moment decay
         eps:          float         denominator floor
@@ -357,20 +361,21 @@ def adamw_step(
     v = beta2 * state.v + (1 - beta2) * g**2
     m_hat = m / (1 - beta1 ** k.astype(state.x.dtype))
     v_hat = v / (1 - beta2 ** k.astype(state.x.dtype))
-    x = state.x - step * (m_hat / (jnp.sqrt(v_hat) + eps) + weight_decay * state.x)
+    x = state.x - lr * (m_hat / (jnp.sqrt(v_hat) + eps) + weight_decay * state.x)
     return AdamW_State(x=x, m=m, v=v, k=k)
 
 
+@legacy_keywords(step="lr", iters="steps", chunk="chunks")
 def adamw(
     samples: Array,
     potential: Potential,
-    step: float = 1e-2,
-    iters: int = 100,
+    lr: float = 1e-2,
+    steps: int = 100,
     beta1: float = 0.9,
     beta2: float = 0.999,
     eps: float = 1e-8,
     weight_decay: float = 0.0,
-    chunk: int = 1,
+    chunks: int = 1,
 ) -> Array:
     """
     Batched AdamW descent on the target exp(-U(x)) — a first-order
@@ -379,9 +384,9 @@ def adamw(
 
     Versus `lbfgs`: one gradient call per iteration and sign-descent-like
     robustness on rough or noisy-curvature landscapes, but only linear
-    convergence — expect O(init_err / step) iterations to reach the
-    basin, and an O(step)-scale residual oscillation around the mode
-    (shrink `step` or switch to `lbfgs` for the final refinement; the
+    convergence — expect O(init_err / lr) iterations to reach the
+    basin, and an O(lr)-scale residual oscillation around the mode
+    (shrink `lr` or switch to `lbfgs` for the final refinement; the
     quench in a quench-and-temper pipeline is a natural user).
 
     Exactly a `lax.scan` over `adamw_step` started from
@@ -391,30 +396,30 @@ def adamw(
     Input:
         samples:      Array [N, d]   initial particles
         potential:    Potential      target potential U
-        step:         float          learning rate
-        iters:        int            number of AdamW iterations
+        lr:           float          learning rate
+        steps:        int            number of AdamW iterations
         beta1:        float          first-moment decay (default 0.9)
         beta2:        float          second-moment decay (default 0.999)
         eps:          float          denominator floor (default 1e-8)
         weight_decay: float          decoupled L2 shrinkage; nonzero
                                      values bias the stationary points
                                      away from the modes of U (default 0.0)
-        chunk:        int            split `samples` along dim 0 into this
+        chunks:       int            split `samples` along dim 0 into this
                                      many chunks and run sequentially
-                                     (memory bound; equivalent to chunk=1)
+                                     (memory bound; equivalent to chunks=1)
     Output:
-        samples: Array [N, d]   particles after `iters` AdamW updates
+        samples: Array [N, d]   particles after `steps` AdamW updates
     """
     out = []
-    for x in jnp.array_split(samples, chunk, axis=0):
+    for x in jnp.array_split(samples, chunks, axis=0):
         state = adamw_init(x)
 
         def body(s, _):
             return adamw_step(
-                s, potential, step=step, beta1=beta1, beta2=beta2,
+                s, potential, lr=lr, beta1=beta1, beta2=beta2,
                 eps=eps, weight_decay=weight_decay,
             ), None
 
-        state, _ = lax.scan(body, state, None, length=iters)
+        state, _ = lax.scan(body, state, None, length=steps)
         out.append(state.x)
     return jnp.concatenate(out, axis=0)

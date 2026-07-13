@@ -19,6 +19,7 @@ import jax
 from jax import Array
 
 from ..potential import Potential
+from ._compat import legacy_keywords
 from .optimization import lbfgs
 from .rejuvenation import langevin
 
@@ -29,17 +30,21 @@ __all__ = [
 ]
 
 
+@legacy_keywords(
+    opt_step="opt_alpha", opt_iters="opt_steps",
+    mc_step="mc_dt", mc_iters="mc_steps", chunk="chunks",
+)
 def quench_and_temper(
     key: Array,
     samples: Array,
     target: Potential,
     melt: float,
-    opt_step: float = 1.0,
-    opt_iters: int = 100,
-    mc_step: float = 1e-3,
-    mc_iters: int = 100,
+    opt_alpha: float = 1.0,
+    opt_steps: int = 100,
+    mc_dt: float = 1e-3,
+    mc_steps: int = 100,
     mc_adjust: bool = True,
-    chunk: int = 1,
+    chunks: int = 1,
 ) -> Array:
     """
     Quench and temper targeting exp(-U(x)): melt -> quench -> temper.
@@ -63,14 +68,14 @@ def quench_and_temper(
         melt:      float          melt scale — std of the Gaussian scatter;
                                   large enough that the cloud reaches every
                                   basin of interest
-        opt_step:  float          L-BFGS initial trial alpha (armijo
+        opt_alpha: float          L-BFGS initial trial alpha (armijo
                                   backtracking line search)
-        opt_iters: int            L-BFGS iterations of the quench
-        mc_step:   float          Langevin step size of the temper
-        mc_iters:  int            Langevin steps of the temper
+        opt_steps: int            L-BFGS iterations of the quench
+        mc_dt:     float          Langevin step size of the temper
+        mc_steps:  int            Langevin steps of the temper
         mc_adjust: bool           if True, temper with MALA (unbiased);
                                   if False, ULA
-        chunk:     int            split the batch into this many chunks in
+        chunks:    int            split the batch into this many chunks in
                                   the quench and the temper (bounds peak
                                   memory; statistically equivalent)
     Output:
@@ -78,9 +83,13 @@ def quench_and_temper(
     """
     key_melt, key_mc = jax.random.split(key)
     x = samples + melt * jax.random.normal(key_melt, samples.shape, dtype=samples.dtype)
-    x = lbfgs(x, target, step=opt_step, iters=opt_iters, armijo=True, chunk=chunk)
-    return langevin(key_mc, x, target, step=mc_step, iters=mc_iters,
-                    adjust=mc_adjust, chunk=chunk)
+    x = lbfgs(
+        x, target, alpha=opt_alpha, steps=opt_steps, armijo=True, chunks=chunks
+    )
+    return langevin(
+        key_mc, x, target, dt=mc_dt, steps=mc_steps,
+        adjust=mc_adjust, chunks=chunks,
+    )
 
 
 # alias: the short name of the quench-and-temper construction

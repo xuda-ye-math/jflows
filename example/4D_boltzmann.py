@@ -69,16 +69,16 @@ HIDDEN_FEATURES = (64, 64)   # hidden widths of each conditioner MLP
 
 # training parameters
 N_VALID: int = 120000   # the fixed source set (training pool + validation ESS)
-N_POOL: int = 24000    # selection-pool size of the tau_smc SMC gate
-N_BATCH: int = 2000    # batch drawn from the fixed set per Adam step
-STEPS: int = 500       # Adam steps per stage attempt (one compiled call)
+POOL_SIZE: int = 24000    # selection-pool size of the tau_smc SMC gate
+BATCH_SIZE: int = 2000    # batch drawn from the fixed set per Adam step
+TRAIN_STEPS: int = 500       # Adam steps per stage attempt (one compiled call)
 LR: float = 1e-4       # Adam learning rate
 MONITOR_EVERY: int = 20  # print loss + proposal ESS every MONITOR_EVERY steps
 
 # Langevin rejuvenation (training batches + the per-stage particle refresh)
 LADDER: int = 1        # SMC levels of the tau_smc selection gate
-MC_STEP: float = 1e-3  # Langevin rejuvenation step size
-MC_ITERS: int = 100    # Langevin rejuvenation steps (MALA default: rejects Coulomb-wall proposals)
+MC_DT: float = 1e-3  # Langevin rejuvenation step size
+MC_STEPS: int = 100    # Langevin rejuvenation steps (MALA default: rejects Coulomb-wall proposals)
 
 # adaptive ladder (bg_param of boltzmann_reverse_KL_F)
 BG_PARAM = {
@@ -131,8 +131,8 @@ def log(msg: str) -> None:
 def main() -> None:
     open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START 4D_boltzmann | jax {jax.__version__} | "
-        f"backend {jax.default_backend()} | N_VALID={N_VALID} N_POOL={N_POOL} "
-        f"N_BATCH={N_BATCH} STEPS={STEPS} LR={LR} MC={MC_STEP}x{MC_ITERS} bg={BG_PARAM}")
+        f"backend {jax.default_backend()} | N_VALID={N_VALID} POOL_SIZE={POOL_SIZE} "
+        f"BATCH_SIZE={BATCH_SIZE} TRAIN_STEPS={TRAIN_STEPS} LR={LR} MC={MC_DT}x{MC_STEPS} bg={BG_PARAM}")
     x_valid = u0.samples(jax.random.key(2), N_VALID)  # the fixed N_VALID source set
 
     def new_flow(key):
@@ -148,15 +148,15 @@ def main() -> None:
         if name == "reverse KL":
             y, stages = boltzmann_reverse_KL_F(
                 x_valid, u0, u1, new_flow(key_f),
-                n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=LADDER,
-                mc_step=MC_STEP, mc_iters=MC_ITERS,
+                pool_size=POOL_SIZE, batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=LADDER,
+                mc_dt=MC_DT, mc_steps=MC_STEPS,
                 monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log), bg_param=BG_PARAM,
             )
         else:
             y, stages = boltzmann_forward_KL_G(
                 x_valid, u0, u1, new_flow(key_f),
-                n_pool=N_POOL, n_batch=N_BATCH, steps=STEPS, lr=LR, ladder=LADDER,
-                mc_step=MC_STEP, mc_iters=MC_ITERS,
+                pool_size=POOL_SIZE, batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=LADDER,
+                mc_dt=MC_DT, mc_steps=MC_STEPS,
                 monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log), bg_param=BG_PARAM,
             )
         ts = [s["t"] for s in stages]

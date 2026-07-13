@@ -1,7 +1,7 @@
 """Multi-well (8-mode) reverse-KL benchmark: CNF vs OTFlow across dimension.
 
 Both continuous flows are trained by the SAME objective — plain reverse KL
-through `train_reverse_KL_F` (no rejuvenation, `MC_ITERS = 0`) — against the
+through `train_reverse_KL_F` (no rejuvenation, `MC_STEPS = 0`) — against the
 same target, so the comparison isolates the one variable that differs:
 CNF's free-form MLP velocity with an O(d) augmented-Jacobian trace vs
 OTFlow's potential-gradient velocity with a closed-form trace. Each cell
@@ -52,12 +52,12 @@ RANK: int = 10         # OTFlow low-rank quadratic (clamped to d + 1 per cell)
 
 # training parameters (plain reverse KL)
 N_VALID: int = 40000   # fixed source pool per dimension (subsampled per Adam step)
-N_BATCH: int = 512     # source samples per Adam step
-STEPS: int = 1000      # Adam steps per cell (one compiled call)
+BATCH_SIZE: int = 512     # source samples per Adam step
+TRAIN_STEPS: int = 1000      # Adam steps per cell (one compiled call)
 LR: float = 2e-3       # Adam learning rate
 MONITOR_EVERY: int = 100  # print loss + proposal ESS every MONITOR_EVERY steps
-MC_STEP: float = 1e-3  # Langevin step size (unused: MC_ITERS = 0)
-MC_ITERS: int = 0      # 0 -> no Langevin rejuvenation (plain reverse KL)
+MC_DT: float = 1e-3  # Langevin step size (unused: MC_STEPS = 0)
+MC_STEPS: int = 0      # 0 -> no Langevin rejuvenation (plain reverse KL)
 CHECKPOINT: bool = True  # rematerialize the CNF exact-trace forward pass in the backward
 CHUNK: int = 4         # split the full-set ESS evaluation to bound peak memory
 
@@ -118,8 +118,8 @@ def log(msg: str) -> None:
 def main() -> None:
     open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START CNF_vs_OTFlow | jax {jax.__version__} | backend {jax.default_backend()} | "
-        f"dims={DIMS} NT={NT} hidden={HIDDEN} layer={LAYER} steps={STEPS} "
-        f"batch={N_BATCH} lr={LR} N_VALID={N_VALID} N_ESS={N_ESS} "
+        f"dims={DIMS} NT={NT} hidden={HIDDEN} layer={LAYER} steps={TRAIN_STEPS} "
+        f"batch={BATCH_SIZE} lr={LR} N_VALID={N_VALID} N_ESS={N_ESS} "
         f"well(n={N_WELL}, sep={WELL_SEP}, barrier={WELL_BARRIER})")
 
     results = {"CNF": {}, "OTFlow": {}}
@@ -137,13 +137,13 @@ def main() -> None:
             t0 = time.perf_counter()
             flow, _ = train_reverse_KL_F(
                 x_valid, u0, u1, flow,
-                n_batch=N_BATCH, steps=STEPS, lr=LR,
-                mc_step=MC_STEP, mc_iters=MC_ITERS, checkpoint=CHECKPOINT,
+                batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR,
+                mc_dt=MC_DT, mc_steps=MC_STEPS, checkpoint=CHECKPOINT,
                 monitor=Monitor(MONITOR_EVERY, f"[d={d:>2} {name:<6}] ", log),
             )
             flow = jax.block_until_ready(flow)   # real wall time: wait for the device
             secs = time.perf_counter() - t0
-            log_w = importance_weights_log(x_ess, u0, u1, flow, type="F", chunk=CHUNK)
+            log_w = importance_weights_log(x_ess, u0, u1, flow, type="F", chunks=CHUNK)
             ess = float(compute_ESS_log(log_w))
             results[name][d] = ess
             timings[name][d] = secs

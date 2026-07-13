@@ -59,15 +59,15 @@ HIDDEN_FEATURES = (128, 128)  # hidden widths of each conditioner MLP
 
 # training parameters
 N_VALID: int = 40000   # the fixed source set (training pool + final ESS evaluation)
-N_BATCH: int = 2000    # batch drawn from the fixed set per Adam step
-STEPS: int = 200       # Adam steps (one compiled call)
+BATCH_SIZE: int = 2000    # batch drawn from the fixed set per Adam step
+TRAIN_STEPS: int = 200       # Adam steps (one compiled call)
 LR: float = 1e-3       # Adam learning rate
 MONITOR_EVERY: int = 20  # print loss + proposal ESS every MONITOR_EVERY steps
 
 # Langevin rejuvenation (training batches + the post-resample refresh)
 LADDER: int = 1        # AIS levels of the forward KL data manufacturing
-MC_STEP: float = 1e-3  # Langevin step size
-MC_ITERS: int = 100    # Langevin steps
+MC_DT: float = 1e-3  # Langevin step size
+MC_STEPS: int = 100    # Langevin steps
 
 # figure
 N_PLOT: int = 10000    # subsample for a less crowded 3D scatter
@@ -114,8 +114,8 @@ def log(msg: str) -> None:
 def main() -> None:
     open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START 3D_periodic | jax {jax.__version__} | backend {jax.default_backend()} | "
-        f"N_VALID={N_VALID} N_BATCH={N_BATCH} STEPS={STEPS} LR={LR} "
-        f"MC={MC_STEP}x{MC_ITERS} kappa={KAPPA}")
+        f"N_VALID={N_VALID} BATCH_SIZE={BATCH_SIZE} TRAIN_STEPS={TRAIN_STEPS} LR={LR} "
+        f"MC={MC_DT}x{MC_STEPS} kappa={KAPPA}")
     x_valid = u0.samples(jax.random.key(2), N_VALID)  # the fixed N_VALID source set
 
     results = {}
@@ -123,26 +123,26 @@ def main() -> None:
         log(f"[{name}] training (packed single stage) ...")
         if name == "reverse KL":
             flow, hist = train_reverse_KL_F(x_valid, u0, u1, new_flow(jax.random.key(0)),
-                                            n_batch=N_BATCH, steps=STEPS, lr=LR,
-                                          mc_step=MC_STEP, mc_iters=MC_ITERS,
+                                            batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR,
+                                          mc_dt=MC_DT, mc_steps=MC_STEPS,
                                           monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log))
             tp, y = "F", flow(x_valid)                # pushforward F(x)
         else:
             flow, hist = train_forward_KL_G(x_valid, u0, u1, new_flow(jax.random.key(1)),
-                                            n_batch=N_BATCH, steps=STEPS, lr=LR,
-                                          ladder=LADDER, mc_step=MC_STEP, mc_iters=MC_ITERS,
+                                            batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR,
+                                          ladder=LADDER, mc_dt=MC_DT, mc_steps=MC_STEPS,
                                           monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log))
             tp, y = "G", flow.inv(x_valid)            # G's inverse pushes source forward
-        log(f"[{name}] {STEPS} steps done   proposal ESS "
-            f"{float(hist[0]):.3f} -> {float(hist[STEPS // 2]):.3f} -> {float(hist[-1]):.3f}")
+        log(f"[{name}] {TRAIN_STEPS} steps done   proposal ESS "
+            f"{float(hist[0]):.3f} -> {float(hist[TRAIN_STEPS // 2]):.3f} -> {float(hist[-1]):.3f}")
 
         # reweighting pipeline: importance weights -> ESS -> resample -> MALA
-        log_w = importance_weights_log(x_valid, u0, u1, flow, type=tp, chunk=2)
+        log_w = importance_weights_log(x_valid, u0, u1, flow, type=tp, chunks=2)
         ess = float(compute_ESS_log(log_w))
         log(f"[{name}] final ESS = {ess:.4f}   (N_VALID = {N_VALID})")
         key_res, key_mc = jax.random.split(jax.random.key(10 + row))
         y = resample(key_res, y, jnp.exp(log_w - log_w.max()))
-        y = langevin(key_mc, y, u1, step=MC_STEP, iters=MC_ITERS, chunk=4)
+        y = langevin(key_mc, y, u1, dt=MC_DT, steps=MC_STEPS, chunks=4)
         log(f"[{name}] particle set resampled + rejuvenated at the target")
         results[name] = (y, ess)
 
