@@ -705,6 +705,7 @@ def _train_forward_KLXX_G_stage(
     u_clip: float = float("inf"),
     g_clip: float = float("inf"),
     *,
+    chunks: int = 1,
     initialize_from_identity: bool = False,
     t_start: float = 0.0,
     t_end: float = 1.0,
@@ -720,6 +721,7 @@ def _train_forward_KLXX_G_stage(
     melt = _real_control("melt", melt, minimum=0.0)
     opt_dt = _real_control("opt_dt", opt_dt, strictly_positive=True)
     opt_steps = _nonnegative_integer("opt_steps", opt_steps)
+    chunks = _positive_integer("chunks", chunks)
     coeff_lambda = _real_control("coeff_lambda", coeff_lambda, minimum=0.0)
     coeff_alpha = _real_control("coeff_alpha", coeff_alpha, minimum=0.0)
     coeff_beta = _real_control("coeff_beta", coeff_beta, minimum=0.0)
@@ -732,8 +734,17 @@ def _train_forward_KLXX_G_stage(
         t_start, t_end, stage_index, attempt_index,
         validate_values=not _trusted_inputs,
     )
+    if chunks > x_valid.shape[0]:
+        raise ValueError("chunks cannot exceed N_VALID")
+    key = jax.random.fold_in(jax.random.key(7), seed)
+    key_qt = jax.random.fold_in(key, 0)
+    hat_pool = quench_and_temper(
+        key_qt, x_valid, target, melt, opt_dt, opt_steps,
+        mc_dt, mc_steps, mc_adjust, chunks=chunks,
+    )
+    hat_pool = jax.block_until_ready(hat_pool)
     return _train_forward_KLXX_G(
-        x_valid, source, target, flow, batch_size, train_steps, lr,
+        x_valid, hat_pool, source, target, flow, batch_size, train_steps, lr,
         ladder, melt, opt_dt, opt_steps, mc_dt, mc_steps,
         coeff_lambda, coeff_alpha, coeff_beta, mc_adjust, monitor, seed,
         checkpoint, u_clip, g_clip, start, end, stage, attempt,
@@ -1073,6 +1084,7 @@ def _train_forward_KLX_G(
 @eqx.filter_jit
 def _train_forward_KLXX_G(
     x_valid: Array,
+    hat_pool: Array,
     source: Potential,
     target: Potential,
     flow: Flow,
@@ -1134,9 +1146,9 @@ def _train_forward_KLXX_G(
 
     Deterministic: the per-step keys (batch draw, AIS, permutations, pool
     draws, mixture resampling) derive from this driver's own base stream
-    folded with `seed`. The step loop runs under a single `lax.scan` and
-    the call is `filter_jit`-compiled; the quench-and-temper pool is part
-    of the same compiled call, ahead of the scan.
+    folded with `seed`. The stage wrapper builds the quench-and-temper pool
+    eagerly before this kernel so its chunks execute sequentially; the packed
+    training step loop remains `filter_jit`-compiled under one `lax.scan`.
 
     The ESS history is the proposal-to-target importance-sampling ESS
     immediately before each step's AIS correction. AIS exposes the full
@@ -1146,6 +1158,7 @@ def _train_forward_KLXX_G(
 
     Input:
         x_valid:  Array [N, d]   fixed set of source samples
+        hat_pool: Array [N, d]   quench-and-temper population built eagerly
         source:   Potential      negative log-density of the source (up to const)
         target:   Potential      negative log-density of the target (up to const)
         flow:     Flow           the normalizing flow to train, applied as G
@@ -1202,11 +1215,6 @@ def _train_forward_KLXX_G(
     m0 = jax.tree.map(jnp.zeros_like, params)
     v0 = jax.tree.map(jnp.zeros_like, params)
     updates0 = jnp.asarray(0, dtype=jnp.int32)
-
-    # hat_mu: the quench-and-temper wide-coverage pool, built once per call
-    key_qt = jax.random.fold_in(key, 0)
-    hat_pool = quench_and_temper(key_qt, x_valid, target, melt, opt_dt, opt_steps,
-                                 mc_dt, mc_steps, mc_adjust)
 
     # mixture weights of the hat/bar stack (constant across training steps)
     w_mix = jnp.concatenate([jnp.full(batch_size, coeff_alpha),

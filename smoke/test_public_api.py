@@ -187,9 +187,9 @@ def test_full_validation_klxx_and_u_clip() -> None:
     original = train_module.quench_and_temper
 
     def identity_quench(key, values, target, melt, opt_dt, opt_steps,
-                        mc_dt, mc_steps, mc_adjust):
+                        mc_dt, mc_steps, mc_adjust, chunks=1):
         del key, target, melt, opt_dt, opt_steps, mc_dt, mc_steps, mc_adjust
-        observed.append(values.shape[0])
+        observed.append((values.shape[0], chunks))
         return values
 
     train_module.quench_and_temper = identity_quench
@@ -203,7 +203,7 @@ def test_full_validation_klxx_and_u_clip() -> None:
     finally:
         train_module.quench_and_temper = original
     assert type(trained) is type(flow) and history.shape == (1,)
-    assert observed == [samples.shape[0]]
+    assert observed == [(samples.shape[0], 1)]
     for invalid in (float("nan"), float("-inf"), True):
         try:
             train_forward_KL_G(

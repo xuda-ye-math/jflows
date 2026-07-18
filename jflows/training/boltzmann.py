@@ -228,6 +228,7 @@ def _train_attempt(
     mc_dt,
     mc_steps,
     mc_adjust,
+    chunks,
     monitor,
     seed,
     checkpoint,
@@ -274,7 +275,7 @@ def _train_attempt(
             y_valid, source, target, flow, batch_size, train_steps, lr,
             ladder, melt, opt_dt, opt_steps, mc_dt, mc_steps,
             coeff_lambda, coeff_alpha, coeff_beta, mc_adjust, monitor, seed,
-            checkpoint, u_clip, g_clip, **common,
+            checkpoint, u_clip, g_clip, chunks=chunks, **common,
         )
     raise ValueError(f"unsupported Boltzmann objective: {spec.objective!r}")
 
@@ -730,6 +731,7 @@ def _run_boltzmann(
                             mc_dt=mc_dt,
                             mc_steps=mc_steps,
                             mc_adjust=mc_adjust,
+                            chunks=chunks,
                             monitor=monitor,
                             seed=trainer_seed,
                             checkpoint=checkpoint,
@@ -1110,6 +1112,10 @@ def boltzmann_forward_KLXX_G(
 ) -> tuple[Array, list[dict]]:
     """Run adaptive forward-KLXX stages; return particles and accepted stages.
 
+    ``chunks`` is the single execution-chunk control. It applies to KLXX
+    quench-and-temper as well as Boltzmann selection, validation, and stage
+    advancement.
+
     Set ``run_dir`` to persist a recoverable run and ``resume=True`` to
     continue its last incomplete stage.
     """
@@ -1281,6 +1287,9 @@ def boltzmann_forward_KLXX_G_fixed(
     problem_id: str | None = None,
 ) -> tuple[Array, list[dict]]:
     """Run forward-KLXX stages on ``t_list``; return particles and records.
+
+    ``chunks`` is the single execution-chunk control. It applies to KLXX
+    quench-and-temper as well as validation and stage advancement.
 
     Fixed schedules advance once per prescribed transition. Set ``run_dir``
     to persist a recoverable run and ``resume=True`` to continue it.
