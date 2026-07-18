@@ -3,356 +3,204 @@
 
 # jflows
 
-JAX normalizing flows for unconditional energy-based sampling and Boltzmann generators, built on [equinox](https://github.com/patrick-kidger/equinox). Optional stage-level storage saves each complete Boltzmann stage so an interrupted stage can be recomputed from the last complete population.
+`jflows` is a JAX/Equinox package for unconditional normalizing flows,
+energy-based sampling, and annealed Boltzmann generators. It provides a small
+public API for building flows, defining unnormalized target energies, training
+one transport stage, and connecting accepted stages into a complete source-to-
+target sampler.
 
-> **Status: experimental.** Tested only on **Linux + NVIDIA GPU** (CUDA-enabled `jax`); Google TPU and AMD GPU should also work. JAX GPU is not supported on Windows — not even under WSL.
+> **Status: experimental.** The package is developed and tested on Linux with
+> NVIDIA CUDA JAX. JAX GPU is not supported on Windows, including WSL.
 >
-> This project was developed with [Claude Code](https://claude.com/claude-code).
+> This project was developed with Codex.
 
-## Features
+## Core features
 
-**NSF and NCSF are the first-class models.** The **NSF** (Neural Spline Flow, on a box $[a, b]^d$) and the **NCSF** (Neural *Circular* Spline Flow, on the torus — the periodic domains of molecular angles) carry the energy-based workflows this package is built for; **CNF** (FFJORD), **OTFlow** (closed-form-trace continuous flow), and **RealNVP** (closed-form affine coupling) round out the family under one unified interface:
+- **First-class spline flows.** `NSF` models bounded Euclidean boxes and
+  `NCSF` models periodic boxes or tori. `CNF`, `OTFlow`, and `RealNVP` provide
+  complementary continuous and affine-coupling architectures.
+- **One immutable flow interface.** Every flow provides `flow(x)`,
+  `flow.call_and_ladj(x)`, `flow.inv(y)`, and `flow.inv_and_ladj(y)` and works
+  as an Equinox pytree under JIT, vectorization, and differentiation.
+- **Unified energy interface.** A `Potential` maps `[N,d]` samples to `[N]`
+  energies for densities proportional to `exp(-U)`. Built-in uniform, Gaussian,
+  and Gaussian-mixture potentials support explicit-key sampling, while
+  `potential_from` wraps a plain batched energy function.
+- **Potential algebra.** Addition, subtraction, scaling, and
+  `linear_combination` construct bridge energies without introducing a second
+  target abstraction.
+- **Explicit randomness.** Every random constructor and sampler takes a JAX
+  PRNG key. There is no package-global random state.
+- **Sampling and diagnostics.** Importance weights, normalized ESS, coverage,
+  resampling, Langevin/MALA, stochastic Heun, HMC, SMC, flow-proposal AIS,
+  L-BFGS, AdamW, and quench-and-temper are available from `jflows.utils`.
+- **Progressive training objectives.** Reverse KL, forward KL, KLX, and KLXX
+  share one validation convention while adding progressively richer
+  target-batch and density-ratio information.
+- **Complete-stage persistence.** Boltzmann computation is separate from
+  optional stage writers/loaders, so an interrupted stage can be recomputed
+  from the last published population.
+
+Flows are immutable. Identity initialization returns a new object:
 
 ```python
-import jax
+flow = flow.zeros()
+```
+
+`OTFlow` is the training exception: use `flow.near_identity()` so its
+quadratic factor retains a nonzero gradient. Keep `OTFlow.zeros()` for an exact
+identity map.
+
+## Three-level interface
+
+The public API is deliberately arranged from basic numerical components to a
+complete annealed generator.
+
+### LOW — building blocks
+
+The low level contains flows, potentials, per-sample losses, metrics, MCMC,
+SMC/AIS, optimization, and quench-and-temper:
+
+```python
 from jflows.flow import NSF, NCSF, CNF, OTFlow, RealNVP
-
-key = jax.random.key(0)
-
-NSF(key, a=[0.0, 0.0], b=[1.0, 1.0], bins=8, slope=1e-3, transforms=4, randmask=True, hidden_features=(64, 64), activation=jax.nn.silu)
-NCSF(key, a=[-1.0, -1.0], b=[1.0, 1.0], bins=8, slope=1e-3, transforms=4, randmask=True, hidden_features=(64, 64), activation=jax.nn.silu)
-CNF(key, dimension=8, frequency=3, nt=16, exact=True, hidden_features=(64, 64), activation=jax.nn.silu)
-OTFlow(key, dimension=8, hidden=64, layer=3, rank=10, nt=8, time_bound=(0.0, 1.0))
-RealNVP(key, dimension=8, transforms=4, randmask=True, mixing="lu", hidden_features=(64, 64), activation=jax.nn.silu)
+from jflows.potential import Potential, Nlog_Gaussian, potential_from
+from jflows.loss import reverse_KL_F, forward_KL_G, forward_KLX_G, forward_X_G
+from jflows.utils import compute_ESS_log, importance_weights_log, langevin, smc
 ```
 
-`RealNVP(mixing="lu")` requires float32 or float64 parameters because JAX's
-GPU triangular-solve primitive does not support float16/bfloat16 inverses.
+`F` denotes the source-to-target map and `G = F^{-1}` the target-to-source
+map. An `_F` or `_G` suffix fixes the native training direction.
 
-For `CNF(exact=False)`, Hutchinson trace estimation uses one call-shared probe.
-The packed trainers replace its key every optimizer step, yielding stochastic
-trace gradients without letting the drift adapt to one frozen projection.
-Low-level loss calls accept an optional `trace_key`; omitting it retains the
-constructor key for deterministic, reproducible evaluation.
+### MEDIUM — one-stage training
 
-All subclass the same `Flow` abstract class (an `eqx.Module`, i.e. an immutable pytree). The flow itself is the user-facing object:
+The medium level trains one map between a source and target potential:
 
 ```python
-from jflows.flow import NSF
-
-flow = NSF(key, ...)          # or NCSF(...), CNF(...), OTFlow(...), RealNVP(...)
-flow = flow.zeros()           # identity initialisation (returns a NEW instance)
-
-y       = flow(x)             # forward map
-y, ladj = flow.call_and_ladj(x)   # forward map & log|det J|
-x_back  = flow.inv(y)             # inverse map
-x, ladj = flow.inv_and_ladj(y)    # inverse map & its log|det J|
-```
-
-Because modules are immutable pytrees, `flow.zeros()` (and every training step) returns a new instance rather than mutating in place, and flows jit / vmap / grad like any other JAX value. `flow.t()` remains available as the advanced composition layer (it returns the underlying `ComposedTransform` for chaining transforms and custom pipelines); the high-level API never needs it.
-
-`OTFlow` has one special initialization constraint: its positive-semidefinite
-quadratic head is parameterized as $A^\top A$, so the exact identity
-`OTFlow.zeros()` necessarily leaves that head at the absorbing point $A=0$.
-Use `OTFlow(...).near_identity()` for energy training of the full model. It
-keeps the same pytree/checkpoint layout and seeds $\lVert A\rVert=10^{-6}$,
-making the map a numerical identity in float32 while preserving a nonzero
-gradient. Keep `zeros()` when an exact identity map is required.
-
-**Explicit PRNG keys.** There is no global seed in JAX: every random entry point — flow constructors, `Potential.samples`, `resample`, `langevin`, `hamiltonian_monte_carlo`, `sequential_monte_carlo`, `annealed_importance_sampling` — takes a `key` as its first argument.
-
-**Unified `Potential` class with a vector-space algebra.** Every energy function subclasses one `Potential` base (potentials are energies of $\mu \propto e^{-U}$; there are no temperature arguments). Define a custom potential by subclassing `Potential` and implementing `__call__`:
-
-```python
-from jax import Array
-from jflows.potential import Potential
-
-class My_Potential(Potential):   # any user-defined energy
-    def __call__(self, x: Array) -> Array:   # Array [N, d] -> Array [N]
-        return ...
-
-u = My_Potential()   # `u(x)` evaluates the energy; `u.grad(x)` its gradient
-```
-
-Naming follows one simple rule throughout the project: classes capitalize the first letter of each word (`My_Potential`, `Nlog_Gaussian`), instances lowercase it (`u`, `u0`, `u_target`). Built-ins are `Nlog_Uniform`, `Nlog_Gaussian`, `Nlog_Gaussian_Mixture` (all with key-first `.samples(key, N)`), and `potential_from(...)` wraps a plain `(x) -> Array` callable into a ready-to-use instance. `Nlog_Uniform(a, b)` uses `[a, b]` for sampling but intentionally evaluates to the same constant outside the box; wrap periodic coordinates or provide an explicit confining potential when a hard support boundary is required.
-
-Potentials form a vector space: `c * u`, `u0 + u1`, `u0 - u1`, `-u`, `u / c`, and `sum([...])` all return potentials, with repeated instances merged by identity into one flat linear combination. `linear_combination` is the explicit constructor for annealing bridges:
-
-```python
-from jflows.potential import linear_combination
-
-u = linear_combination([u1, u0], [t, 1.0 - t])   # U_t = (1-t) U0 + t U1
-```
-
-Coefficients are a plain array leaf, so retuning `t` along an annealing ladder never triggers recompilation.
-
-**A strict interface hierarchy.** The API has three levels. The LOW level is the building blocks — per-sample losses and the SMC toolkit — for assembling custom pipelines. The MEDIUM level — the stage-training drivers — composes those blocks into one-call trainers. The HIGH level — the annealed Boltzmann generator — chains the stage trainers into the full adaptive-ladder pipeline. Everything below is organized in that order.
-
-**Low level: per-sample KL losses.** Each loss fixes the flow direction its suffix names — `reverse_KL_F` applies the flow as the forward map F (source → target), `forward_KL_G` as the inverse map G (target → source) — so every loss is differentiated in its native direction and no inverse map ever enters training. Every loss returns the full per-sample vector, shape `[N]`, for post-hoc reweighting / clipping; reduce with `.mean()`:
-
-```python
-from jflows.loss import reverse_KL_F, forward_KL_G
-
-loss = reverse_KL_F(x, target, flow).mean()   # source samples x, flow as F
-loss = forward_KL_G(y, source, flow).mean()   # target samples y, flow as G
-```
-
-**Low level: the SMC toolkit.** `jflows.utils` provides the *propose → reweight → resample → rejuvenate* building blocks, with complete routines for direct use and per-step kernels for custom schedules:
-
-```python
-from jflows.utils import (
-    importance_weights, importance_weights_log,   # flow IS weights (type='F'/'G')
-    linear_weights_from_log,                      # safe max-shifted conversion
-    compute_ESS, compute_ESS_log,                 # effective sample size
-    coverage,                                     # k-NN mode-collapse diagnostic
-    resample,                                     # multinomial resampling
-    langevin, langevin_step,                      # ULA / MALA / tamed
-    stochastic_heun, hamiltonian_monte_carlo,     # more rejuvenation kernels
-    sequential_monte_carlo, smc,                  # annealed SMC over a bridge ladder
-    annealed_importance_sampling, ais,            # AIS through a trained flow
-    lbfgs, adamw,                                 # batched optimizers (+ init/step kernels)
-)
-
-log_w = importance_weights_log(samples, source, target, flow, type="F", chunks=1)
-ess   = compute_ESS_log(log_w)
-y     = ais(key, samples, source, target, flow, type="G",
-            ladder=1, mc_dt=1e-3, mc_steps=100)
-```
-
-`sequential_monte_carlo` is classical potential-space SMC and rejuvenates at
-the matching intermediate bridge at each level. Flow-proposal
-`annealed_importance_sampling` uses one fraction of the proposal-to-target log
-weight per level but rejuvenates at the final target every time. This avoids
-flow-density derivatives inside MCMC, so it is a deliberately biased,
-score-free target surrogate rather than exact AIS/SMC.
-Its first correction is evaluated directly during the original source-to-target
-push (including the matching Jacobian); later levels refresh latent pre-images
-after resampling/rejuvenation. This distinction matters for fixed-step CNF and
-OTFlow maps, whose numerical inverse is approximate.
-
-`chunks` splits batches along dim 0 (statistically equivalent to `chunks=1`). The
-standalone importance-weight helper and the full-set weight evaluation used by
-the Boltzmann drivers iterate eagerly over compiled per-chunk kernels, which
-reliably bounds those operations' peak graph size. A chunk loop nested inside a
-larger compiled stage (notably particle advancement/rejuvenation) is an
-execution partition, but XLA may schedule buffers across chunks; it is not a
-strict peak-VRAM guarantee. Rejuvenation and optimizer routines retain their
-compiled-scan implementations.
-
-**Medium level: training drivers.** Reverse KL, forward KL, and KLX are
-`eqx.filter_jit`-compiled stage implementations that run all Adam steps in one
-`lax.scan`. KLXX deliberately executes its chunked quench-and-temper pool
-eagerly first, then runs the Adam steps in a compiled `lax.scan`; this keeps QT
-chunking outside an enclosing JIT. Sampling, loss/gradient evaluation, and the
-Adam update remain inside each trainer's scan.
-Every step draws a new subset and regenerates its training data, so no frozen
-batch is reused:
-
-```python
-from jflows.train import train_reverse_KL_F, train_forward_KL_G, Monitor
-
-# reverse KL: each step draws batch_size samples from the fixed set x_valid and
-# freshens them with Langevin rejuvenation at the source (flow fixed as F)
-flow, batch_ess_hist = train_reverse_KL_F(
-    x_valid, source, target, flow,
-    batch_size=2000, train_steps=200, lr=1e-3,
-    mc_dt=1e-3, mc_steps=100,
-)
-
-# forward KL: each step manufactures its target batch by one-level AIS
-# through the CURRENT flow (pushforward -> reweight -> resample -> Langevin;
-# flow fixed as G)
-flow, batch_ess_hist = train_forward_KL_G(
-    x_valid, source, target, flow,
-    batch_size=2000, train_steps=200, lr=1e-3,
-    ladder=1, mc_dt=1e-3, mc_steps=100,
-    initialize_from_identity=True, u_clip=100.0,
-)
-
-# KLXX: pool_size=0 quenches x_valid; a positive value draws a separate pool.
-flow, batch_ess_hist = train_forward_KLXX_G(
-    x_valid, source, target, flow,
-    pool_size=1000, batch_size=2000, train_steps=200, lr=1e-3,
-    ladder=1, melt=2.0, opt_dt=0.5, opt_steps=200,
-    mc_dt=1e-3, mc_steps=100, chunks=16,
+from jflows.train import (
+    Monitor,
+    train_reverse_KL_F,
+    train_forward_KL_G,
+    train_forward_KLX_G,
+    train_forward_KLXX_G,
 )
 ```
 
-The drivers are deterministic (per-step keys derive from a fixed internal
-seed). Each call returns the trained flow together with the per-step
-proposal-to-target batch-ESS history (measured before AIS correction for the
-forward trainers). Reverse KL, forward KL, and KLX compile as one outer stage
-call; KLXX runs eager QT followed by its compiled optimizer scan. An optional
-`Monitor` reports from inside the scan via `jax.debug.callback`:
+Every trainer returns a new flow and its optimizer-batch ESS history. Simple
+flow, sample, and history serialization lives in `jflows.artifacts`.
+
+### HIGH — annealed Boltzmann generation
+
+The high level connects accepted bridge stages and compares every trained map
+with an exact identity fallback using full-validation incremental ESS:
 
 ```python
-flow, batch_ess_hist = train_reverse_KL_F(
-    ..., monitor=Monitor(every=10, prefix="[reverse KL] ")
-)
-# [reverse KL] [t: 0.000000 -> 1.000000] step     1   loss = ...   ESS = ...
-# [reverse KL] [t: 0.000000 -> 1.000000] step    10   loss = ...   ESS = ...
-```
-
-Across the public API, `dt` denotes an integration step size and `steps` a
-count. Composite controls use `mc_dt` / `mc_steps`, `opt_dt` /
-`opt_steps`, and `train_steps`; cardinalities use `batch_size`, `pool_size`,
-and `chunks`. Benchmark scripts use the constant names `VALID_SZIE`,
-`POOL_SIZE`, and `BATCH_SZIE`. `pool_size=0` gives the full-validation KLXX
-route; a positive value gives the separately sampled pool route.
-
-**High level: the annealed Boltzmann generator.** On top of the stage trainers, `boltzmann_reverse_KL_F` runs the full annealed
-Boltzmann generator on the bridge ladder $U_t = (1-t)\,U_0 + t\,U_1$ with an
-ADAPTIVE coefficient: the stage flows are connected step by step — each stage
-trains an incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$ on the advancing
-particle set. By default every stage starts from a trainable identity;
-`initialize_from_identity=False` explicitly warm-starts it from the preceding
-continuation flow. The driver accepts on the incremental importance-sampling
-ESS (rejected stages shrink $t_k$ and retry with fresh randomness), then
-advances the set by reweight → resample → Langevin at $U_{t_k}$ (MALA by
-default; `mc_adjust=False` for plain ULA).
-After each stage an identity check keeps whichever of the trained flow and the
-identity map (pure SMC reweighting, computed with no flow inverse) has the higher
-incremental ESS, so a stage is never worse than SMC:
-
-```python
-from jflows.boltzmann import boltzmann_reverse_KL_F
-
-y_valid, stages = boltzmann_reverse_KL_F(
-    x_valid, source, target, flow,
-    batch_size=2000, train_steps=500, lr=1e-4,
-    ladder=1, mc_dt=1e-3, mc_steps=100,
-    bg_param={"t_safe": 0.1, "shrink_factor": 0.7, "enlarge_factor": 1.5, "tau_ess": 0.6},
-    initialize_from_identity=True,
+from jflows.boltzmann import (
+    boltzmann_reverse_KL_F,
+    boltzmann_forward_KL_G,
+    boltzmann_forward_KLX_G,
+    boltzmann_forward_KLXX_G,
 )
 ```
 
-The return values and stage metadata are:
+- reverse KL is the simplest source-sampled F baseline;
+- forward KL manufactures target-side batches and trains G;
+- KLX adds target-measure log-weight variation control; and
+- KLXX adds a quench-and-temper/proposal mixture for wider mode and leakage
+  regularization.
 
-- `y_valid`: the advanced particle set. It is at the target when
-  `stages[-1]["t"] == 1`.
-- `stages`: the accepted-stage records. Each record includes:
-  - full-validation scalars `valid_selected_ess`, `valid_trained_ess`, and
-    `valid_identity_ess`;
-  - attempt-aligned diagnostics `t_hist`, `batch_ess_hist`,
-    `valid_trained_ess_hist`, and `valid_identity_ess_hist`;
-  - `flow` and `continuation_flow`, the selected stage map and the next warm
-    start; and
-  - the attempt status, selection history, and elapsed stage time.
+Adaptive and fixed-schedule variants use the same stage record and identity
+selection rules. Complete-stage persistence is exposed separately through
+`jflows.boltzmann.write` and `jflows.boltzmann.load`.
 
-Storage and resume are deliberately separate from the eight public
-`jflows.boltzmann` computation functions. `jflows.boltzmann.write` publishes
-only complete stages; `jflows.boltzmann.load` validates and reloads the last
-complete population, continuation flow, and stage records. If a process stops
-inside a stage, that stage is recomputed. There is no attempt-level transaction
-state machine. The lower-level `load.run` controller accepts an explicit stage
-iterator for package-level continuation workflows:
-
-```python
-from jflows.boltzmann.load import run
-
-# `iterate` receives (samples, flow, accepted_t, start_stage) and yields
-# (samples, stage_record, continuation_flow).
-y_valid, stages = run(
-    "run/boltzmann", "my-target-v1", config,
-    x_valid, flow, iterate, resume=False,
-)
-# Repeat with resume=True after an interruption.
-```
-
-## Package layout
-
-```
-jflows
-├── artifacts.py
-├── boltzmann
-│   ├── __init__.py
-│   ├── load.py
-│   └── write.py
-├── core
-│   ├── flows.py
-│   ├── __init__.py
-│   ├── nn.py
-│   ├── numerics.py
-│   ├── otflow.py
-│   └── transforms.py
-├── flow.py
-├── __init__.py
-├── loss.py
-├── potential.py
-├── train.py
-├── version.py
-└── utils
-    ├── anneal.py
-    ├── __init__.py
-    ├── metrics.py
-    ├── optimization.py
-    ├── quench.py
-    └── rejuvenation.py
-```
-
-## Installation
+## Minimal setup
 
 ```bash
 pip install "jax[cuda13]" equinox
 pip install -e .
 ```
 
-Repository examples and smoke modules use the same pattern:
-
-```bash
-python -m smoke.test_flow
-```
-
-**Checkpoint skeletons.** Equinox serializes array leaves into a caller-built
-model skeleton. Reconstruct the same class and architecture before calling
-`eqx.tree_deserialise_leaves`. NSF/NCSF orderings and masked matrices are array
-leaves and are restored from the checkpoint. A `RealNVP` with `randmask=True`
-must use the same constructor key because its coupling masks are static tuples.
-CNF PRNG state is stored as ordinary uint32 key data and is supported by the
-standard Equinox leaf serializer; reconstruct its skeleton with the same JAX
-PRNG implementation (`threefry2x32`, `rbg`, etc.), although the seed itself may
-differ.
-
-**Importing.** Use the public submodules `flow`, `potential`, `loss`, `train`,
-`boltzmann`, `artifacts`, and `utils`, and call `help(foo_name)` to read the
-documents. Stage trainers are exported by `jflows.train`; Boltzmann generators
-are exported by the `jflows.boltzmann` package. For example:
-
 ```python
-from jflows.flow import NSF, RealNVP
-from jflows.potential import Potential, Nlog_Gaussian
-from jflows.loss import reverse_KL_F, forward_KL_G
-from jflows.train import (
-    Monitor,
-    train_reverse_KL_F,
-    train_forward_KL_G,
-)
-from jflows.boltzmann import boltzmann_reverse_KL_F
-from jflows.artifacts import save_flow, save_samples, save_history
-from jflows.utils import importance_weights, compute_ESS, resample, langevin
+import jax
 
-help(NSF)
+from jflows.flow import NSF
+from jflows.potential import Nlog_Gaussian, potential_from
+from jflows.train import train_forward_KLX_G
+from jflows.utils import compute_ESS_log, importance_weights_log
+
+source = Nlog_Gaussian([0.0, 0.0], [1.0, 1.0])
+target = potential_from(
+    lambda x: 10.0 * (jax.numpy.linalg.norm(x, axis=-1) - 2.0) ** 2
+)
+
+flow = NSF(
+    jax.random.key(0),
+    [-4.0, -4.0],
+    [4.0, 4.0],
+    bins=16,
+    transforms=4,
+).zeros()
+x_valid = source.samples(jax.random.key(1), 20000)
+
+flow, batch_ess = train_forward_KLX_G(
+    x_valid,
+    source,
+    target,
+    flow,
+    batch_size=500,
+    train_steps=200,
+    lr=1e-3,
+    ladder=1,
+    mc_dt=1e-3,
+    mc_steps=50,
+    coeff_lambda=1.0,
+)
+
+log_weights = importance_weights_log(
+    x_valid, source, target, flow, type="G"
+)
+validation_ess = compute_ESS_log(log_weights)
+y_valid = flow.inv(x_valid)
 ```
 
-## Examples
+## Repository map
 
-Worked examples live in [`example/`](example). They cover a 2D Gaussian
-mixture, a 3D periodic NCSF target, a 4D two-charge annealed Boltzmann
-generator, a CNF/OTFlow dimension sweep, and NSF forward/inverse latency. See
-[`example/results.md`](example/results.md) for the full setups, tables, figures,
-and discussion.
+```text
+jflows/
+├── doc/
+│   ├── README.md                 # detailed documentation map
+│   ├── 01-low-level.md
+│   ├── 02-medium-level.md
+│   ├── 03-high-level.md
+│   ├── 04-smoke-tests.md
+│   └── 05-examples.md
+├── jflows/
+│   ├── flow.py                   # LOW
+│   ├── potential.py              # LOW
+│   ├── loss.py                   # LOW
+│   ├── utils/                    # LOW
+│   ├── train.py                  # MEDIUM
+│   ├── artifacts.py              # MEDIUM
+│   ├── boltzmann/                # HIGH
+│   └── core/                     # private implementation
+├── smoke/                        # narrow executable contracts
+├── example/                      # complete workflows and results
+└── README.md                     # this concise project introduction
+```
 
-The complete example suite was rerun on 2026-07-18 with JAX 0.10.2 on an
-NVIDIA RTX 5090. The main verified outputs are:
+## Read next
 
-| example | verified result |
-| :-- | :-- |
-| 2D single stage | reverse/forward ESS `0.9425 / 0.9469` |
-| 3D periodic | reverse/forward ESS `0.8980 / 0.9046` |
-| 4D Boltzmann | reverse ESS `[0.780, 0.931, 0.947, 0.971, 0.991]`; forward ESS `[0.763, 0.902, 0.962, 0.997]` |
-| CNF vs OTFlow, $d=128$ | ESS `0.4291 / 0.5927` |
-| NSF latency, width 64x64 | forward `0.179 -> 0.407 ms`; inverse `0.436 -> 41.539 ms` from $d=4$ to $128$ |
+- **Detailed interface documentation:** [`doc/`](doc/README.md)
+- **Executable API contracts:** [`smoke/`](smoke/)
+- **Complete scripts, figures, and numerical results:**
+  [`example/`](example/) and [`example/results.md`](example/results.md)
+
+The detailed documentation gives exact signatures, direction conventions,
+return values, memory controls, stage records, and persistence behavior. Smoke
+tests establish narrow software contracts; examples demonstrate end-to-end
+scientific workflows.
 
 ## Acknowledgements
 
-`jflows` is strongly inspired by [zuko](https://github.com/probabilists/zuko): the flow, transform, and masked-MLP machinery vendored into `jflows.core` is a stripped-down port of zuko's. Credit for the underlying design — and for the clean, composable `Transform` API the public flows build on — belongs to the zuko authors.
+`jflows` is strongly inspired by [zuko](https://github.com/probabilists/zuko).
+The private flow, transform, and masked-MLP machinery in `jflows.core` is a
+stripped-down port of zuko's clean and composable transform design.
