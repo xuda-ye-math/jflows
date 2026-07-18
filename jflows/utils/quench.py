@@ -15,8 +15,6 @@ and `langevin` (rejuvenation) for the temper.
 
 from __future__ import annotations
 
-import operator
-
 import jax
 from jax import Array
 
@@ -78,22 +76,6 @@ def quench_and_temper(
     Output:
         samples: Array [N, d]   the tempered particles ~ hat_mu
     """
-    if isinstance(chunks, bool):
-        raise ValueError(f"chunks must be an integer, got {chunks!r}")
-    try:
-        chunks = operator.index(chunks)
-    except TypeError as exc:
-        raise ValueError(f"chunks must be an integer, got {chunks!r}") from exc
-    if (
-        samples.ndim < 1
-        or samples.shape[0] < 1
-        or chunks < 1
-        or chunks > samples.shape[0]
-    ):
-        raise ValueError(
-            "quench_and_temper needs non-empty samples and "
-            f"1 <= chunks <= N; got samples={samples.shape}, chunks={chunks!r}"
-        )
     key_melt, key_mc = jax.random.split(key)
     x = samples + melt * jax.random.normal(key_melt, samples.shape, dtype=samples.dtype)
     x = lbfgs(

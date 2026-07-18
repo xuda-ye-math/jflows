@@ -334,14 +334,6 @@ def main() -> None:
     log("aliases")
     check_true("smc is sequential_monte_carlo", smc is sequential_monte_carlo)
     check_true("ais is annealed_importance_sampling", ais is annealed_importance_sampling)
-    try:
-        annealed_importance_sampling(
-            jax.random.key(6), x0[:4], SOURCE, TARGET, flow_id, type="F",
-            return_initial_log_weights=1,
-        )
-        check_true("non-Boolean optional-return flag rejected", False)
-    except TypeError:
-        check_true("non-Boolean optional-return flag rejected", True)
 
     # ── 5. reproducibility ──
     log("reproducibility")

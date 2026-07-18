@@ -5,7 +5,7 @@ which touches the inverse map during training (each transform is
 differentiated in its native direction only):
 
     reverse KL            : the flow acts as F (source -> target);
-                            `train_reverse_KL_F` draws an BATCH_SIZE subset of
+                            `train_reverse_KL_F` draws an BATCH_SZIE subset of
                             the fixed source set every Adam step and
                             freshens it with Langevin rejuvenation at the
                             source.
@@ -16,10 +16,10 @@ differentiated in its native direction only):
                             reweight -> resample -> Langevin rejuvenation
                             at the target).
 
-X-regularization conventions: one fixed set of N_VALID source samples
+X-regularization conventions: one fixed set of VALID_SZIE source samples
 serves training and evaluation — the packed trainers regenerate their
-BATCH_SIZE training data inside every Adam step, so no frozen batch is ever
-reused; the final ESS is computed on the full N_VALID set through the
+BATCH_SZIE training data inside every Adam step, so no frozen batch is ever
+reused; the final ESS is computed on the full VALID_SZIE set through the
 flow importance weights.
 
 Run after installation from the repo root:  python -m example.2D_single
@@ -65,8 +65,8 @@ TRANSFORMS: int = 4                 # number of autoregressive transforms stacke
 HIDDEN_FEATURES = (64, 64)          # widths of the hidden layers in each conditioner MLP
 
 # training parameters
-N_VALID: int = 40000   # the fixed source set (training pool + final ESS evaluation)
-BATCH_SIZE: int = 2000    # batch drawn from the fixed set per Adam step
+VALID_SZIE: int = 40000   # the fixed source set (training pool + final ESS evaluation)
+BATCH_SZIE: int = 2000    # batch drawn from the fixed set per Adam step
 TRAIN_STEPS: int = 200       # Adam steps (one compiled call per method)
 LR: float = 1e-3       # Adam learning rate
 MONITOR_EVERY: int = 10  # print loss + proposal ESS every MONITOR_EVERY steps
@@ -105,13 +105,13 @@ def log(msg: str) -> None:
 def main() -> None:
     open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START 2D_single | jax {jax.__version__} | backend {jax.default_backend()} | "
-        f"N_VALID={N_VALID} BATCH_SIZE={BATCH_SIZE} TRAIN_STEPS={TRAIN_STEPS} LR={LR} "
+        f"VALID_SZIE={VALID_SZIE} BATCH_SZIE={BATCH_SZIE} TRAIN_STEPS={TRAIN_STEPS} LR={LR} "
         f"MC={MC_DT}x{MC_STEPS}")
-    x_valid = u0.samples(jax.random.key(2), N_VALID)  # the fixed N_VALID source set
+    x_valid = u0.samples(jax.random.key(2), VALID_SZIE)  # the fixed VALID_SZIE source set
 
     log("[reverse KL] training (packed single stage) ...")
     flow_F, hist_F = train_reverse_KL_F(x_valid, u0, u1, new_flow(jax.random.key(0)),
-                                        batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR,
+                                        batch_size=BATCH_SZIE, train_steps=TRAIN_STEPS, lr=LR,
                                       mc_dt=MC_DT, mc_steps=MC_STEPS,
                                       monitor=Monitor(MONITOR_EVERY, "[reverse KL] ", log))
     log(f"[reverse KL] {TRAIN_STEPS} steps done   proposal ESS "
@@ -119,7 +119,7 @@ def main() -> None:
 
     log("[forward KL] training (packed single stage) ...")
     flow_G, hist_G = train_forward_KL_G(x_valid, u0, u1, new_flow(jax.random.key(1)),
-                                        batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR,
+                                        batch_size=BATCH_SZIE, train_steps=TRAIN_STEPS, lr=LR,
                                       ladder=LADDER, mc_dt=MC_DT, mc_steps=MC_STEPS,
                                       monitor=Monitor(MONITOR_EVERY, "[forward KL] ", log))
     log(f"[forward KL] {TRAIN_STEPS} steps done   proposal ESS "
@@ -128,8 +128,8 @@ def main() -> None:
     # final ESS on the full fixed set
     ess_F = float(compute_ESS(importance_weights(x_valid, u0, u1, flow_F, type="F")))
     ess_G = float(compute_ESS(importance_weights(x_valid, u0, u1, flow_G, type="G")))
-    log(f"[reverse KL] final ESS = {ess_F:.4f}   (N_VALID = {N_VALID})")
-    log(f"[forward KL] final ESS = {ess_G:.4f}   (N_VALID = {N_VALID})")
+    log(f"[reverse KL] final ESS = {ess_F:.4f}   (VALID_SZIE = {VALID_SZIE})")
+    log(f"[forward KL] final ESS = {ess_G:.4f}   (VALID_SZIE = {VALID_SZIE})")
 
     # figure: ESS history, then the two pushforward panels
     n = 300

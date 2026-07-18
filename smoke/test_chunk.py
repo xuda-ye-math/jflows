@@ -35,8 +35,8 @@ import numpy as np  # noqa: E402
 
 from jflows.flow import NCSF  # noqa: E402
 from jflows.potential import Nlog_Uniform, potential_from  # noqa: E402
-from jflows.training.boltzmann import (  # noqa: E402
-    _chunked_log_importance_weights,
+from jflows.boltzmann import (  # noqa: E402
+    _chunked_log_weights,
 )
 from jflows.utils import importance_weights_log  # noqa: E402
 
@@ -44,7 +44,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 LOG = os.path.join(HERE, "test_chunk.log")
 
 FAILURES = 0
-NSAMP = 200_000
+NSAMP = 200000
 D = 32
 LIM = math.pi
 
@@ -73,23 +73,27 @@ def check_true(name: str, cond: bool, detail: str = "") -> None:
         FAILURES += 1
 
 
-def peak_gib() -> float:
-    return jax.local_devices()[0].memory_stats()["peak_bytes_in_use"] / 2**30
+def peak_gib():
+    stats = jax.local_devices()[0].memory_stats()
+    return None if stats is None else stats["peak_bytes_in_use"] / 2**30
 
 
 def main() -> None:
     open(LOG, "w").close()
+    measured = peak_gib() is not None
+    sample_count = NSAMP if measured else 20000
     log(f"START test_chunk | backend {jax.default_backend()} | "
-        f"N={NSAMP} D={D} float32")
+        f"N={sample_count} D={D} float32")
 
     u0 = Nlog_Uniform(a=[-LIM] * D, b=[LIM] * D)
     u1 = potential_from(lambda x: -(jnp.cos(x - jnp.roll(x, 1, axis=-1))).sum(-1))
     flow = NCSF(jax.random.key(0), a=[-LIM] * D, b=[LIM] * D, bins=8,
                 transforms=4, hidden_features=(64, 64))
-    x = u0.samples(jax.random.key(2), NSAMP)
+    x = u0.samples(jax.random.key(2), sample_count)
     x = jax.block_until_ready(x)
     p0 = peak_gib()
-    log(f"baseline peak after data: {p0:.3f} GiB")
+    if measured:
+        log(f"baseline peak after data: {p0:.3f} GiB")
 
     # 1 — correctness: eager chunks == single full-set call, both directions,
     # even (8 | 200k) and uneven (7) chunk counts, on a small subset
@@ -99,7 +103,7 @@ def main() -> None:
             importance_weights_log(xs, u0, u1, flow, type_))
         for c in (2, 7):
             got = jax.block_until_ready(
-                _chunked_log_importance_weights(
+                _chunked_log_weights(
                     xs, u0, u1, flow, type_, chunks=c
                 ))
             check(f"eager chunks={c} == full call (type {type_})", got, ref, tol=1e-3)
@@ -107,13 +111,14 @@ def main() -> None:
     # 2 — memory: the eager per-chunk loop runs FIRST (smallest working
     # set), so every later high-water mark is attributable to the in-jit
     # calls it is compared against
-    lw_eager = jax.block_until_ready(_chunked_log_importance_weights(
+    lw_eager = jax.block_until_ready(_chunked_log_weights(
         x, u0, u1, flow, "G", chunks=8
     ))
     p_eager = peak_gib()
-    eager_delta = p_eager - p0
-    log(f"peak after EAGER chunks=8  'G' on {NSAMP}: {p_eager:.3f} GiB "
-        f"(delta {eager_delta:.3f})")
+    if measured:
+        eager_delta = p_eager - p0
+        log(f"peak after EAGER chunks=8  'G' on {sample_count}: "
+            f"{p_eager:.3f} GiB (delta {eager_delta:.3f})")
 
     # negative control: the SAME chunk count inside one jit — the XLA
     # scheduler overlaps the chunk subgraphs, so the peak must land far
@@ -121,14 +126,17 @@ def main() -> None:
     full_jit = eqx.filter_jit(importance_weights_log)
     lw_injit = jax.block_until_ready(full_jit(x, u0, u1, flow, "G", chunks=8))
     p_injit = peak_gib()
-    injit_delta = p_injit - p0
-    log(f"peak after IN-JIT chunks=8 'G' on {NSAMP}: {p_injit:.3f} GiB "
-        f"(delta {injit_delta:.3f})")
     check("eager == in-jit values", lw_eager, lw_injit, tol=1e-3)
-    check_true("eager chunking reduces peak memory",
-               injit_delta >= 2.0 * eager_delta,
-               f"in-jit/eager peak-delta ratio = "
-               f"{injit_delta / max(eager_delta, 1e-9):.1f} (need >= 2)")
+    if measured:
+        injit_delta = p_injit - p0
+        log(f"peak after IN-JIT chunks=8 'G' on {sample_count}: "
+            f"{p_injit:.3f} GiB (delta {injit_delta:.3f})")
+        check_true("eager chunking reduces peak memory",
+                   injit_delta >= 2.0 * eager_delta,
+                   f"in-jit/eager peak-delta ratio = "
+                   f"{injit_delta / max(eager_delta, 1e-9):.1f} (need >= 2)")
+    else:
+        log("  peak-memory assertion skipped: backend exposes no memory stats")
 
     # 3 — the unchunked full-set call agrees in value (its peak is
     # already covered by the control above)

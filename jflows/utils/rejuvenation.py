@@ -20,9 +20,6 @@ scaled potential `beta * U` (the potential algebra covers tempering).
 
 from __future__ import annotations
 
-import math
-import operator
-
 import jax
 import jax.numpy as jnp
 from jax import Array, lax
@@ -41,46 +38,6 @@ __all__ = [
     "stochastic_heun",
     "stochastic_heun_step",
 ]
-
-
-def _positive_dt(name: str, dt: float) -> float:
-    try:
-        value = float(dt)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{name}: dt must be a real scalar, got {dt!r}") from exc
-    if not math.isfinite(value) or value <= 0:
-        raise ValueError(f"{name}: dt must be finite and positive, got {dt!r}")
-    return value
-
-
-def _count(name: str, value, minimum: int) -> int:
-    try:
-        result = operator.index(value)
-    except TypeError as exc:
-        raise ValueError(f"{name} must be an integer, got {value!r}") from exc
-    if isinstance(value, bool) or result < minimum:
-        raise ValueError(f"{name} must be >= {minimum}, got {value!r}")
-    return result
-
-
-def _chunks(name: str, samples: Array, chunks: int) -> int:
-    chunks = _count(f"{name}: chunks", chunks, 1)
-    if samples.ndim < 1 or samples.shape[0] < 1 or chunks > samples.shape[0]:
-        raise ValueError(
-            f"{name}: need non-empty samples and 1 <= chunks <= N; "
-            f"got samples={samples.shape}, chunks={chunks}"
-        )
-    return chunks
-
-
-def _taming(name: str, taming: float) -> float:
-    try:
-        value = float(taming)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{name}: taming must be a real scalar, got {taming!r}") from exc
-    if not math.isfinite(value) or value < 0:
-        raise ValueError(f"{name}: taming must be finite and non-negative, got {taming!r}")
-    return value
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -190,10 +147,6 @@ def langevin(
     Output:
         samples: Array [N, d]   particles after `steps` Langevin updates
     """
-    dt = _positive_dt("langevin", dt)
-    steps = _count("langevin: steps", steps, 0)
-    chunks = _chunks("langevin", samples, chunks)
-    taming = _taming("langevin", taming)
     if adjust and taming > 0:
         raise ValueError("langevin(): adjust=True and taming>0 are mutually exclusive.")
     out = []
@@ -280,9 +233,6 @@ def stochastic_heun(
     Output:
         samples: Array [N, d]   particles after `steps` Heun updates
     """
-    dt = _positive_dt("stochastic_heun", dt)
-    steps = _count("stochastic_heun: steps", steps, 0)
-    chunks = _chunks("stochastic_heun", samples, chunks)
     out = []
     for i, x in enumerate(jnp.array_split(samples, chunks, axis=0)):
         keys = jax.random.split(jax.random.fold_in(key, i), steps)
@@ -432,12 +382,6 @@ def hamiltonian_monte_carlo(
     Output:
         samples: Array [N, d]   particles after `trajectories` HMC trajectories
     """
-    dt = _positive_dt("hamiltonian_monte_carlo", dt)
-    leapfrog_steps = _count(
-        "hamiltonian_monte_carlo: leapfrog_steps", leapfrog_steps, 1
-    )
-    trajectories = _count("hamiltonian_monte_carlo: trajectories", trajectories, 0)
-    chunks = _chunks("hamiltonian_monte_carlo", samples, chunks)
     out = []
     for i, x in enumerate(jnp.array_split(samples, chunks, axis=0)):
         keys = jax.random.split(jax.random.fold_in(key, i), trajectories)

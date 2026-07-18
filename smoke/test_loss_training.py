@@ -194,7 +194,7 @@ def main() -> None:
     ax.grid(alpha=0.25, lw=0.5)
     fig.savefig(PNG, dpi=150)
     plt.close(fig)
-    check_true("figure written", os.path.isfile(PNG) and os.path.getsize(PNG) > 10_000,
+    check_true("figure written", os.path.isfile(PNG) and os.path.getsize(PNG) > 10000,
                f"{os.path.getsize(PNG)} bytes")
 
     if FAILURES:

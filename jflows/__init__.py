@@ -10,9 +10,9 @@ Public surface:
                        algebra c*U, U+V, U-V, -U, U/c, sum([...]))
     jflows.loss      : reverse_KL_F, forward_KL_G, forward_KLX_G,
                        forward_X_G
-    jflows.train     : Monitor; all train_* stage drivers; all adaptive and
-                       fixed-schedule boltzmann_* generators
-    jflows.artifacts : inspect and recover durable Boltzmann runs
+    jflows.train     : Monitor and all train_* stage drivers
+    jflows.boltzmann : all adaptive and fixed-schedule boltzmann_* generators
+    jflows.artifacts : save and load medium-level training outputs
     jflows.utils     : metrics / optimization / rejuvenation / anneal / quench
 
 Internals (`jflows.core.*`) are a stripped-down port of zuko's flow/transform
@@ -25,12 +25,13 @@ training all take the `Flow` itself (`flow.t()` is the advanced
 composition layer).
 """
 
-from . import artifacts, flow, loss, potential, train, utils
+from . import artifacts, boltzmann, flow, loss, potential, train, utils
 from .version import __version__
 
 __all__ = [
     "__version__",
     "artifacts",
+    "boltzmann",
     "flow",
     "loss",
     "potential",

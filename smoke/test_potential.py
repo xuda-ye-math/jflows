@@ -40,7 +40,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 LOG = os.path.join(HERE, "test_potential.log")
 
 FAILURES = 0
-NSAMP = 200_000
+NSAMP = 200000
 
 
 def log(msg: str) -> None:

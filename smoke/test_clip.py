@@ -39,9 +39,9 @@ import numpy as np  # noqa: E402
 
 from jflows.flow import NCSF  # noqa: E402
 from jflows.potential import Nlog_Uniform, potential_from  # noqa: E402
-from jflows.training.drivers import (  # noqa: E402
+from jflows.train import (  # noqa: E402
     _clip_global,
-    _mask_keep,
+    _kept,
     _masked_mean,
     _masked_pair_mean,
 )
@@ -50,7 +50,7 @@ from jflows.train import (  # noqa: E402
     train_forward_KLX_G,
     train_forward_KLXX_G,
 )
-from jflows.train import boltzmann_forward_KLXX_G  # noqa: E402
+from jflows.boltzmann import boltzmann_forward_KLXX_G  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG = os.path.join(HERE, "test_clip.log")
@@ -131,9 +131,9 @@ def main() -> None:
     check("_masked_pair_mean == numpy pair mean",
           _masked_pair_mean(jnp.asarray(diff), kj, pj),
           (pk * diff).sum() / max(pk.sum(), 1.0), tol=1e-4)
-    keep = _mask_keep(u_smooth, _probe, u_clip=E_SCREEN)
+    keep = _kept(u_smooth, _probe, u_clip=E_SCREEN)
     frac = float(np.asarray(keep).mean())
-    check_true("_mask_keep screens the high-energy tail", 0.4 < frac < 0.8,
+    check_true("_kept screens the high-energy tail", 0.4 < frac < 0.8,
                f"{frac:.2f} kept at the 60th-pct threshold")
 
     # ---- 1. no-op: the ACTIVE masked/clip path, screening nothing, ≈ default.
@@ -156,7 +156,7 @@ def main() -> None:
                      ("KLX_G", train_forward_KLX_G),
                      ("KLXX_G", train_forward_KLXX_G)):
         kw = {} if fn is not train_forward_KLXX_G else dict(
-            melt=2 * math.pi, opt_dt=1e-2, opt_steps=20)
+            pool_size=0, melt=2 * math.pi, opt_dt=1e-2, opt_steps=20)
         base = train(fn, u_smooth, **kw)
         active = train(fn, u_smooth, u_clip=BIG_E, g_clip=BIG_G, **kw)
         d = max_param_delta(active, base)
@@ -169,7 +169,7 @@ def main() -> None:
                      ("KLX_G", train_forward_KLX_G),
                      ("KLXX_G", train_forward_KLXX_G)):
         kw = {} if fn is not train_forward_KLXX_G else dict(
-            melt=2 * math.pi, opt_dt=1e-2, opt_steps=20)
+            pool_size=0, melt=2 * math.pi, opt_dt=1e-2, opt_steps=20)
         unscreened = train(fn, u_smooth, **kw)
         screened = train(fn, u_smooth, u_clip=E_SCREEN, **kw)
         d = max_param_delta(unscreened, screened)
@@ -195,10 +195,10 @@ def main() -> None:
                max_param_delta(f_noclip, f_clip) > 1e-6,
                f"max|Δparam|={max_param_delta(f_noclip, f_clip):.2e}")
 
-    # ---- 4. boltzmann wrapper forwards u_clip / g_clip ----
+    # ---- 4. boltzmann controller forwards u_clip / g_clip ----
     log("boltzmann_forward_KLXX_G forwards u_clip / g_clip:")
     y_bg, stages = boltzmann_forward_KLXX_G(
-        u0.samples(jax.random.key(3), 4000), u0, u_smooth, new_flow(),
+        u0.samples(jax.random.key(3), 4000), u0, u_smooth, new_flow(), 0,
         batch_size=256, train_steps=30, lr=1e-3, ladder=1,
         melt=2 * math.pi, opt_dt=1e-2, opt_steps=20, mc_dt=1e-3, mc_steps=20,
         bg_param={"t_safe": 0.3, "tau_ess": 0.2, "max_stages": 2, "max_retry": 2},

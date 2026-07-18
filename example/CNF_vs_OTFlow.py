@@ -9,9 +9,9 @@ reports the importance-sampling effective sample size (ESS) of the trained
 proposal.
 
 Target potential (factorized, `dimension`-dependent):
-    - the first N_WELL coordinates are symmetric DOUBLE WELLS,
+    - the first WELL_COUNT coordinates are symmetric DOUBLE WELLS,
     - the remaining coordinates are standard Gaussian (quadratic).
-N_WELL independent double wells give 2**N_WELL modes; the Gaussian tail only
+WELL_COUNT independent double wells give 2**WELL_COUNT modes; the Gaussian tail only
 raises the dimension. The wells are deliberately shallow (a low barrier) so
 mode-seeking reverse KL does not collapse onto a subset of the modes.
 
@@ -39,7 +39,7 @@ LOG = HERE / "CNF_vs_OTFlow.log"
 
 # dimension sweep and multi-well target
 DIMS = [4, 8, 16, 32, 64, 128]  # feature dimensions swept (modes stay fixed)
-N_WELL: int = 3        # double-well coordinates -> 2**N_WELL = 8 modes
+WELL_COUNT: int = 3        # double-well coordinates -> 2**WELL_COUNT = 8 modes
 WELL_SEP: float = 1.5  # double-well minima at +/- WELL_SEP (energy 0)
 WELL_BARRIER: float = 1.5  # barrier height at the origin (shallow on purpose)
 
@@ -51,8 +51,8 @@ LAYER: int = 3         # OTFlow ResNet depth
 RANK: int = 10         # OTFlow low-rank quadratic (clamped to d + 1 per cell)
 
 # training parameters (plain reverse KL)
-N_VALID: int = 40000   # fixed source pool per dimension (subsampled per Adam step)
-BATCH_SIZE: int = 512     # source samples per Adam step
+VALID_SZIE: int = 40000   # fixed source pool per dimension (subsampled per Adam step)
+BATCH_SZIE: int = 512     # source samples per Adam step
 TRAIN_STEPS: int = 1000      # Adam steps per cell (one compiled call)
 LR: float = 2e-3       # Adam learning rate
 MONITOR_EVERY: int = 100  # print loss + proposal ESS every MONITOR_EVERY steps
@@ -62,7 +62,7 @@ CHECKPOINT: bool = True  # rematerialize the CNF exact-trace forward pass in the
 CHUNKS: int = 4         # split the full-set ESS evaluation to bound peak memory
 
 # evaluation
-N_ESS: int = 20000     # held-out source set for the final ESS estimate
+ESS_SZIE: int = 20000     # held-out source set for the final ESS estimate
 
 
 class Multi_Well(Potential):
@@ -81,7 +81,7 @@ class Multi_Well(Potential):
     sep: float = eqx.field(static=True)
     barrier: float = eqx.field(static=True)
 
-    def __init__(self, dimension: int, n_well: int = N_WELL,
+    def __init__(self, dimension: int, n_well: int = WELL_COUNT,
                  sep: float = WELL_SEP, barrier: float = WELL_BARRIER):
         self.dimension = dimension
         self.n_well = n_well
@@ -119,16 +119,16 @@ def main() -> None:
     open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START CNF_vs_OTFlow | jax {jax.__version__} | backend {jax.default_backend()} | "
         f"dims={DIMS} NT={NT} hidden={HIDDEN} layer={LAYER} steps={TRAIN_STEPS} "
-        f"batch={BATCH_SIZE} lr={LR} N_VALID={N_VALID} N_ESS={N_ESS} "
-        f"well(n={N_WELL}, sep={WELL_SEP}, barrier={WELL_BARRIER})")
+        f"batch={BATCH_SZIE} lr={LR} VALID_SZIE={VALID_SZIE} ESS_SZIE={ESS_SZIE} "
+        f"well(n={WELL_COUNT}, sep={WELL_SEP}, barrier={WELL_BARRIER})")
 
     results = {"CNF": {}, "OTFlow": {}}
     timings = {"CNF": {}, "OTFlow": {}}
     for d in DIMS:
         u0 = Nlog_Gaussian(mean=[0.0] * d, variance=[1.0] * d)   # standard Gaussian source
         u1 = Multi_Well(dimension=d)                              # 8-mode multi-well target
-        x_valid = u0.samples(jax.random.fold_in(jax.random.key(0), d), N_VALID)  # shared pool
-        x_ess = u0.samples(jax.random.fold_in(jax.random.key(1), d), N_ESS)      # held-out eval set
+        x_valid = u0.samples(jax.random.fold_in(jax.random.key(0), d), VALID_SZIE)  # shared pool
+        x_ess = u0.samples(jax.random.fold_in(jax.random.key(1), d), ESS_SZIE)      # held-out eval set
         for name, build, fkey in (
             ("CNF", new_cnf, jax.random.fold_in(jax.random.key(2), d)),
             ("OTFlow", new_otflow, jax.random.fold_in(jax.random.key(3), d)),
@@ -137,7 +137,7 @@ def main() -> None:
             t0 = time.perf_counter()
             flow, _ = train_reverse_KL_F(
                 x_valid, u0, u1, flow,
-                batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR,
+                batch_size=BATCH_SZIE, train_steps=TRAIN_STEPS, lr=LR,
                 mc_dt=MC_DT, mc_steps=MC_STEPS, checkpoint=CHECKPOINT,
                 monitor=Monitor(MONITOR_EVERY, f"[d={d:>2} {name:<6}] ", log),
             )
@@ -147,7 +147,7 @@ def main() -> None:
             ess = float(compute_ESS_log(log_w))
             results[name][d] = ess
             timings[name][d] = secs
-            log(f"[d={d:>2} {name:<6}] final ESS = {ess:.4f}   ({secs:.1f}s, N_ESS={N_ESS})")
+            log(f"[d={d:>2} {name:<6}] final ESS = {ess:.4f}   ({secs:.1f}s, ESS_SZIE={ESS_SZIE})")
 
     # tidy CSV: one row per flow x dimension (flow, dimension, ess, train_seconds)
     csv_path = HERE / "CNF_vs_OTFlow.csv"

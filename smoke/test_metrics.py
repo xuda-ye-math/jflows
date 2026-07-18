@@ -53,7 +53,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 LOG = os.path.join(HERE, "test_metrics.log")
 
 FAILURES = 0
-NSAMP = 200_000
+NSAMP = 200000
 
 
 def log(msg: str) -> None:
@@ -141,11 +141,6 @@ def main() -> None:
           jnp.exp(lw_g - lw_g.max()), tol=1e-14)
     check("chunk invariance", importance_weights_log(xw, source, target, nsf, type="F", chunks=3),
           lw, tol=1e-12)
-    try:
-        importance_weights_log(xw, source, target, nsf, type="Z")
-        check_true("invalid type raises", False)
-    except ValueError:
-        check_true("invalid type raises", True)
     ess_flow = compute_ESS_log(lw)
     check_true("end-to-end ESS in (0, 1]",
                bool((ess_flow > 0) & (ess_flow <= 1.0)), f"ESS = {float(ess_flow):.4f}")

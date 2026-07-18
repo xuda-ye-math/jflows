@@ -49,16 +49,14 @@ plt.rcParams.update({
 from jax import Array
 from jflows.flow import NSF
 from jflows.potential import Nlog_Gaussian, Potential
-from jflows.train import (
-    Monitor,
+from jflows.train import Monitor
+from jflows.boltzmann import (
     boltzmann_forward_KL_G,
     boltzmann_reverse_KL_F,
 )
-from jflows.artifacts import inspect_run
 
 HERE = Path(__file__).resolve().parent
 LOG = HERE / "4D_boltzmann.log"
-RUN_ROOT = Path(os.environ.get("JFLOWS_RUN_ROOT", "run/4D_boltzmann"))
 
 # target physics
 R0: float = 2.0        # annulus radius of the soft trap
@@ -73,8 +71,8 @@ TRANSFORMS: int = 6    # autoregressive transforms stacked in the flow
 HIDDEN_FEATURES = (64, 64)   # hidden widths of each conditioner MLP
 
 # training parameters
-N_VALID: int = 120000   # exact population for selection, training, and validation
-BATCH_SIZE: int = 2000    # batch drawn from the fixed set per Adam step
+VALID_SZIE: int = 120000   # exact population for selection, training, and validation
+BATCH_SZIE: int = 2000    # batch drawn from the fixed set per Adam step
 TRAIN_STEPS: int = 500       # Adam steps per stage attempt (one compiled call)
 LR: float = 1e-4       # Adam learning rate
 MONITOR_EVERY: int = 20  # print loss + proposal ESS every MONITOR_EVERY steps
@@ -135,9 +133,9 @@ def log(msg: str) -> None:
 def main() -> None:
     open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START 4D_boltzmann | jax {jax.__version__} | "
-        f"backend {jax.default_backend()} | N_VALID={N_VALID} "
-        f"BATCH_SIZE={BATCH_SIZE} TRAIN_STEPS={TRAIN_STEPS} LR={LR} MC={MC_DT}x{MC_STEPS} bg={BG_PARAM}")
-    x_valid = u0.samples(jax.random.key(2), N_VALID)  # the fixed N_VALID source set
+        f"backend {jax.default_backend()} | VALID_SZIE={VALID_SZIE} "
+        f"BATCH_SZIE={BATCH_SZIE} TRAIN_STEPS={TRAIN_STEPS} LR={LR} MC={MC_DT}x{MC_STEPS} bg={BG_PARAM}")
+    x_valid = u0.samples(jax.random.key(2), VALID_SZIE)
 
     def new_flow(key):
         return NSF(key, a=[-NSF_LIM] * 4, b=[NSF_LIM] * 4, bins=BINS,
@@ -148,33 +146,21 @@ def main() -> None:
         ("reverse KL", jax.random.key(0)),
         ("forward KL", jax.random.key(1)),
     ):
-        run_dir = RUN_ROOT / name.lower().replace(" ", "_")
-        resume = (run_dir / "run.json").is_file()
-        run_samples = None if resume else x_valid
-        if resume:
-            log(f"[{name}] resuming durable run at {run_dir}")
         t0 = time.time()
         if name == "reverse KL":
             y, stages = boltzmann_reverse_KL_F(
-                run_samples, u0, u1, new_flow(key_f),
-                batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=LADDER,
+                x_valid, u0, u1, new_flow(key_f),
+                batch_size=BATCH_SZIE, train_steps=TRAIN_STEPS, lr=LR, ladder=LADDER,
                 mc_dt=MC_DT, mc_steps=MC_STEPS,
                 monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log), bg_param=BG_PARAM,
-                run_dir=run_dir, resume=resume, problem_id="4d-two-charge-v1",
             )
         else:
             y, stages = boltzmann_forward_KL_G(
-                run_samples, u0, u1, new_flow(key_f),
-                batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=LADDER,
+                x_valid, u0, u1, new_flow(key_f),
+                batch_size=BATCH_SZIE, train_steps=TRAIN_STEPS, lr=LR, ladder=LADDER,
                 mc_dt=MC_DT, mc_steps=MC_STEPS,
                 monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log), bg_param=BG_PARAM,
-                run_dir=run_dir, resume=resume, problem_id="4d-two-charge-v1",
             )
-        manifest = inspect_run(run_dir)
-        log(
-            f"[{name}] durable lifecycle={manifest['lifecycle']} "
-            f"training_time={manifest['training_elapsed_seconds_total']:.1f}s"
-        )
         ts = [s["t"] for s in stages]
         log(f"[{name}] ladder done in {time.time() - t0:.1f}s: "
             f"t = {[round(t, 4) for t in ts]}  "
@@ -190,7 +176,7 @@ def main() -> None:
                 f"[{name}] stage ESS: min = "
                 f"{min(s['valid_selected_ess'] for s in stages):.4f}   "
                 f"last = {stages[-1]['valid_selected_ess']:.4f}   "
-                f"(N_VALID = {N_VALID})"
+                f"(VALID_SZIE = {VALID_SZIE})"
             )
         results[name] = (y, stages)
 

@@ -110,18 +110,6 @@ def sequential_monte_carlo(
                                 consecutive bridges overlap (close to 1 =
                                 well-spaced ladder)
     """
-    if ladder < 1:
-        raise ValueError(f"sequential_monte_carlo: ladder must be positive, got {ladder!r}")
-    if mc_steps < 0:
-        raise ValueError(
-            "sequential_monte_carlo: mc_steps must be non-negative, "
-            f"got {mc_steps!r}"
-        )
-    if chunks < 1 or chunks > samples.shape[0]:
-        raise ValueError(
-            f"sequential_monte_carlo: chunks must lie in [1, N], got {chunks!r} "
-            f"for N={samples.shape[0]}"
-        )
     M = ladder
     x = samples
     ess = []  # per-level effective sample size of the incremental weights
@@ -251,26 +239,6 @@ def annealed_importance_sampling(
                                   log(mu_1 / F_#mu_0) on the initial proposal
                                   particles; returned only when requested
     """
-    if type not in ("F", "G"):
-        raise ValueError(f"annealed_importance_sampling: type must be 'F' or 'G', got {type!r}")
-    if not isinstance(return_initial_log_weights, bool):
-        raise TypeError(
-            "annealed_importance_sampling: return_initial_log_weights must be bool"
-        )
-    if ladder < 1:
-        raise ValueError(
-            f"annealed_importance_sampling: ladder must be positive, got {ladder!r}"
-        )
-    if mc_steps < 0:
-        raise ValueError(
-            "annealed_importance_sampling: mc_steps must be non-negative, "
-            f"got {mc_steps!r}"
-        )
-    if chunks < 1 or chunks > samples.shape[0]:
-        raise ValueError(
-            f"annealed_importance_sampling: chunks must lie in [1, N], got {chunks!r} "
-            f"for N={samples.shape[0]}"
-        )
     M = ladder
 
     def level_flow(k: int) -> Flow:

@@ -180,7 +180,7 @@ def main() -> None:
     cbar.set_label("normalized density", fontsize=10)
     fig.savefig(PNG, dpi=150)
     plt.close(fig)
-    check_true("figure written", os.path.isfile(PNG) and os.path.getsize(PNG) > 10_000,
+    check_true("figure written", os.path.isfile(PNG) and os.path.getsize(PNG) > 10000,
                f"{os.path.getsize(PNG)} bytes")
 
     if FAILURES:

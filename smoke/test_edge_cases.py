@@ -3,8 +3,8 @@
 Run from the repository root as ``python -m smoke.test_edge_cases``.
 The cases here are deliberately small: they protect behavior that ordinary
 end-to-end examples rarely encounter (one-dimensional autoregressive flows,
-near-singular LU parameters, invalid weights/schedules, integer constructor
-inputs, and non-finite clipping masks).
+near-singular LU parameters, invalid weights, integer constructor inputs, and
+non-finite clipping masks).
 """
 
 import os
@@ -16,21 +16,16 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from jflows.training.spec import (
-    normalize_adaptive_policy,
-    normalize_fixed_schedule,
-)
 from jflows.core.transforms import LULinearTransform
 from jflows.flow import CNF, NCSF, NSF, OTFlow, RealNVP
 from jflows.potential import Nlog_Gaussian, Nlog_Gaussian_Mixture, Nlog_Uniform
-from jflows.training.drivers import (
+from jflows.train import (
     _adam_step,
     _clip_global,
     _masked_mean,
     _masked_pair_mean,
 )
-from jflows.utils import (compute_ESS, compute_ESS_log, coverage, langevin,
-                          resample, stochastic_heun)
+from jflows.utils import compute_ESS, compute_ESS_log, resample
 
 
 FAILURES = 0
@@ -198,42 +193,6 @@ def main():
            lambda: Nlog_Gaussian_Mixture([0, 0], [[0], [1]], [[1], [1]]))
     raises("uniform rejects complex bounds", ValueError,
            lambda: Nlog_Uniform([0j], [1 + 0j]))
-
-    # Coverage needs a genuine k-nearest-neighbor radius (self excluded).
-    raises("coverage rejects k=P", ValueError,
-           lambda: coverage(jnp.zeros((2, 1)), jnp.zeros((5, 1)), k=5))
-    raises("coverage rejects one-point reference", ValueError,
-           lambda: coverage(jnp.zeros((2, 1)), jnp.zeros((1, 1)), k=1))
-    gaussian = Nlog_Gaussian([0.0], [1.0])
-    particles = jnp.zeros((2, 1))
-    raises("Langevin rejects negative step", ValueError,
-           lambda: langevin(jax.random.key(0), particles, gaussian, dt=-1.0))
-    raises("Langevin rejects NaN step", ValueError,
-           lambda: langevin(jax.random.key(0), particles, gaussian,
-                            dt=float("nan")))
-    raises("Langevin rejects negative taming", ValueError,
-           lambda: langevin(jax.random.key(0), particles, gaussian,
-                            taming=-1.0, adjust=False))
-    raises("Heun rejects zero step", ValueError,
-           lambda: stochastic_heun(jax.random.key(0), particles, gaussian, dt=0.0))
-
-    # Invalid adaptive/fixed schedules should fail before compilation/training.
-    raises("adaptive ladder rejects zero enlarge", ValueError,
-           lambda: normalize_adaptive_policy("test", {"enlarge_factor": 0.0}))
-    raises("adaptive ladder rejects subnormal no-progress enlarge", ValueError,
-           lambda: normalize_adaptive_policy("test", {"enlarge_factor": 5e-324}))
-    raises("adaptive ladder rejects NaN", ValueError,
-           lambda: normalize_adaptive_policy("test", {"tau_ess": float("nan")}))
-    raises("adaptive ladder rejects Boolean safe step", ValueError,
-           lambda: normalize_adaptive_policy("test", {"t_safe": True}))
-    raises("adaptive ladder rejects Boolean ESS threshold", ValueError,
-           lambda: normalize_adaptive_policy("test", {"tau_ess": False}))
-    raises("fixed ladder rejects NaN", ValueError,
-           lambda: normalize_fixed_schedule("test", [0.2, float("nan"), 1.0]))
-    raises("fixed ladder rejects Boolean endpoint", ValueError,
-           lambda: normalize_fixed_schedule("test", [True]))
-    raises("fixed ladder rejects duplicate level", ValueError,
-           lambda: normalize_fixed_schedule("test", [0.2, 0.2, 1.0]))
 
     if FAILURES:
         print(f"DONE — {FAILURES} FAILURE(S)")

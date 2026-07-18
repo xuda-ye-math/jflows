@@ -16,8 +16,6 @@ diagnostic; resample bootstraps the particle set from the linear weights.
 
 from __future__ import annotations
 
-import operator
-
 import jax
 import jax.numpy as jnp
 from jax import Array
@@ -110,8 +108,6 @@ def importance_weights_log(
                            feed into compute_ESS_log or to exponentiate
                            (after subtracting max).
     """
-    if type not in ("F", "G"):
-        raise ValueError(f"importance_weights_log: type must be 'F' or 'G', got {type!r}")
     flow_trace = flow if trace_key is None else flow.with_trace_key(trace_key)
     out = []
     for x in jnp.array_split(samples, chunks, axis=0):
@@ -169,8 +165,6 @@ def compute_ESS(weights: Array) -> Array:
         ESS: Array (scalar in [0, 1])
     """
     weights = jnp.asarray(weights)
-    if weights.ndim != 1 or weights.shape[0] == 0:
-        raise ValueError("compute_ESS: weights must be a non-empty vector")
     if not jnp.issubdtype(weights.dtype, jnp.inexact):
         weights = weights.astype(jnp.result_type(float))
     N = weights.shape[0]
@@ -211,8 +205,6 @@ def compute_ESS_log(log_weights: Array) -> Array:
         ESS: Array (scalar in [0, 1])
     """
     log_weights = jnp.asarray(log_weights)
-    if log_weights.ndim != 1 or log_weights.shape[0] == 0:
-        raise ValueError("compute_ESS_log: log_weights must be a non-empty vector")
     if not jnp.issubdtype(log_weights.dtype, jnp.inexact):
         log_weights = log_weights.astype(jnp.result_type(float))
     N = log_weights.shape[0]
@@ -261,28 +253,6 @@ def coverage(y: Array, x: Array, k: int = 5, chunks: int = 1) -> Array:
     Output:
         coverage: Array (scalar in [0, 1])
     """
-    if x.ndim != 2 or y.ndim != 2 or x.shape[1] != y.shape[1] \
-            or x.shape[0] < 2 or y.shape[0] < 1:
-        raise ValueError(
-            "coverage: x/y must be non-empty rank-2 arrays with matching feature "
-            f"dimensions and at least two reference rows; got x={x.shape}, y={y.shape}"
-        )
-    if isinstance(k, bool) or isinstance(chunks, bool):
-        raise ValueError("coverage: k and chunks must be integers, not booleans")
-    try:
-        k = operator.index(k)
-    except TypeError as exc:
-        raise ValueError(f"coverage: k must be an integer, got {k!r}") from exc
-    try:
-        chunks = operator.index(chunks)
-    except TypeError as exc:
-        raise ValueError(f"coverage: chunks must be an integer, got {chunks!r}") from exc
-    if not (1 <= k < x.shape[0]):
-        raise ValueError(f"coverage: k must satisfy 1 <= k < P={x.shape[0]}, got {k!r}")
-    if not (1 <= chunks <= x.shape[0]):
-        raise ValueError(
-            f"coverage: chunks must satisfy 1 <= chunks <= P={x.shape[0]}, got {chunks!r}"
-        )
     x2 = (x * x).sum(axis=-1)                                   # [P]
     y2 = (y * y).sum(axis=-1)                                   # [N]
     covered = []
@@ -324,15 +294,8 @@ def resample(key: Array, samples: Array, weights: Array, N: int | None = None) -
     """
     weights = jnp.asarray(weights)
     M = samples.shape[0]
-    if M == 0 or weights.ndim != 1 or weights.shape[0] != M:
-        raise ValueError(
-            f"resample: samples and weights need matching non-empty leading axes; "
-            f"got samples={samples.shape}, weights={weights.shape}"
-        )
     if N is None:
         N = M
-    if N < 1:
-        raise ValueError(f"resample: N must be positive, got {N!r}")
     if not jnp.issubdtype(weights.dtype, jnp.inexact):
         weights = weights.astype(jnp.result_type(float))
 

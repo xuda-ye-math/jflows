@@ -3,7 +3,7 @@
 
 # jflows
 
-JAX normalizing flows for unconditional energy-based sampling and Boltzmann generators, built on [equinox](https://github.com/patrick-kidger/equinox). The package supports fully recoverable Boltzmann training: every stage, candidate flow, validation population, ESS history, and timing record can be inspected and resumed.
+JAX normalizing flows for unconditional energy-based sampling and Boltzmann generators, built on [equinox](https://github.com/patrick-kidger/equinox). Optional stage-level storage saves each complete Boltzmann stage so an interrupted stage can be recomputed from the last complete population.
 
 > **Status: experimental.** Tested only on **Linux + NVIDIA GPU** (CUDA-enabled `jax`); Google TPU and AMD GPU should also work. JAX GPU is not supported on Windows — not even under WSL.
 >
@@ -139,9 +139,12 @@ execution partition, but XLA may schedule buffers across chunks; it is not a
 strict peak-VRAM guarantee. Rejuvenation and optimizer routines retain their
 compiled-scan implementations.
 
-**Medium level: training drivers.** Every `jflows.train` stage driver calls an
-`eqx.filter_jit`-compiled kernel that runs all Adam steps in one `lax.scan`. Sampling,
-loss/gradient evaluation, and the Adam update remain in that compiled stage.
+**Medium level: training drivers.** Reverse KL, forward KL, and KLX are
+`eqx.filter_jit`-compiled stage implementations that run all Adam steps in one
+`lax.scan`. KLXX deliberately executes its chunked quench-and-temper pool
+eagerly first, then runs the Adam steps in a compiled `lax.scan`; this keeps QT
+chunking outside an enclosing JIT. Sampling, loss/gradient evaluation, and the
+Adam update remain inside each trainer's scan.
 Every step draws a new subset and regenerates its training data, so no frozen
 batch is reused:
 
@@ -165,13 +168,22 @@ flow, batch_ess_hist = train_forward_KL_G(
     ladder=1, mc_dt=1e-3, mc_steps=100,
     initialize_from_identity=True, u_clip=100.0,
 )
+
+# KLXX: pool_size=0 quenches x_valid; a positive value draws a separate pool.
+flow, batch_ess_hist = train_forward_KLXX_G(
+    x_valid, source, target, flow,
+    pool_size=1000, batch_size=2000, train_steps=200, lr=1e-3,
+    ladder=1, melt=2.0, opt_dt=0.5, opt_steps=200,
+    mc_dt=1e-3, mc_steps=100, chunks=16,
+)
 ```
 
-Both drivers are deterministic (per-step keys derive from a fixed internal
-seed). Each fixed configuration compiles as one stage call and returns the
-trained flow together with the per-step proposal-to-target batch-ESS history
-(measured before AIS correction for the forward trainers). An optional
-`Monitor` reports from inside the compiled scan via `jax.debug.callback`:
+The drivers are deterministic (per-step keys derive from a fixed internal
+seed). Each call returns the trained flow together with the per-step
+proposal-to-target batch-ESS history (measured before AIS correction for the
+forward trainers). Reverse KL, forward KL, and KLX compile as one outer stage
+call; KLXX runs eager QT followed by its compiled optimizer scan. An optional
+`Monitor` reports from inside the scan via `jax.debug.callback`:
 
 ```python
 flow, batch_ess_hist = train_reverse_KL_F(
@@ -183,9 +195,10 @@ flow, batch_ess_hist = train_reverse_KL_F(
 
 Across the public API, `dt` denotes an integration step size and `steps` a
 count. Composite controls use `mc_dt` / `mc_steps`, `opt_dt` /
-`opt_steps`, and `train_steps`; cardinalities use `batch_size`, `N_VALID`,
-and `chunks`. All selection and validation operations use the complete
-validation population; there is no separately sized selection population.
+`opt_steps`, and `train_steps`; cardinalities use `batch_size`, `pool_size`,
+and `chunks`. Benchmark scripts use the constant names `VALID_SZIE`,
+`POOL_SIZE`, and `BATCH_SZIE`. `pool_size=0` gives the full-validation KLXX
+route; a positive value gives the separately sampled pool route.
 
 **High level: the annealed Boltzmann generator.** On top of the stage trainers, `boltzmann_reverse_KL_F` runs the full annealed
 Boltzmann generator on the bridge ladder $U_t = (1-t)\,U_0 + t\,U_1$ with an
@@ -202,7 +215,7 @@ identity map (pure SMC reweighting, computed with no flow inverse) has the highe
 incremental ESS, so a stage is never worse than SMC:
 
 ```python
-from jflows.train import boltzmann_reverse_KL_F
+from jflows.boltzmann import boltzmann_reverse_KL_F
 
 y_valid, stages = boltzmann_reverse_KL_F(
     x_valid, source, target, flow,
@@ -210,8 +223,6 @@ y_valid, stages = boltzmann_reverse_KL_F(
     ladder=1, mc_dt=1e-3, mc_steps=100,
     bg_param={"t_safe": 0.1, "shrink_factor": 0.7, "enlarge_factor": 1.5, "tau_ess": 0.6},
     initialize_from_identity=True,
-    run_dir="run/boltzmann",
-    problem_id="my-target-v1",
 )
 ```
 
@@ -224,25 +235,28 @@ The return values and stage metadata are:
     `valid_identity_ess`;
   - attempt-aligned diagnostics `t_hist`, `batch_ess_hist`,
     `valid_trained_ess_hist`, and `valid_identity_ess_hist`;
-  - `trained_flow_path_hist`, which makes every trained candidate, including
-    rejected ones, recoverable;
-  - `selected_flow_path`, which names the committed trained-or-identity stage
-    map; and
-  - the exact post-stage `N_VALID` validation population for every accepted
-    stage.
+  - `flow` and `continuation_flow`, the selected stage map and the next warm
+    start; and
+  - the attempt status, selection history, and elapsed stage time.
 
-Resume an interrupted fixed or adaptive run from its durable current stage;
-committed stages are not recomputed and saved validation samples are
-authoritative:
+Storage and resume are deliberately separate from the eight public
+`jflows.boltzmann` computation functions. `jflows.boltzmann.write` publishes
+only complete stages; `jflows.boltzmann.load` validates and reloads the last
+complete population, continuation flow, and stage records. If a process stops
+inside a stage, that stage is recomputed. There is no attempt-level transaction
+state machine. The lower-level `load.run` controller accepts an explicit stage
+iterator for package-level continuation workflows:
 
 ```python
-y_valid, stages = boltzmann_reverse_KL_F(
-    None, source, target, flow,
-    batch_size=2000, train_steps=500, lr=1e-4,
-    ladder=1, mc_dt=1e-3, mc_steps=100,
-    bg_param={"t_safe": 0.1, "shrink_factor": 0.7, "enlarge_factor": 1.5, "tau_ess": 0.6},
-    run_dir="run/boltzmann", problem_id="my-target-v1", resume=True,
+from jflows.boltzmann.load import run
+
+# `iterate` receives (samples, flow, accepted_t, start_stage) and yields
+# (samples, stage_record, continuation_flow).
+y_valid, stages = run(
+    "run/boltzmann", "my-target-v1", config,
+    x_valid, flow, iterate, resume=False,
 )
+# Repeat with resume=True after an interruption.
 ```
 
 ## Package layout
@@ -250,6 +264,10 @@ y_valid, stages = boltzmann_reverse_KL_F(
 ```
 jflows
 ├── artifacts.py
+├── boltzmann
+│   ├── __init__.py
+│   ├── load.py
+│   └── write.py
 ├── core
 │   ├── flows.py
 │   ├── __init__.py
@@ -262,15 +280,6 @@ jflows
 ├── loss.py
 ├── potential.py
 ├── train.py
-├── training
-│   ├── boltzmann.py
-│   ├── drivers.py
-│   ├── records.py
-│   ├── run_store.py
-│   ├── signatures.py
-│   ├── spec.py
-│   ├── state.py
-│   └── validation.py
 ├── version.py
 └── utils
     ├── anneal.py
@@ -305,9 +314,9 @@ PRNG implementation (`threefry2x32`, `rbg`, etc.), although the seed itself may
 differ.
 
 **Importing.** Use the public submodules `flow`, `potential`, `loss`, `train`,
-`artifacts`, and `utils`, and call `help(foo_name)` to read the documents. All
-stage trainers and Boltzmann generators are exported by `jflows.train`. For
-example:
+`boltzmann`, `artifacts`, and `utils`, and call `help(foo_name)` to read the
+documents. Stage trainers are exported by `jflows.train`; Boltzmann generators
+are exported by the `jflows.boltzmann` package. For example:
 
 ```python
 from jflows.flow import NSF, RealNVP
@@ -317,8 +326,9 @@ from jflows.train import (
     Monitor,
     train_reverse_KL_F,
     train_forward_KL_G,
-    boltzmann_reverse_KL_F,
 )
+from jflows.boltzmann import boltzmann_reverse_KL_F
+from jflows.artifacts import save_flow, save_samples, save_history
 from jflows.utils import importance_weights, compute_ESS, resample, langevin
 
 help(NSF)
@@ -326,7 +336,22 @@ help(NSF)
 
 ## Examples
 
-Worked examples for each model — a 2D Gaussian mixture, a 3D periodic (NCSF) target, and the 4D two-charge annealed Boltzmann generator — live in [`example/`](example). See [`example/results.md`](example/results.md) for the scripts, figures, and discussion.
+Worked examples live in [`example/`](example). They cover a 2D Gaussian
+mixture, a 3D periodic NCSF target, a 4D two-charge annealed Boltzmann
+generator, a CNF/OTFlow dimension sweep, and NSF forward/inverse latency. See
+[`example/results.md`](example/results.md) for the full setups, tables, figures,
+and discussion.
+
+The complete example suite was rerun on 2026-07-18 with JAX 0.10.2 on an
+NVIDIA RTX 5090. The main verified outputs are:
+
+| example | verified result |
+| :-- | :-- |
+| 2D single stage | reverse/forward ESS `0.9425 / 0.9469` |
+| 3D periodic | reverse/forward ESS `0.8980 / 0.9046` |
+| 4D Boltzmann | reverse ESS `[0.780, 0.931, 0.947, 0.971, 0.991]`; forward ESS `[0.763, 0.902, 0.962, 0.997]` |
+| CNF vs OTFlow, $d=128$ | ESS `0.4291 / 0.5927` |
+| NSF latency, width 64x64 | forward `0.179 -> 0.407 ms`; inverse `0.436 -> 41.539 ms` from $d=4$ to $128$ |
 
 ## Acknowledgements
 

@@ -11,9 +11,9 @@ Single-stage flow training on a 2D three-mode target, comparing the reverse KL a
 - **Source** $\mu_0 \propto e^{-U_0}$: isotropic Gaussian, $U_0(x) = \lVert x\rVert^2 / (2\sigma^2)$, $\sigma = 2$.
 - **Target** $\mu_1 \propto e^{-U_1}$: three-mode Gaussian mixture placed like the Julia three-dot sign — equal weights, means $(0, 2.4)$, $(-2.2, -1.4)$, $(2.2, -1.4)$, per-coordinate variance $0.3$. The modes are separated by $\sim 8$ standard deviations, so a mode-seeking objective can lose mass while a mass-covering one should not.
 - **Flow**: NSF on $[-5, 5]^2$, 16 bins, 4 autoregressive transforms, $(64, 64)$ conditioners, identity-initialised (`zeros()`).
-- **Training**: one packed call per method — `N_VALID = 40000` fixed source set, `BATCH_SIZE = 2000` per Adam step, `TRAIN_STEPS = 200`, `LR = 1e-3`, Langevin rejuvenation `MC_DT = 1e-3`, `MC_STEPS = 100`, single-level AIS (`LADDER = 1`).
+- **Training**: one packed call per method — `VALID_SZIE = 40000` fixed source set, `BATCH_SZIE = 2000` per Adam step, `TRAIN_STEPS = 200`, `LR = 1e-3`, Langevin rejuvenation `MC_DT = 1e-3`, `MC_STEPS = 100`, single-level AIS (`LADDER = 1`).
 
-Both trainers regenerate their batch inside every Adam step. The reverse KL flow acts as $F$ (source → target, `train_reverse_KL_F`): each step draws a `BATCH_SIZE` subset of the fixed set and freshens it with Langevin steps at the source. The forward KL flow acts as $G$ (target → source, `train_forward_KL_G`): each step manufactures its target batch by single-level AIS through the *current* flow — inverse pushforward, self-normalized reweighting, multinomial resampling, and Langevin rejuvenation at the target. The loss is differentiated only in its native $G$ direction; the detached AIS data-generation path performs the inverse push. The final ESS is computed on the full fixed source set through the flow importance weights.
+Both trainers regenerate their batch inside every Adam step. The reverse KL flow acts as $F$ (source → target, `train_reverse_KL_F`): each step draws a `BATCH_SZIE` subset of the fixed set and freshens it with Langevin steps at the source. The forward KL flow acts as $G$ (target → source, `train_forward_KL_G`): each step manufactures its target batch by single-level AIS through the *current* flow — inverse pushforward, self-normalized reweighting, multinomial resampling, and Langevin rejuvenation at the target. The loss is differentiated only in its native $G$ direction; the detached AIS data-generation path performs the inverse push. The final ESS is computed on the full fixed source set through the flow importance weights.
 
 ### Results
 
@@ -21,14 +21,14 @@ Both trainers regenerate their batch inside every Adam step. The reverse KL flow
 
 | objective  | final ESS ($N = 40000$) | batch ESS along training |
 | :--------: | :---------------------: | :----------------------: |
-| reverse KL |         0.9409          |   0.19 -> 0.85 -> 0.94   |
-| forward KL |         0.9486          |   0.18 -> 0.93 -> 0.95   |
+| reverse KL |         0.9425          |   0.19 -> 0.83 -> 0.94   |
+| forward KL |         0.9469          |   0.18 -> 0.92 -> 0.94   |
 
 </div>
 
 <p align="center"><img src="2D_single.png" alt="2D single-stage training" width="1000px"></p>
 
-The left panel shows the per-step proposal-to-target batch-ESS histories returned by the trainers (x-axis exactly $[0, 200]$). For forward KL this is measured on the current proposal immediately before AIS correction, matching the final importance-weight convention. The middle and right panels show the `N_VALID` pushforward samples of each method (blue: $y = F(x)$; red: $y = G^{-1}(x)$) over the target energy background, with 5000 source samples in gray for context.
+The left panel shows the per-step proposal-to-target batch-ESS histories returned by the trainers (x-axis exactly $[0, 200]$). For forward KL this is measured on the current proposal immediately before AIS correction, matching the final importance-weight convention. The middle and right panels show the `VALID_SZIE` pushforward samples of each method (blue: $y = F(x)$; red: $y = G^{-1}(x)$) over the target energy background, with 5000 source samples in gray for context.
 
 ### Reading the result
 
@@ -46,7 +46,7 @@ Run by [`3D_periodic.py`](3D_periodic.py): its purpose is to show that the **NCS
 - **Target** $\mu_1 \propto e^{-U_1}$: the von Mises ridge mixture on the 3-torus,
   $U_1(x) = -\log[\, e^{\kappa\cos(x_1 - x_2)} + e^{\kappa\cos(x_2 - x_3)} + e^{\kappa\cos(x_3 - x_1)} \,]$, $\kappa = 4$ — three pairwise ridges that wrap around the torus.
 - **Flow**: NCSF on $[-\pi, \pi]^3$, 8 bins, 4 autoregressive transforms, $(128, 128)$ conditioners, identity-initialised.
-- **Training**: one packed call per objective — `N_VALID = 40000` fixed source set, `BATCH_SIZE = 2000` per Adam step, `TRAIN_STEPS = 200`, `LR = 1e-3` — followed by the reweighting pipeline: importance weights → ESS → multinomial resampling → MALA rejuvenation at the target (`1e-3 × 100`).
+- **Training**: one packed call per objective — `VALID_SZIE = 40000` fixed source set, `BATCH_SZIE = 2000` per Adam step, `TRAIN_STEPS = 200`, `LR = 1e-3` — followed by the reweighting pipeline: importance weights → ESS → multinomial resampling → MALA rejuvenation at the target (`1e-3 × 100`).
 
 ### Results
 
@@ -54,8 +54,8 @@ Run by [`3D_periodic.py`](3D_periodic.py): its purpose is to show that the **NCS
 
 | objective  | final ESS ($N = 40000$) |
 | :--------: | :---------------------: |
-| reverse KL |         0.8977          |
-| forward KL |         0.8971          |
+| reverse KL |         0.8980          |
+| forward KL |         0.9046          |
 
 </div>
 
@@ -74,18 +74,19 @@ The 4D two-charge target, sampled by [`4D_boltzmann.py`](4D_boltzmann.py) with B
   $U_1(x) = a\,[(\lVert x_1\rVert^2 - r_0^2)^2 + (\lVert x_2\rVert^2 - r_0^2)^2] + q^2 / \sqrt{\lVert x_1 - x_2\rVert^2 + \varepsilon^2}$
   with $r_0 = 2$, $a = 1$, $q^2 = 4$, $\varepsilon = 10^{-3}$ (identical to the original).
 - **Flow**: NSF on $[-3, 3]^4$, 8 bins, 6 autoregressive transforms, $(64, 64)$ conditioners, identity-initialised.
-- **Boltzmann generators**: the stage flows are connected step by step — stage $k$ selects $t_k$ through the SMC gate (`tau_smc`, `LADDER = 1` level, on the exact full validation population), trains an identity-initialized incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$ on the advancing particle set, accepts on the incremental importance-sampling ESS (`tau_ess`), and advances the set by reweight → resample → MALA at $U_{t_k}$ (`mc_adjust = True`; the Metropolis gate keeps the near-singular Coulomb tail out of the particle set). The reverse KL stages train on Langevin-freshened batches of the set; the forward KL stages train on target batches manufactured per Adam step by AIS through the current flow (SMC gate and AIS share `LADDER`). Parameters: `N_VALID = 120000`, `BATCH_SIZE = 2000`, `TRAIN_STEPS = 500`, `LR = 1e-4`, MALA `1e-3 × 100`; ladder `t_safe = 0.2`, `shrink_factor = 0.7`, `enlarge_factor = 1.5`, `tau_smc = 0.2`, `tau_ess = 0.6`.
+- **Boltzmann generators**: the stage flows are connected step by step — stage $k$ selects $t_k$ through the SMC gate (`tau_smc`, `LADDER = 1` level, on the exact full validation population), trains an identity-initialized incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$ on the advancing particle set, accepts on the incremental importance-sampling ESS (`tau_ess`), and advances the set by reweight → resample → MALA at $U_{t_k}$ (`mc_adjust = True`; the Metropolis gate keeps the near-singular Coulomb tail out of the particle set). The reverse KL stages train on Langevin-freshened batches of the set; the forward KL stages train on target batches manufactured per Adam step by AIS through the current flow (SMC gate and AIS share `LADDER`). Parameters: `VALID_SZIE = 120000`, `BATCH_SZIE = 2000`, `TRAIN_STEPS = 500`, `LR = 1e-4`, MALA `1e-3 × 100`; ladder `t_safe = 0.2`, `shrink_factor = 0.7`, `enlarge_factor = 1.5`, `tau_smc = 0.2`, `tau_ess = 0.6`.
 
 ### Results
 
-The verified rerun completed both recoverable ladders. Reverse KL accepted
-five levels, $t=[0.098, 0.245, 0.4655, 0.7963, 1.0]$, with incremental ESS
-$[0.795, 0.935, 0.948, 0.971, 0.992]$. Forward KL accepted four levels,
+The verified rerun completed both adaptive ladders. Reverse KL accepted five
+levels, $t=[0.098, 0.245, 0.4655, 0.7963, 1.0]$, with incremental ESS
+$[0.780, 0.931, 0.947, 0.971, 0.991]$. Forward KL accepted four levels,
 $t=[0.2, 0.5, 0.95, 1.0]$, with ESS
-$[0.763, 0.903, 0.962, 0.997]$. The run used durable stage directories and
-finished with lifecycle `complete` for both objectives. Exact decisions can
-move slightly with accelerator kernels, and the script refuses to produce a
-target-labelled figure if either ladder is incomplete.
+$[0.763, 0.902, 0.962, 0.997]$. The first reverse stage reached $t=0.098$
+after the expected rejected candidates $0.2$ and $0.14$ under
+`shrink_factor = 0.7`; the table reports accepted stages only. Exact ESS values
+can move slightly with accelerator kernels, and the script refuses to produce
+a target-labelled figure if either ladder is incomplete.
 
 The accepted ESS is per stage the better of the trained flow and the identity
 map (pure SMC reweighting): after training, each stage keeps whichever has the
@@ -109,7 +110,7 @@ CNF versus OTFlow on a fixed multi-modal target as the dimension grows, run by [
 - **Target** $\mu_1 \propto e^{-U_1}$: a factorized multi-well potential whose mode count stays fixed while $d$ is swept,
   $U_1(x) = \sum_{i < 3} \beta_{\mathrm w}\,((x_i / s)^2 - 1)^2 + \sum_{i \ge 3} \tfrac12 x_i^2$, with $s = 1.5$, $\beta_{\mathrm w} = 1.5$. The first three coordinates are symmetric double wells (minima at $\pm s$), giving $2^3 = 8$ modes; the remaining $d - 3$ coordinates are standard Gaussian and only raise the dimension. The barrier is deliberately shallow so mode-seeking reverse KL must cover all eight modes rather than collapse onto a subset.
 - **Flows**: `CNF` (FFJORD, free-form MLP velocity, exact $O(d)$ augmented-Jacobian trace) with `frequency = 4`; `OTFlow` (velocity $= -\nabla\Phi$ with a closed-form Hessian trace) with `hidden = 64`, `layer = 3`, `rank = min(10, d+1)`. Both integrate with the same fixed-step RK4 (`nt = 12`) and width-64 networks. CNF starts at the exact identity; OTFlow uses `near_identity()`, whose $10^{-6}$ PSD-factor seed is a numerical identity in float32 while keeping its full quadratic head trainable.
-- **Training**: one packed `train_reverse_KL_F` call per cell — plain reverse KL with no rejuvenation (`MC_STEPS = 0`), `N_VALID = 40000` fixed source pool, `BATCH_SIZE = 512` per Adam step, `TRAIN_STEPS = 1000`, `LR = 2e-3`, `checkpoint = True` (the CNF exact-trace path). The final ESS is the proposal importance-sampling ESS on a held-out $N = 20000$ source set.
+- **Training**: one packed `train_reverse_KL_F` call per cell — plain reverse KL with no rejuvenation (`MC_STEPS = 0`), `VALID_SZIE = 40000` fixed source pool, `BATCH_SZIE = 512` per Adam step, `TRAIN_STEPS = 1000`, `LR = 2e-3`, `checkpoint = True` (the CNF exact-trace path). The final ESS is the proposal importance-sampling ESS on a held-out $N = 20000$ source set.
 
 ### Results
 
@@ -117,8 +118,8 @@ CNF versus OTFlow on a fixed multi-modal target as the dimension grows, run by [
 
 | flow   | $d=4$  | $d=8$  | $d=16$ | $d=32$ | $d=64$ | $d=128$ |
 | :----: | :----: | :----: | :----: | :----: | :----: | :-----: |
-| CNF    | 0.9706 | 0.9579 | 0.9311 | 0.8824 | 0.7411 | 0.4291  |
-| OTFlow | 0.9694 | 0.9638 | 0.9459 | 0.9144 | 0.8479 | 0.5897  |
+| CNF    | 0.9705 | 0.9579 | 0.9311 | 0.8824 | 0.7411 | 0.4291  |
+| OTFlow | 0.9694 | 0.9637 | 0.9458 | 0.9145 | 0.8478 | 0.5927  |
 
 </div>
 
@@ -146,9 +147,9 @@ Forward map, mean ms per call:
 
 | width   |  $d=4$ |  $d=8$ | $d=16$ | $d=32$ | $d=64$ | $d=128$ |
 | :-----: | :----: | :----: | :----: | :----: | :----: | :-----: |
-| 64x64   | 0.153  | 0.168  | 0.185  | 0.209  | 0.293  |  0.424  |
-| 128x128 | 0.168  | 0.205  | 0.186  | 0.236  | 0.314  |  0.461  |
-| 256x256 | 0.190  | 0.215  | 0.220  | 0.285  | 0.400  |  0.598  |
+| 64x64   | 0.179  | 0.173  | 0.187  | 0.213  | 0.261  |  0.407  |
+| 128x128 | 0.158  | 0.167  | 0.200  | 0.218  | 0.341  |  0.462  |
+| 256x256 | 0.185  | 0.212  | 0.226  | 0.271  | 0.359  |  0.591  |
 
 </div>
 
@@ -158,9 +159,9 @@ Inverse map, mean ms per call:
 
 | width   | $d=4$ | $d=8$ | $d=16$ | $d=32$ | $d=64$ | $d=128$ |
 | :-----: | :---: | :---: | :----: | :----: | :----: | :-----: |
-| 64x64   | 0.447 | 0.750 | 1.591  | 3.977  | 12.500 | 42.148  |
-| 128x128 | 0.507 | 0.872 | 1.812  | 4.660  | 14.524 | 49.799  |
-| 256x256 | 0.600 | 1.140 | 2.195  | 5.879  | 18.524 | 64.217  |
+| 64x64   | 0.436 | 0.747 | 1.594  | 3.936  | 12.037 | 41.539  |
+| 128x128 | 0.502 | 0.902 | 1.723  | 4.542  | 13.795 | 47.833  |
+| 256x256 | 0.645 | 1.175 | 2.370  | 6.055  | 19.111 | 63.700  |
 
 </div>
 
@@ -168,4 +169,4 @@ The full grid, with the inv/fwd ratio, is written to [`flow_scaling_law.csv`](fl
 
 ### Reading the result
 
-The forward map is a single parallel pass and stays essentially flat in dimension — at $(64, 64)$ it moves only $0.153 \to 0.424$ ms from $d = 4$ to $d = 128$ over a $32\times$ dimension increase. The inverse is autoregressive: a MAF-style flow inverts one coordinate at a time, so it runs $d$ sequential conditioner passes and climbs steeply — $0.447 \to 42.1$ ms at $(64, 64)$, roughly $94\times$, and steepening as $d$ rises. The resulting inv/fwd penalty opens from $\sim 3\times$ at $d = 4$ to $99$--$108\times$ at $d = 128$. Widening the conditioner ($64 \to 256$) raises both maps but far less than dimension does — at $d = 128$ the inverse grows from $42$ to $64$ ms and the forward from $0.42$ to $0.60$ ms — so dimension, through the sequential autoregressive inversion, is the dominant cost, not MLP width. This is the intrinsic forward/inverse asymmetry of autoregressive spline flows, and it is why loss differentiation stays in each flow's native direction even when detached data-generation or final evaluation must use the inverse. The absolute milliseconds are GPU-specific; the scaling — a near-flat forward and a steeply growing inverse, dominated by dimension — is the reproducible finding.
+The forward map is a single parallel pass and stays essentially flat in dimension — at $(64, 64)$ it moves only $0.179 \to 0.407$ ms from $d = 4$ to $d = 128$ over a $32\times$ dimension increase. The inverse is autoregressive: a MAF-style flow inverts one coordinate at a time, so it runs $d$ sequential conditioner passes and climbs steeply — $0.436 \to 41.5$ ms at $(64, 64)$, roughly $95\times$, and steepening as $d$ rises. The resulting inv/fwd penalty opens from $\sim 2.4\times$ at $d = 4$ to $102$--$108\times$ at $d = 128$. Widening the conditioner ($64 \to 256$) raises both maps but far less than dimension does — at $d = 128$ the inverse grows from $41.5$ to $63.7$ ms and the forward from $0.41$ to $0.59$ ms — so dimension, through the sequential autoregressive inversion, is the dominant cost, not MLP width. This is the intrinsic forward/inverse asymmetry of autoregressive spline flows, and it is why loss differentiation stays in each flow's native direction even when detached data-generation or final evaluation must use the inverse. The absolute milliseconds are GPU-specific; the scaling — a near-flat forward and a steeply growing inverse, dominated by dimension — is the reproducible finding.
