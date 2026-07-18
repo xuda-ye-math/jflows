@@ -18,8 +18,8 @@ For boltzmann_reverse_KL_F (the adaptive-ladder annealed BG):
        validation, and acceptance lines;
     7. tau_smc pre-selection: a gated ladder (tau_smc > 0, MALA,
        ladder = 2) shrinks over-aggressive t_k via the multi-level SMC
-       check on a pool_size-sized selection pool and still completes,
-       with [select] lines reported;
+       check on the exact full validation population and still completes,
+       with explicit selection lines reported;
     8. boltzmann_forward_KL_G: the forward KL twin (per-step AIS through
        the current flow, flow fixed as G) completes its ladder with the
        same record contract;
@@ -47,11 +47,11 @@ import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
 import numpy as np  # noqa: E402
 
-import jflows.boltzmann as boltzmann_module  # noqa: E402
+import jflows.training.boltzmann as boltzmann_module  # noqa: E402
 from jflows.flow import NSF, OTFlow  # noqa: E402
 from jflows.potential import Nlog_Gaussian, Nlog_Gaussian_Mixture  # noqa: E402
 from jflows.train import Monitor  # noqa: E402
-from jflows.boltzmann import (  # noqa: E402
+from jflows.train import (  # noqa: E402
     boltzmann_forward_KL_G,
     boltzmann_forward_KL_G_fixed,
     boltzmann_forward_KLX_G,
@@ -67,18 +67,21 @@ LOG = os.path.join(HERE, "test_boltzmann.log")
 
 FAILURES = 0
 
-N_VALID, POOL_SIZE, BATCH_SIZE, TRAIN_STEPS, LR = 4000, 1000, 500, 100, 2e-3
+N_VALID, BATCH_SIZE, TRAIN_STEPS, LR = 4000, 500, 100, 2e-3
 MC_DT, MC_STEPS = 1e-3, 20
-MELT, OPT_ALPHA, OPT_STEPS = 2.0, 0.5, 100
+MELT, OPT_DT, OPT_STEPS = 2.0, 0.5, 100
 COEFF_LAMBDA, COEFF_ALPHA, COEFF_BETA = 0.7, 0.8, 0.3
 TAU = 0.5
 BG = {"t_safe": 0.3, "tau_ess": TAU}
 
 STAGE_KEYS = {
-    "t", "valid_selected_ess", "valid_trained_ess", "valid_identity_ess",
-    "selected", "flow", "t_hist", "batch_ess_hist",
+    "t", "t_start", "valid_selected_ess", "valid_trained_ess",
+    "valid_identity_ess", "valid_sample_count", "selected", "flow",
+    "continuation_flow", "t_hist", "loss_hist", "batch_ess_hist",
     "valid_trained_ess_hist", "valid_identity_ess_hist",
     "attempt_status_hist", "trained_flow_path_hist", "selected_flow_path",
+    "continuation_flow_path", "validation_samples_path",
+    "selection_history", "elapsed_seconds",
 }
 
 
@@ -144,7 +147,7 @@ def main() -> None:
     lines: list[str] = []
     y, stages = boltzmann_reverse_KL_F(
         x_valid, u0, u1, flow0,
-        pool_size=POOL_SIZE, batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=1,
+        batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=1,
         mc_dt=MC_DT, mc_steps=MC_STEPS,
         monitor=Monitor(TRAIN_STEPS, "[t] ", lines.append), bg_param=BG,
     )
@@ -194,7 +197,7 @@ def main() -> None:
     log("determinism")
     y2, stages2 = boltzmann_reverse_KL_F(
         x_valid, u0, u1, flow0,
-        pool_size=POOL_SIZE, batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=1,
+        batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=1,
         mc_dt=MC_DT, mc_steps=MC_STEPS,
         bg_param=BG,
     )
@@ -208,7 +211,7 @@ def main() -> None:
     sel_lines: list[str] = []
     y3, stages3 = boltzmann_reverse_KL_F(
         x_valid, u0, u1, flow0,
-        pool_size=POOL_SIZE, batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR,
+        batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR,
         mc_dt=MC_DT, mc_steps=MC_STEPS,
         ladder=2, mc_adjust=True,
         monitor=Monitor(TRAIN_STEPS, "[t] ", sel_lines.append),
@@ -217,14 +220,15 @@ def main() -> None:
     jax.effects_barrier()
     check_true("gated ladder completes", bool(stages3) and stages3[-1]["t"] == 1.0,
                f"t = {[round(s['t'], 3) for s in stages3]}")
-    check_true("[select] lines observed", any("[select]" in ln for ln in sel_lines),
-               next((ln for ln in sel_lines if "[select]" in ln), "(none)"))
+    check_true("selection lines observed",
+               any("selection min SMC ESS" in ln for ln in sel_lines),
+               next((ln for ln in sel_lines if "selection min SMC ESS" in ln), "(none)"))
 
     # ── boltzmann_forward_KL_G (the forward KL twin) ──
     log("boltzmann_forward_KL_G ladder")
     yf, stages_f = boltzmann_forward_KL_G(
         x_valid, u0, u1, flow0,
-        pool_size=POOL_SIZE, batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=1,
+        batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=1,
         mc_dt=MC_DT, mc_steps=MC_STEPS, mc_adjust=True,
         bg_param=BG,
     )
@@ -246,8 +250,8 @@ def main() -> None:
     xx_lines: list[str] = []
     yxx, stages_xx = boltzmann_forward_KLXX_G(
         x_valid, u0, u1, flow0,
-        pool_size=POOL_SIZE, batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=2,
-        melt=MELT, opt_alpha=OPT_ALPHA, opt_steps=OPT_STEPS,
+        batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=2,
+        melt=MELT, opt_dt=OPT_DT, opt_steps=OPT_STEPS,
         mc_dt=MC_DT, mc_steps=MC_STEPS,
         coeff_lambda=COEFF_LAMBDA, coeff_alpha=COEFF_ALPHA, coeff_beta=COEFF_BETA,
         monitor=Monitor(TRAIN_STEPS, "[t] ", xx_lines.append),
@@ -265,8 +269,9 @@ def main() -> None:
                all(selection_consistent(s) for s in stages_xx))
     check_true("KLXX particle set full-size and finite",
                yxx.shape == x_valid.shape and bool(jnp.isfinite(yxx).all()), f"{yxx.shape}")
-    check_true("KLXX [select] lines observed", any("[select]" in ln for ln in xx_lines),
-               next((ln for ln in xx_lines if "[select]" in ln), "(none)"))
+    check_true("KLXX selection lines observed",
+               any("selection min SMC ESS" in ln for ln in xx_lines),
+               next((ln for ln in xx_lines if "selection min SMC ESS" in ln), "(none)"))
 
     # ── remaining public adaptive/fixed interfaces, tiny one-level probes ──
     # These are API/logic checks rather than convergence tests. t_safe=1 and
@@ -276,7 +281,7 @@ def main() -> None:
     small = dict(batch_size=64, train_steps=2, lr=LR, ladder=1,
                  mc_dt=MC_DT, mc_steps=0)
     y_kx, s_kx = boltzmann_forward_KLX_G(
-        x_small, u0, u1, flow0, pool_size=64, coeff_lambda=COEFF_LAMBDA,
+        x_small, u0, u1, flow0, coeff_lambda=COEFF_LAMBDA,
         bg_param={"t_safe": 1.0, "tau_ess": 0.0, "max_stages": 1},
         **small,
     )
@@ -300,21 +305,22 @@ def main() -> None:
     # ── OTFlow identity fallback remains exact but the next warm start trains ──
     log("OTFlow forced identity fallback warm start")
     ot_inputs: list[float] = []
-    original_train = boltzmann_module.train_forward_KL_G
-    original_iw = boltzmann_module._iw_log_jit
+    original_train = boltzmann_module._train_attempt
+    original_iw = boltzmann_module._chunked_log_importance_weights
 
     def fake_train(*args, **kwargs):
-        flow_arg = args[3]
+        flow_arg = args[4]
         ot_inputs.append(float(jnp.linalg.norm(flow_arg._ot.phi.A)))
-        return flow_arg, jnp.zeros((int(args[5]),))
+        steps = int(kwargs["train_steps"])
+        return flow_arg, jnp.zeros((steps,)), jnp.zeros((steps,))
 
     def force_bad_trained_weights(samples, source, target, flow, type, chunks=1):
         del source, target, flow, type, chunks
         return jnp.linspace(-20.0, 20.0, samples.shape[0])
 
     try:
-        boltzmann_module.train_forward_KL_G = fake_train
-        boltzmann_module._iw_log_jit = force_bad_trained_weights
+        boltzmann_module._train_attempt = fake_train
+        boltzmann_module._chunked_log_importance_weights = force_bad_trained_weights
         ot0 = OTFlow(jax.random.key(91), dimension=2, hidden=8,
                      layer=2, rank=2, nt=2).near_identity()
         ot_x = u0.samples(jax.random.key(92), 64)
@@ -324,8 +330,8 @@ def main() -> None:
             mc_dt=MC_DT, mc_steps=0, t_list=[0.5, 1.0],
         )
     finally:
-        boltzmann_module.train_forward_KL_G = original_train
-        boltzmann_module._iw_log_jit = original_iw
+        boltzmann_module._train_attempt = original_train
+        boltzmann_module._chunked_log_importance_weights = original_iw
 
     check_true(
         "both OTFlow stage trainers receive a live quadratic head",
@@ -357,15 +363,15 @@ def main() -> None:
     ):
         try:
             boltzmann_reverse_KL_F(x_valid, u0, u1, flow0,
-                                   pool_size=POOL_SIZE, batch_size=BATCH_SIZE, train_steps=1, lr=LR,
+                                   batch_size=BATCH_SIZE, train_steps=1, lr=LR,
                                    ladder=1, mc_dt=MC_DT, mc_steps=1, bg_param=bg)
             check_true(f"rejects {name}", False)
         except ValueError:
             check_true(f"rejects {name}", True)
 
     klxx_args = dict(
-        pool_size=32, batch_size=16, train_steps=1, lr=0.0, ladder=1,
-        melt=0.0, opt_alpha=0.1, opt_steps=0,
+        batch_size=16, train_steps=1, lr=0.0, ladder=1,
+        melt=0.0, opt_dt=0.1, opt_steps=0,
         mc_dt=MC_DT, mc_steps=0,
     )
     for name, fn, extra in (
@@ -418,14 +424,14 @@ def main() -> None:
     check_true("fixed: particle set finite and advanced",
                yfx.shape == x_valid.shape and bool(jnp.isfinite(yfx).all())
                and float(jnp.abs(yfx - x_valid).max()) > 1.0, f"{yfx.shape}")
-    check_true("fixed: NO SMC [select] lines (bare training)",
-               not any("[select]" in ln for ln in fx_lines))
+    check_true("fixed: no SMC selection lines (bare training)",
+               not any("selection min SMC ESS" in ln for ln in fx_lines))
 
-    # KLXX_fixed exercises the QT-pool path along a fixed schedule
+    # KLXX_fixed exercises the full-validation QT path along a fixed schedule
     yxfx, stages_xfx = boltzmann_forward_KLXX_G_fixed(
         x_valid, u0, u1, flow0,
-        pool_size=POOL_SIZE, batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=2,
-        melt=MELT, opt_alpha=OPT_ALPHA, opt_steps=OPT_STEPS,
+        batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS, lr=LR, ladder=2,
+        melt=MELT, opt_dt=OPT_DT, opt_steps=OPT_STEPS,
         mc_dt=MC_DT, mc_steps=MC_STEPS, t_list=[0.5, 1.0],
         coeff_lambda=COEFF_LAMBDA, coeff_alpha=COEFF_ALPHA, coeff_beta=COEFF_BETA,
     )
@@ -436,10 +442,11 @@ def main() -> None:
                and bool(jnp.isfinite(yxfx).all()),
                f"t = {[round(s['t'], 3) for s in stages_xfx]}")
 
-    # t_list validation raises on bad schedules; a leading 0 is dropped
+    # t_list validation raises on bad endpoint schedules, including leading 0
     log("fixed: t_list validation")
     for name, tl in (("empty", []), ("non-monotone", [0.6, 0.3, 1.0]),
-                     ("out of (0,1]", [0.3, 1.5])):
+                     ("out of (0,1]", [0.3, 1.5]),
+                     ("leading zero", [0.0, 1.0])):
         try:
             boltzmann_reverse_KL_F_fixed(x_valid, u0, u1, flow0, batch_size=BATCH_SIZE,
                                          train_steps=1, lr=LR, mc_dt=MC_DT, mc_steps=1,

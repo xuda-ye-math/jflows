@@ -1,14 +1,14 @@
 """Standalone energy/gradient clipping smoke test (jflows only) — run after
 installation from the repo root as `python -m smoke.test_clip`.
 
-For the `e_clip` (energy screen) and `g_clip` (global gradient-norm clip)
+For the `u_clip` (potential screen) and `g_clip` (global gradient-norm clip)
 parameters of the forward training drivers (`train_forward_KL_G`,
 `train_forward_KLX_G`, `train_forward_KLXX_G`):
 
-    1. no-op default: e_clip = inf and g_clip = inf reproduce the trained
+    1. no-op default: u_clip = inf and g_clip = inf reproduce the trained
        flow EXACTLY (bit-identical parameters) to a call without the
        arguments — the screen and the clip must add nothing at the default;
-    2. energy screen: with e_clip set to a percentile of the target energy
+    2. potential screen: with u_clip set to a percentile of the target potential
        (so a real fraction of the manufactured batch is high-energy and
        screened), the trained flow differs from the unscreened one, and the
        masked-mean / pair-masked helpers reduce over the kept sub-batch only
@@ -18,7 +18,7 @@ parameters of the forward training drivers (`train_forward_KL_G`,
        batch cannot spike the second-moment accumulator (Adam's per-coordinate
        normalization means the effect on the final step size is weak; the
        clip is a spike guard on the gradient, not a bound on the update);
-    4. the boltzmann_forward_* wrappers accept and forward e_clip / g_clip
+    4. the boltzmann_forward_* wrappers accept and forward u_clip / g_clip
        (a short 2-stage ladder runs to completion under a finite screen).
 
 Float32 (the drivers' working precision), on the default JAX backend (GPU
@@ -39,16 +39,18 @@ import numpy as np  # noqa: E402
 
 from jflows.flow import NCSF  # noqa: E402
 from jflows.potential import Nlog_Uniform, potential_from  # noqa: E402
-from jflows.train import (  # noqa: E402
+from jflows.training.drivers import (  # noqa: E402
     _clip_global,
     _mask_keep,
     _masked_mean,
     _masked_pair_mean,
+)
+from jflows.train import (  # noqa: E402
     train_forward_KL_G,
     train_forward_KLX_G,
     train_forward_KLXX_G,
 )
-from jflows.boltzmann import boltzmann_forward_KLXX_G  # noqa: E402
+from jflows.train import boltzmann_forward_KLXX_G  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG = os.path.join(HERE, "test_clip.log")
@@ -96,7 +98,7 @@ u0 = Nlog_Uniform(a=[-LIM] * D, b=[LIM] * D)
 # so a percentile threshold screens a real high-energy fraction of any batch
 u_smooth = potential_from(lambda x: -(jnp.cos(x - jnp.roll(x, 1, axis=-1))).sum(-1))
 
-# e_clip set so ~40% of a representative batch is high-energy and screened
+# u_clip set so ~40% of a representative batch is high-potential and screened
 _probe = u0.samples(jax.random.key(9), 8000)
 E_SCREEN = float(np.percentile(np.asarray(u_smooth(_probe)), 60.0))
 
@@ -129,13 +131,13 @@ def main() -> None:
     check("_masked_pair_mean == numpy pair mean",
           _masked_pair_mean(jnp.asarray(diff), kj, pj),
           (pk * diff).sum() / max(pk.sum(), 1.0), tol=1e-4)
-    keep = _mask_keep(u_smooth, _probe, e_clip=E_SCREEN)
+    keep = _mask_keep(u_smooth, _probe, u_clip=E_SCREEN)
     frac = float(np.asarray(keep).mean())
     check_true("_mask_keep screens the high-energy tail", 0.4 < frac < 0.8,
                f"{frac:.2f} kept at the 60th-pct threshold")
 
     # ---- 1. no-op: the ACTIVE masked/clip path, screening nothing, ≈ default.
-    # e_clip=1e3 is above every target energy (all samples kept, so the
+    # u_clip=1e3 is above every target potential (all samples kept, so the
     # masked-mean / pair-masked branch RUNS but reduces over the full batch);
     # g_clip=1e30 is above every gradient norm (the clip branch RUNS but scales
     # by exactly 1). This exercises the masking code (unlike an inf-vs-inf
@@ -144,7 +146,7 @@ def main() -> None:
     # (different reduction op order); over the training steps that ~1-ULP gap
     # compounds and nondeterministic GPU reductions vary it run to run — so the
     # tolerance reflects float32 training drift, not exact equality. (The exact
-    # bit-identical no-op is the e_clip=inf path, which is untraced.) A real
+    # bit-identical no-op is the u_clip=inf path, which is untraced.) A real
     # masking bug diverges far past this or produces NaNs.
     BIG_E, BIG_G = 1e3, 1e30
     check_true("BIG_E keeps every sample",
@@ -154,24 +156,24 @@ def main() -> None:
                      ("KLX_G", train_forward_KLX_G),
                      ("KLXX_G", train_forward_KLXX_G)):
         kw = {} if fn is not train_forward_KLXX_G else dict(
-            pool_size=1000, melt=2 * math.pi, opt_alpha=1e-2, opt_steps=20)
+            melt=2 * math.pi, opt_dt=1e-2, opt_steps=20)
         base = train(fn, u_smooth, **kw)
-        active = train(fn, u_smooth, e_clip=BIG_E, g_clip=BIG_G, **kw)
+        active = train(fn, u_smooth, u_clip=BIG_E, g_clip=BIG_G, **kw)
         d = max_param_delta(active, base)
         check_true(f"{name}: all-kept active path ≈ default", d <= 3e-2,
                    f"max|Δparam|={d:.2e} (float32 training drift, not a bug)")
 
     # ---- 2. energy screen changes the trained flow ----
-    log(f"energy screen (e_clip={E_SCREEN:.3f}, ~40% of each batch screened):")
+    log(f"potential screen (u_clip={E_SCREEN:.3f}, ~40% of each batch screened):")
     for name, fn in (("KL_G", train_forward_KL_G),
                      ("KLX_G", train_forward_KLX_G),
                      ("KLXX_G", train_forward_KLXX_G)):
         kw = {} if fn is not train_forward_KLXX_G else dict(
-            pool_size=1000, melt=2 * math.pi, opt_alpha=1e-2, opt_steps=20)
+            melt=2 * math.pi, opt_dt=1e-2, opt_steps=20)
         unscreened = train(fn, u_smooth, **kw)
-        screened = train(fn, u_smooth, e_clip=E_SCREEN, **kw)
+        screened = train(fn, u_smooth, u_clip=E_SCREEN, **kw)
         d = max_param_delta(unscreened, screened)
-        check_true(f"{name}: e_clip screen changes the flow", d > 1e-6,
+        check_true(f"{name}: u_clip screen changes the flow", d > 1e-6,
                    f"max|Δparam|={d:.2e}")
         check_true(f"{name}: screened flow finite",
                    all(np.all(np.isfinite(a)) for a in leaves(screened)))
@@ -193,15 +195,15 @@ def main() -> None:
                max_param_delta(f_noclip, f_clip) > 1e-6,
                f"max|Δparam|={max_param_delta(f_noclip, f_clip):.2e}")
 
-    # ---- 4. boltzmann wrapper forwards e_clip / g_clip ----
-    log("boltzmann_forward_KLXX_G forwards e_clip / g_clip:")
+    # ---- 4. boltzmann wrapper forwards u_clip / g_clip ----
+    log("boltzmann_forward_KLXX_G forwards u_clip / g_clip:")
     y_bg, stages = boltzmann_forward_KLXX_G(
         u0.samples(jax.random.key(3), 4000), u0, u_smooth, new_flow(),
-        pool_size=1000, batch_size=256, train_steps=30, lr=1e-3, ladder=1,
-        melt=2 * math.pi, opt_alpha=1e-2, opt_steps=20, mc_dt=1e-3, mc_steps=20,
+        batch_size=256, train_steps=30, lr=1e-3, ladder=1,
+        melt=2 * math.pi, opt_dt=1e-2, opt_steps=20, mc_dt=1e-3, mc_steps=20,
         bg_param={"t_safe": 0.3, "tau_ess": 0.2, "max_stages": 2, "max_retry": 2},
-        e_clip=20.0, g_clip=1e3)
-    check_true("boltzmann KLXX runs under finite e_clip/g_clip",
+        u_clip=20.0, g_clip=1e3)
+    check_true("boltzmann KLXX runs under finite u_clip/g_clip",
                len(stages) >= 1 and np.all(np.isfinite(np.asarray(y_bg))),
                f"{len(stages)} stage(s)")
 

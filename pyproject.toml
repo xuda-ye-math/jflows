@@ -1,14 +1,14 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "jflows"
-version = "0.2.1"
+version = "0.4.0"
 description = "JAX normalizing flows for unconditional energy-based sampling and Boltzmann generators."
 readme = "README.md"
 authors = [{ name = "Xuda", email = "abneryepku@gmail.com" }]
-license = { text = "MIT" }
+license = "MIT"
 requires-python = ">=3.11"
 keywords = [
     "normalizing-flows",
@@ -23,7 +23,6 @@ keywords = [
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",

@@ -37,8 +37,8 @@ __all__ = [
 ]
 
 
-def _linear_weights_from_log(log_weights: Array) -> Array:
-    """Convert log-weights to a safe max-shifted linear representation.
+def linear_weights_from_log(log_weights: Array) -> Array:
+    """Return safe max-shifted linear weights from unnormalized log weights.
 
     Positive infinities share all mass, finite values use the usual shifted
     exponential, and an undefined vector (any NaN, or all -inf) becomes all
@@ -57,18 +57,6 @@ def _linear_weights_from_log(log_weights: Array) -> Array:
     weights = jnp.where(has_posinf, posinf.astype(log_weights.dtype), regular)
     valid = ~has_nan & (has_posinf | has_finite)
     return jnp.where(valid, weights, jnp.zeros_like(weights))
-
-
-def linear_weights_from_log(log_weights: Array) -> Array:
-    """Return safe max-shifted linear weights from unnormalized log weights.
-
-    Finite values are shifted before exponentiation, positive infinities share
-    the mass, and an undefined vector (any NaN or all negative infinity)
-    returns zeros. Passing that zero vector to :func:`resample` invokes its
-    documented uniform fallback.
-    """
-
-    return _linear_weights_from_log(log_weights)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -164,7 +152,7 @@ def importance_weights(
     log_w = importance_weights_log(
         samples, source, target, flow, type, chunks=chunks, trace_key=trace_key
     )
-    return _linear_weights_from_log(log_w)
+    return linear_weights_from_log(log_w)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -236,7 +224,7 @@ def compute_ESS_log(log_weights: Array) -> Array:
         jnp.asarray(N, dtype=log_weights.dtype)
     )
     raw = jnp.exp(log_num - log_den)
-    weights = _linear_weights_from_log(log_weights)
+    weights = linear_weights_from_log(log_weights)
     fallback = compute_ESS(weights)
     ess = jnp.where(jnp.isfinite(raw), raw, fallback)
     return jnp.where(jnp.any(jnp.isnan(log_weights)), 0.0, ess)

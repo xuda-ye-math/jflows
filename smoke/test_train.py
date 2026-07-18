@@ -15,10 +15,11 @@ For train_reverse_KL_F / train_forward_KL_G / Monitor:
     4. train_forward_KLX_G: the X-regularized forward KL at a general
        coeff_lambda — same contract, deterministic;
     5. train_forward_KLXX_G: the full mixture loss at general
-       (coeff_lambda, coeff_alpha, coeff_beta) — quench-and-temper pool,
+       (coeff_lambda, coeff_alpha, coeff_beta) — full-validation
+       quench-and-temper population,
        per-step hat_mu freshening, detached pushforward — same contract;
-    6. Monitor: every < 1 rejected; reports exactly steps // every
-       lines with the requested prefix from inside the compiled scan;
+    6. Monitor: every < 1 rejected; reports step 1, interval steps, and the
+       final step with an explicit numeric transition;
        attaching a monitor does not change the trained flow.
 
 Default JAX backend (GPU); GPU memory preallocation is disabled.
@@ -60,7 +61,7 @@ FAILURES = 0
 SIGMA = 2.0
 N_VALID, BATCH_SIZE, TRAIN_STEPS, LR = 8000, 1000, 200, 2e-3
 MC_DT, MC_STEPS, LADDER = 1e-3, 20, 3
-POOL_SIZE, MELT, OPT_ALPHA, OPT_STEPS = 2000, 2.0, 0.5, 100
+MELT, OPT_DT, OPT_STEPS = 2.0, 0.5, 100
 COEFF_LAMBDA, COEFF_ALPHA, COEFF_BETA = 0.7, 0.8, 0.3
 
 
@@ -235,9 +236,9 @@ def main() -> None:
     log(f"train_forward_KLXX_G (lambda {COEFF_LAMBDA}, alpha {COEFF_ALPHA}, "
         f"beta {COEFF_BETA})")
     flow_XX, ess_XX = train_forward_KLXX_G(
-        x_valid, u0, u1, h0, pool_size=POOL_SIZE, batch_size=BATCH_SIZE,
+        x_valid, u0, u1, h0, batch_size=BATCH_SIZE,
         train_steps=TRAIN_STEPS, lr=LR, ladder=LADDER, melt=MELT,
-        opt_alpha=OPT_ALPHA, opt_steps=OPT_STEPS, mc_dt=MC_DT,
+        opt_dt=OPT_DT, opt_steps=OPT_STEPS, mc_dt=MC_DT,
         mc_steps=MC_STEPS, coeff_lambda=COEFF_LAMBDA,
         coeff_alpha=COEFF_ALPHA, coeff_beta=COEFF_BETA)
     check_true("ess history shape", ess_XX.shape == (TRAIN_STEPS,), f"{ess_XX.shape}")
@@ -256,8 +257,8 @@ def main() -> None:
     ess_full_XX = float(compute_ESS(importance_weights(x_valid, u0, u1, flow_XX, type="G")))
     check_true("final full-set ESS > 0.5", ess_full_XX > 0.5, f"ESS = {ess_full_XX:.4f}")
     flow_XX2, _ = train_forward_KLXX_G(
-        x_valid, u0, u1, h0, pool_size=POOL_SIZE, batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS,
-        lr=LR, ladder=LADDER, melt=MELT, opt_alpha=OPT_ALPHA, opt_steps=OPT_STEPS,
+        x_valid, u0, u1, h0, batch_size=BATCH_SIZE, train_steps=TRAIN_STEPS,
+        lr=LR, ladder=LADDER, melt=MELT, opt_dt=OPT_DT, opt_steps=OPT_STEPS,
         mc_dt=MC_DT, mc_steps=MC_STEPS, coeff_lambda=COEFF_LAMBDA,
         coeff_alpha=COEFF_ALPHA, coeff_beta=COEFF_BETA)
     check("same canonical call is reproducible",
@@ -276,9 +277,10 @@ def main() -> None:
                                    mc_dt=MC_DT, mc_steps=MC_STEPS,
                                    monitor=Monitor(5, "[mon] ", lines.append))
     jax.effects_barrier()
-    check_true("reports steps // every lines", len(lines) == 4, f"{len(lines)} lines")
+    check_true("reports first, interval, and final lines", len(lines) == 5, f"{len(lines)} lines")
     check_true("prefix and fields present",
-               all(ln.startswith("[mon] step") and "loss =" in ln and "ESS =" in ln
+               all(ln.startswith("[mon] [t: 0.000000 -> 1.000000]")
+                   and "loss =" in ln and "ESS =" in ln
                    for ln in lines),
                lines[0] if lines else "(no lines)")
     flow_M0, _ = train_reverse_KL_F(x_valid, u0, u1, f0,
@@ -290,8 +292,8 @@ def main() -> None:
     # loss scalars. Invalid values must fail before constructing the QT pool.
     log("KLXX mixture-coefficient validation")
     tiny = dict(
-        pool_size=32, batch_size=16, train_steps=1, lr=0.0, ladder=1,
-        melt=0.0, opt_alpha=0.1, opt_steps=0, mc_dt=MC_DT, mc_steps=0,
+        batch_size=16, train_steps=1, lr=0.0, ladder=1,
+        melt=0.0, opt_dt=0.1, opt_steps=0, mc_dt=MC_DT, mc_steps=0,
     )
     for name, alpha, beta in (
         ("negative alpha", -0.1, 0.5),
@@ -316,6 +318,39 @@ def main() -> None:
     check_true(
         "zero/zero mixture remains finite",
         ess_zero_mix.shape == (1,) and bool(jnp.isfinite(ess_zero_mix).all()),
+    )
+
+    log("Direct-trainer preflight validation")
+    direct = dict(
+        batch_size=16, train_steps=1, lr=0.0,
+        mc_dt=MC_DT, mc_steps=0,
+    )
+    for name, updates in (
+        ("negative learning rate", {"lr": -1e-3}),
+        ("zero MCMC step size", {"mc_dt": 0.0}),
+        ("Boolean MCMC steps", {"mc_steps": True}),
+        ("out-of-range seed", {"seed": 2**32}),
+    ):
+        try:
+            train_reverse_KL_F(
+                x_valid[:64], u0, u1, f0, **(direct | updates)
+            )
+            check_true(f"rejects {name}", False)
+        except (TypeError, ValueError):
+            check_true(f"rejects {name}", True)
+    invalid_samples = x_valid[:64].at[0, 0].set(jnp.nan)
+    try:
+        train_reverse_KL_F(invalid_samples, u0, u1, f0, **direct)
+        check_true("rejects nonfinite validation samples", False)
+    except ValueError:
+        check_true("rejects nonfinite validation samples", True)
+    _, dynamic_seed_ess = train_reverse_KL_F(
+        x_valid[:64], u0, u1, f0,
+        seed=jnp.asarray(3, dtype=jnp.uint32), **direct,
+    )
+    check_true(
+        "accepts dynamic uint32 seed",
+        dynamic_seed_ess.shape == (1,) and bool(jnp.isfinite(dynamic_seed_ess).all()),
     )
 
     if FAILURES:

@@ -2,7 +2,7 @@
 from the repo root as `python -m smoke.test_chunk`.
 
 For the chunked full-set evaluations (`importance_weights_log` and the
-eager per-chunk wrapper `_iw_log_jit` used by the Boltzmann drivers):
+eager per-chunk wrapper used by the Boltzmann drivers):
 
     1. correctness: the eager per-chunk loop reproduces the single
        full-set call to float32 precision (different compiled programs
@@ -35,7 +35,9 @@ import numpy as np  # noqa: E402
 
 from jflows.flow import NCSF  # noqa: E402
 from jflows.potential import Nlog_Uniform, potential_from  # noqa: E402
-from jflows.boltzmann import _iw_log_jit  # noqa: E402
+from jflows.training.boltzmann import (  # noqa: E402
+    _chunked_log_importance_weights,
+)
 from jflows.utils import importance_weights_log  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -97,13 +99,17 @@ def main() -> None:
             importance_weights_log(xs, u0, u1, flow, type_))
         for c in (2, 7):
             got = jax.block_until_ready(
-                _iw_log_jit(xs, u0, u1, flow, type_, chunks=c))
+                _chunked_log_importance_weights(
+                    xs, u0, u1, flow, type_, chunks=c
+                ))
             check(f"eager chunks={c} == full call (type {type_})", got, ref, tol=1e-3)
 
     # 2 — memory: the eager per-chunk loop runs FIRST (smallest working
     # set), so every later high-water mark is attributable to the in-jit
     # calls it is compared against
-    lw_eager = jax.block_until_ready(_iw_log_jit(x, u0, u1, flow, "G", chunks=8))
+    lw_eager = jax.block_until_ready(_chunked_log_importance_weights(
+        x, u0, u1, flow, "G", chunks=8
+    ))
     p_eager = peak_gib()
     eager_delta = p_eager - p0
     log(f"peak after EAGER chunks=8  'G' on {NSAMP}: {p_eager:.3f} GiB "

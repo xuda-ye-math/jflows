@@ -53,7 +53,7 @@ def main():
         lbfgs: ("alpha", "steps", "chunks"),
         adamw: ("lr", "steps", "chunks"),
         quench_and_temper: (
-            "opt_alpha", "opt_steps", "mc_dt", "mc_steps", "chunks",
+            "opt_dt", "opt_steps", "mc_dt", "mc_steps", "chunks",
         ),
     }
     for function, expected in signatures.items():
@@ -92,7 +92,7 @@ def main():
     y_lbfgs = lbfgs(x, target, alpha=0.1, steps=2, chunks=2)
     y_adamw = adamw(x, target, lr=0.01, steps=2, chunks=2)
     y_qt = quench_and_temper(
-        key, x, target, 0.1, opt_alpha=0.1, opt_steps=1,
+        key, x, target, 0.1, opt_dt=0.1, opt_steps=1,
         mc_dt=0.01, mc_steps=1, chunks=2,
     )
     log_w = importance_weights_log(x, source, target, flow, "G", chunks=2)

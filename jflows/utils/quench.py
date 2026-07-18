@@ -34,7 +34,7 @@ def quench_and_temper(
     samples: Array,
     target: Potential,
     melt: float,
-    opt_alpha: float = 1.0,
+    opt_dt: float = 1.0,
     opt_steps: int = 100,
     mc_dt: float = 1e-3,
     mc_steps: int = 100,
@@ -63,7 +63,7 @@ def quench_and_temper(
         melt:      float          melt scale — std of the Gaussian scatter;
                                   large enough that the cloud reaches every
                                   basin of interest
-        opt_alpha: float          L-BFGS initial trial alpha (armijo
+        opt_dt:    float          L-BFGS initial trial step size (armijo
                                   backtracking line search)
         opt_steps: int            L-BFGS iterations of the quench
         mc_dt:     float          Langevin step size of the temper
@@ -79,7 +79,7 @@ def quench_and_temper(
     key_melt, key_mc = jax.random.split(key)
     x = samples + melt * jax.random.normal(key_melt, samples.shape, dtype=samples.dtype)
     x = lbfgs(
-        x, target, alpha=opt_alpha, steps=opt_steps, armijo=True, chunks=chunks
+        x, target, alpha=opt_dt, steps=opt_steps, armijo=True, chunks=chunks
     )
     return langevin(
         key_mc, x, target, dt=mc_dt, steps=mc_steps,

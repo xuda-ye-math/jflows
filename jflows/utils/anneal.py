@@ -22,7 +22,7 @@ from jax import Array
 
 from ..flow import Flow
 from ..potential import Potential, linear_combination
-from .metrics import _linear_weights_from_log, compute_ESS_log, resample
+from .metrics import compute_ESS_log, linear_weights_from_log, resample
 from .rejuvenation import langevin
 
 
@@ -133,7 +133,7 @@ def sequential_monte_carlo(
         #     k) to (1/M) * (source(x) - target(x)).
         log_w = (source(x) - target(x)) / M
         ess.append(compute_ESS_log(log_w))
-        w = _linear_weights_from_log(log_w)
+        w = linear_weights_from_log(log_w)
         # (2) resample onto high-weight particles, then (3) Langevin-rejuvenate
         #     ON the bridge u_k to obtain fresh samples ~ exp(-u_k).
         key_r, key_l = jax.random.split(jax.random.fold_in(key, k))
@@ -313,7 +313,7 @@ def annealed_importance_sampling(
                 parts.append(-target(yc) + source(xc) + ladj)
             full_log_weight = jnp.concatenate(parts, axis=0)
         log_w = full_log_weight / M
-        w = _linear_weights_from_log(log_w)
+        w = linear_weights_from_log(log_w)
         # (2) resample onto high-weight particles, then rejuvenate in mu_1.
         key_r, key_l = jax.random.split(jax.random.fold_in(key, k))
         y = resample(key_r, y, w)

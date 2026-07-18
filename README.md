@@ -3,7 +3,7 @@
 
 # jflows
 
-JAX normalizing flows for unconditional energy-based sampling and Boltzmann generators, built on [equinox](https://github.com/patrick-kidger/equinox).
+JAX normalizing flows for unconditional energy-based sampling and Boltzmann generators, built on [equinox](https://github.com/patrick-kidger/equinox). The package supports fully recoverable Boltzmann training: every stage, candidate flow, validation population, ESS history, and timing record can be inspected and resumed.
 
 > **Status: experimental.** Tested only on **Linux + NVIDIA GPU** (CUDA-enabled `jax`); Google TPU and AMD GPU should also work. JAX GPU is not supported on Windows — not even under WSL.
 >
@@ -163,6 +163,7 @@ flow, batch_ess_hist = train_forward_KL_G(
     x_valid, source, target, flow,
     batch_size=2000, train_steps=200, lr=1e-3,
     ladder=1, mc_dt=1e-3, mc_steps=100,
+    initialize_from_identity=True, u_clip=100.0,
 )
 ```
 
@@ -176,82 +177,79 @@ trained flow together with the per-step proposal-to-target batch-ESS history
 flow, batch_ess_hist = train_reverse_KL_F(
     ..., monitor=Monitor(every=10, prefix="[reverse KL] ")
 )
-# [reverse KL] step    10   loss = +4.7476e+00   ESS = 0.3542
-# [reverse KL] step    20   loss = +3.7126e+00   ESS = 0.4879
+# [reverse KL] [t: 0.000000 -> 1.000000] step     1   loss = ...   ESS = ...
+# [reverse KL] [t: 0.000000 -> 1.000000] step    10   loss = ...   ESS = ...
 ```
 
 Across the public API, `dt` denotes an integration step size and `steps` a
-count. Composite controls use `mc_dt` / `mc_steps`, `opt_alpha` /
-`opt_steps`, and `train_steps`; cardinalities use `batch_size`, `pool_size`,
-and `chunks`.
+count. Composite controls use `mc_dt` / `mc_steps`, `opt_dt` /
+`opt_steps`, and `train_steps`; cardinalities use `batch_size`, `N_VALID`,
+and `chunks`. All selection and validation operations use the complete
+validation population; there is no separately sized selection population.
 
 **High level: the annealed Boltzmann generator.** On top of the stage trainers, `boltzmann_reverse_KL_F` runs the full annealed
 Boltzmann generator on the bridge ladder $U_t = (1-t)\,U_0 + t\,U_1$ with an
 ADAPTIVE coefficient: the stage flows are connected step by step — each stage
-trains the warm-started flow as the incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$
-on the advancing particle set, accepts on the incremental importance-sampling
-ESS (rejected stages shrink $t_k$ and retry with fresh randomness), and
-advances the set by reweight → resample → Langevin at $U_{t_k}$ (MALA by default; `mc_adjust=False` for plain ULA).
+trains an incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$ on the advancing
+particle set. By default every stage starts from a trainable identity;
+`initialize_from_identity=False` explicitly warm-starts it from the preceding
+continuation flow. The driver accepts on the incremental importance-sampling
+ESS (rejected stages shrink $t_k$ and retry with fresh randomness), then
+advances the set by reweight → resample → Langevin at $U_{t_k}$ (MALA by
+default; `mc_adjust=False` for plain ULA).
 After each stage an identity check keeps whichever of the trained flow and the
 identity map (pure SMC reweighting, computed with no flow inverse) has the higher
 incremental ESS, so a stage is never worse than SMC:
 
 ```python
-from jflows.boltzmann import boltzmann_reverse_KL_F
+from jflows.train import boltzmann_reverse_KL_F
 
 y_valid, stages = boltzmann_reverse_KL_F(
     x_valid, source, target, flow,
-    pool_size=24000, batch_size=2000, train_steps=500, lr=1e-4,
+    batch_size=2000, train_steps=500, lr=1e-4,
     ladder=1, mc_dt=1e-3, mc_steps=100,
     bg_param={"t_safe": 0.1, "shrink_factor": 0.7, "enlarge_factor": 1.5, "tau_ess": 0.6},
-    flow_dir="run/flows",
+    initialize_from_identity=True,
+    run_dir="run/boltzmann",
+    problem_id="my-target-v1",
 )
-# y_valid : advanced particle set (at target iff stages[-1]["t"] == 1)
-# stages  : accepted-stage records. Full-validation scalars are
-#           valid_selected_ess, valid_trained_ess, and valid_identity_ess.
-#           Attempt-aligned diagnostics are t_hist, batch_ess_hist,
-#           valid_trained_ess_hist, and valid_identity_ess_hist.
-#           Every trained candidate, including rejected ones, is recoverable
-#           through trained_flow_path_hist; selected_flow_path names the
-#           committed trained-or-identity stage map.
 ```
 
-The adaptive coefficient/retry loop stays in Python, while every accepted or
-rejected training attempt invokes one compiled stage scan. Selection SMC,
-stage advancement, and fixed-shape flow operations retain the committed
-`filter_jit` treatment; retuned bridge coefficients are array leaves. The
-full-set importance-weight helper evaluates `chunks` partitions sequentially to
-bound peak memory.
+The return values and stage metadata are:
 
-## Differences from zflows
+- `y_valid`: the advanced particle set. It is at the target when
+  `stages[-1]["t"] == 1`.
+- `stages`: the accepted-stage records. Each record includes:
+  - full-validation scalars `valid_selected_ess`, `valid_trained_ess`, and
+    `valid_identity_ess`;
+  - attempt-aligned diagnostics `t_hist`, `batch_ess_hist`,
+    `valid_trained_ess_hist`, and `valid_identity_ess_hist`;
+  - `trained_flow_path_hist`, which makes every trained candidate, including
+    rejected ones, recoverable;
+  - `selected_flow_path`, which names the committed trained-or-identity stage
+    map; and
+  - the exact post-stage `N_VALID` validation population for every accepted
+    stage.
 
-`jflows` is a mathematical JAX implementation, not a drop-in replacement for
-`zflows`. Its main design differences are:
+Resume an interrupted fixed or adaptive run from its durable current stage;
+committed stages are not recomputed and saved validation samples are
+authoritative:
 
-- random operations take explicit key-first JAX PRNG arguments;
-- Equinox flows are immutable, so identity initialization must be rebound as
-  `flow = flow.zeros()`;
-- public losses, importance weights, and AIS take a `Flow`, not `flow.t()`;
-- losses return per-sample vectors and callers apply reductions explicitly;
-- temperature is represented by scaling potentials rather than by a `beta`
-  argument;
-- potential names, F/G dispatch, and checkpoint formats differ;
-- MCMC defaults to adjusted MALA, while zflows historically defaulted to ULA;
-- NCSF is a genuine torus flow with periodic conditioning and a shared seam
-  derivative, rather than a raw-coordinate circular spline.
+```python
+y_valid, stages = boltzmann_reverse_KL_F(
+    None, source, target, flow,
+    batch_size=2000, train_steps=500, lr=1e-4,
+    ladder=1, mc_dt=1e-3, mc_steps=100,
+    bg_param={"t_safe": 0.1, "shrink_factor": 0.7, "enlarge_factor": 1.5, "tau_ess": 0.6},
+    run_dir="run/boltzmann", problem_id="my-target-v1", resume=True,
+)
+```
 
-Forward-trainer `batch_ess_hist` is the proposal-to-target importance ESS on
-the source minibatch immediately before AIS correction. The proposal is
-evaluated directly during the original push, avoiding inverse-integration
-error for CNF and OTFlow. Experiment artifacts identify this quantity with the
-semantic tag `proposal_pre_ais_v1`.
-
-**Package layout.**
+## Package layout
 
 ```
 jflows
-├── _artifacts.py
-├── boltzmann.py
+├── artifacts.py
 ├── core
 │   ├── flows.py
 │   ├── __init__.py
@@ -264,6 +262,16 @@ jflows
 ├── loss.py
 ├── potential.py
 ├── train.py
+├── training
+│   ├── boltzmann.py
+│   ├── drivers.py
+│   ├── records.py
+│   ├── run_store.py
+│   ├── signatures.py
+│   ├── spec.py
+│   ├── state.py
+│   └── validation.py
+├── version.py
 └── utils
     ├── anneal.py
     ├── __init__.py
@@ -275,45 +283,9 @@ jflows
 
 ## Installation
 
-`jflows` is pure Python. A fresh pip-only virtual environment using the latest
-compatible releases is the recommended setup. On Linux with an NVIDIA CUDA 13
-driver:
-
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install --upgrade "jax[cuda13]" equinox
-```
-
-Use `jax[cuda12]` for a CUDA 12 system, or plain `jax` for CPU-only work. Then
-install the current checkout conventionally:
-
-```bash
-mkdir -p "$HOME/src"
-git clone https://github.com/xuda-ye-math/jflows.git "$HOME/src/jflows"
-cd "$HOME/src/jflows"
+pip install "jax[cuda13]" equinox
 pip install -e .
-```
-
-To run the plotting examples, install the optional plotting dependency with
-`pip install -e ".[examples]"` instead.
-
-Verify both accelerator selection and editable source provenance explicitly:
-
-```bash
-pip check
-python
-```
-
-Then enter:
-
-```python
->>> from pathlib import Path
->>> import jax
->>> import jflows
->>> print(jax.default_backend(), jax.devices())
->>> print(Path(jflows.__file__).resolve())
 ```
 
 Repository examples and smoke modules use the same pattern:
@@ -333,15 +305,20 @@ PRNG implementation (`threefry2x32`, `rbg`, etc.), although the seed itself may
 differ.
 
 **Importing.** Use the public submodules `flow`, `potential`, `loss`, `train`,
-`boltzmann`, and `utils`, and call `help(foo_name)` to read the documents. For
+`artifacts`, and `utils`, and call `help(foo_name)` to read the documents. All
+stage trainers and Boltzmann generators are exported by `jflows.train`. For
 example:
 
 ```python
 from jflows.flow import NSF, RealNVP
 from jflows.potential import Potential, Nlog_Gaussian
 from jflows.loss import reverse_KL_F, forward_KL_G
-from jflows.train import train_reverse_KL_F, train_forward_KL_G, Monitor
-from jflows.boltzmann import boltzmann_reverse_KL_F
+from jflows.train import (
+    Monitor,
+    train_reverse_KL_F,
+    train_forward_KL_G,
+    boltzmann_reverse_KL_F,
+)
 from jflows.utils import importance_weights, compute_ESS, resample, langevin
 
 help(NSF)

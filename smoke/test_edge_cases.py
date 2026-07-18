@@ -16,11 +16,19 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from jflows.boltzmann import _bg_parameters, _fixed_schedule
+from jflows.training.spec import (
+    normalize_adaptive_policy,
+    normalize_fixed_schedule,
+)
 from jflows.core.transforms import LULinearTransform
 from jflows.flow import CNF, NCSF, NSF, OTFlow, RealNVP
 from jflows.potential import Nlog_Gaussian, Nlog_Gaussian_Mixture, Nlog_Uniform
-from jflows.train import _adam_step, _clip_global, _masked_mean, _masked_pair_mean
+from jflows.training.drivers import (
+    _adam_step,
+    _clip_global,
+    _masked_mean,
+    _masked_pair_mean,
+)
 from jflows.utils import (compute_ESS, compute_ESS_log, coverage, langevin,
                           resample, stochastic_heun)
 
@@ -211,15 +219,21 @@ def main():
 
     # Invalid adaptive/fixed schedules should fail before compilation/training.
     raises("adaptive ladder rejects zero enlarge", ValueError,
-           lambda: _bg_parameters("test", {"enlarge_factor": 0.0}))
+           lambda: normalize_adaptive_policy("test", {"enlarge_factor": 0.0}))
     raises("adaptive ladder rejects subnormal no-progress enlarge", ValueError,
-           lambda: _bg_parameters("test", {"enlarge_factor": 5e-324}))
+           lambda: normalize_adaptive_policy("test", {"enlarge_factor": 5e-324}))
     raises("adaptive ladder rejects NaN", ValueError,
-           lambda: _bg_parameters("test", {"tau_ess": float("nan")}))
+           lambda: normalize_adaptive_policy("test", {"tau_ess": float("nan")}))
+    raises("adaptive ladder rejects Boolean safe step", ValueError,
+           lambda: normalize_adaptive_policy("test", {"t_safe": True}))
+    raises("adaptive ladder rejects Boolean ESS threshold", ValueError,
+           lambda: normalize_adaptive_policy("test", {"tau_ess": False}))
     raises("fixed ladder rejects NaN", ValueError,
-           lambda: _fixed_schedule("test", [0.2, float("nan"), 1.0]))
+           lambda: normalize_fixed_schedule("test", [0.2, float("nan"), 1.0]))
+    raises("fixed ladder rejects Boolean endpoint", ValueError,
+           lambda: normalize_fixed_schedule("test", [True]))
     raises("fixed ladder rejects duplicate level", ValueError,
-           lambda: _fixed_schedule("test", [0.2, 0.2, 1.0]))
+           lambda: normalize_fixed_schedule("test", [0.2, 0.2, 1.0]))
 
     if FAILURES:
         print(f"DONE — {FAILURES} FAILURE(S)")
