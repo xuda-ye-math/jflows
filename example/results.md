@@ -80,9 +80,9 @@ The 4D two-charge target, sampled by [`4D_boltzmann.py`](4D_boltzmann.py) with B
 
 The verified rerun completed both adaptive ladders. Reverse KL accepted five
 levels, $t=[0.098, 0.245, 0.4655, 0.7963, 1.0]$, with incremental ESS
-$[0.780, 0.931, 0.947, 0.971, 0.991]$. Forward KL accepted four levels,
+$[0.794, 0.933, 0.949, 0.970, 0.990]$. Forward KL accepted four levels,
 $t=[0.2, 0.5, 0.95, 1.0]$, with ESS
-$[0.763, 0.902, 0.962, 0.997]$. The first reverse stage reached $t=0.098$
+$[0.764, 0.901, 0.959, 0.998]$. The first reverse stage reached $t=0.098$
 after the expected rejected candidates $0.2$ and $0.14$ under
 `shrink_factor = 0.7`; the table reports accepted stages only. Exact ESS values
 can move slightly with accelerator kernels, and the script refuses to produce

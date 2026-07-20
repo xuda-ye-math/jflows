@@ -547,6 +547,10 @@ def iterate_boltzmann(
             chunks,
         )
         samples = jax.block_until_ready(samples)
+        if not bool(jnp.all(jnp.isfinite(samples))):
+            raise FloatingPointError(
+                "post-stage samples contain nonfinite coordinates"
+            )
         record = _stage_record(
             t_start=t_start,
             t_end=t_end,

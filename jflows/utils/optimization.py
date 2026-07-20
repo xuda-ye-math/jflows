@@ -176,18 +176,32 @@ def lbfgs_step(
         # Accepted particles keep their alpha, so the final trial repeats
         # their accepted state. Never accept a failed/uphill fallback: a row
         # that exhausts the bounded search remains self-consistently at x.
-        x_new = jnp.where(done[:, None], x_trial, x)
-        U_new = jnp.where(done, U_trial, state.U)
-        step_scale_new = jnp.where(
+        x_candidate = jnp.where(done[:, None], x_trial, x)
+        U_candidate = jnp.where(done, U_trial, state.U)
+        step_scale_candidate = jnp.where(
             done,
             jnp.ones_like(state.step_scale),
             state.step_scale * (_SHRINK ** _K_MAX),
         )
     else:
-        x_new, U_new = x - alpha * r, state.U
-        step_scale_new = jnp.ones_like(state.step_scale)
+        x_candidate, U_candidate = x - alpha * r, state.U
+        step_scale_candidate = jnp.ones_like(state.step_scale)
 
-    g_new = potential.grad(x_new)
+    g_candidate = potential.grad(x_candidate)
+    finite = (
+        jnp.isfinite(U_candidate)
+        & jnp.all(jnp.isfinite(x_candidate), axis=-1)
+        & jnp.all(jnp.isfinite(g_candidate), axis=-1)
+    )
+    x_new = jnp.where(finite[:, None], x_candidate, x)
+    g_new = jnp.where(finite[:, None], g_candidate, g)
+    U_new = jnp.where(finite, U_candidate, state.U)
+    rejected_scale = (
+        state.step_scale * _SHRINK if armijo else state.step_scale
+    )
+    step_scale_new = jnp.where(
+        finite, step_scale_candidate, rejected_scale
+    )
     s_new = x_new - x
     y_new = g_new - g
     ys = (s_new * y_new).sum(axis=-1)  # [N]
@@ -352,13 +366,26 @@ def adamw_step(
         state: AdamW_State   after one update
     """
     g = potential.grad(state.x)
-    k = state.k + 1
-    m = beta1 * state.m + (1 - beta1) * g
-    v = beta2 * state.v + (1 - beta2) * g**2
-    m_hat = m / (1 - beta1 ** k.astype(state.x.dtype))
-    v_hat = v / (1 - beta2 ** k.astype(state.x.dtype))
-    x = state.x - lr * (m_hat / (jnp.sqrt(v_hat) + eps) + weight_decay * state.x)
-    return AdamW_State(x=x, m=m, v=v, k=k)
+    k_candidate = state.k + 1
+    m_candidate = beta1 * state.m + (1 - beta1) * g
+    v_candidate = beta2 * state.v + (1 - beta2) * g**2
+    m_hat = m_candidate / (1 - beta1 ** k_candidate.astype(state.x.dtype))
+    v_hat = v_candidate / (1 - beta2 ** k_candidate.astype(state.x.dtype))
+    x_candidate = state.x - lr * (
+        m_hat / (jnp.sqrt(v_hat) + eps) + weight_decay * state.x
+    )
+    finite = (
+        jnp.all(jnp.isfinite(g))
+        & jnp.all(jnp.isfinite(m_candidate))
+        & jnp.all(jnp.isfinite(v_candidate))
+        & jnp.all(jnp.isfinite(x_candidate))
+    )
+    return AdamW_State(
+        x=jnp.where(finite, x_candidate, state.x),
+        m=jnp.where(finite, m_candidate, state.m),
+        v=jnp.where(finite, v_candidate, state.v),
+        k=jnp.where(finite, k_candidate, state.k),
+    )
 
 
 def adamw(

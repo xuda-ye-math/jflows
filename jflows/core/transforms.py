@@ -434,7 +434,11 @@ class MonotonicRQSTransform(Transform):
         b = (y1 - y0) * d0 - y_ * (d0 + d1 - 2 * s)
         c = -s * y_
 
-        z = 2 * c / (-b - jnp.sqrt(b**2 - 4 * a * c))
+        discriminant = jnp.maximum(
+            b**2 - 4 * a * c, jnp.finfo(b.dtype).tiny
+        )
+        z = 2 * c / (-b - jnp.sqrt(discriminant))
+        z = jnp.clip(z, 0.0, 1.0)
         x = x0 + z * (x1 - x0)
         return jnp.where(mask, x, y)
 

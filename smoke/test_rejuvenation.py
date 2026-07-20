@@ -13,8 +13,8 @@ low-level kernels:
     3. MH diagnostics from the step aux: acceptance -> 1 as step -> 0;
     4. tamed drift keeps a quartic-potential ULA finite where the
        untamed drift diverges; adjust=True + taming>0 raises;
-    5. HMC NaN guard: an absurd step rejects everything and returns the
-       (finite) initial particles;
+    5. MALA/HMC nonfinite guards reject divergent proposals and return the
+       finite initial particles;
     6. aliases and key-reproducibility.
 
 Float64, on the default JAX backend (GPU when available; set
@@ -156,21 +156,33 @@ def main() -> None:
     except ValueError:
         check_true("adjust+taming raises", True)
 
-    # ── 5. HMC NaN guard ──
-    log("HMC NaN guard")
-    x_guard, aux = hmc_step(
-        jax.random.key(9), x0, quartic, dt=1e3, leapfrog_steps=5,
+    # ── 5. MALA/HMC nonfinite guards ──
+    log("MALA/HMC nonfinite guards")
+    divergent = potential_from(
+        lambda x: jnp.where(jnp.all(x == 0.0, axis=-1), 0.0, -jnp.inf)
     )
-    check_true("all rejected", bool(~aux["accept"].any()))
-    check("particles reverted (finite)", x_guard, x0, tol=0)
+    x_guard, aux = langevin_step(
+        jax.random.key(9), jnp.zeros((32, 2)), divergent, dt=0.1,
+        adjust=True,
+    )
+    check_true("MALA maps nonfinite log acceptance to -inf",
+               bool(jnp.isneginf(aux["log_alpha"]).all()))
+    check_true("MALA rejects every divergent proposal", bool(~aux["accept"].any()))
+    check("MALA particles reverted (finite)", x_guard, jnp.zeros((32, 2)), tol=0)
+
+    x_guard, aux = hmc_step(
+        jax.random.key(10), x0, quartic, dt=1e3, leapfrog_steps=5,
+    )
+    check_true("HMC rejects every divergent proposal", bool(~aux["accept"].any()))
+    check("HMC particles reverted (finite)", x_guard, x0, tol=0)
 
     # ── 6. aliases and reproducibility ──
     log("aliases / reproducibility")
     check_true("rejuvenation is langevin", rejuvenation is langevin)
     check_true("hmc is hamiltonian_monte_carlo", hmc is hamiltonian_monte_carlo)
     check("same key -> same trajectory",
-          langevin(jax.random.key(10), x0, TARGET, dt=0.05, steps=20),
-          langevin(jax.random.key(10), x0, TARGET, dt=0.05, steps=20), tol=0)
+          langevin(jax.random.key(11), x0, TARGET, dt=0.05, steps=20),
+          langevin(jax.random.key(11), x0, TARGET, dt=0.05, steps=20), tol=0)
 
     if FAILURES:
         log(f"DONE — {FAILURES} FAILURE(S)")

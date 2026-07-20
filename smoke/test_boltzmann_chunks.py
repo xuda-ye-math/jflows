@@ -93,6 +93,30 @@ def main():
     finally:
         boltzmann.train_forward_KLXX_G = original_train
     assert forwarded == [4]
+
+    original_advance = boltzmann._advance_stage_samples
+
+    def invalid_advance(*args, **kwargs):
+        del kwargs
+        return jnp.full_like(args[2], jnp.nan)
+
+    boltzmann.train_forward_KLXX_G = train
+    boltzmann._advance_stage_samples = invalid_advance
+    try:
+        try:
+            boltzmann.boltzmann_forward_KLXX_G_fixed(
+                samples, potential, potential, flow, 8,
+                batch_size=8, train_steps=1, lr=0.0, ladder=1,
+                melt=0.0, opt_dt=0.1, opt_steps=0,
+                mc_dt=1e-3, mc_steps=0, t_list=[1.0], chunks=4,
+            )
+        except FloatingPointError:
+            pass
+        else:
+            raise AssertionError("nonfinite post-stage population was accepted")
+    finally:
+        boltzmann.train_forward_KLXX_G = original_train
+        boltzmann._advance_stage_samples = original_advance
     print("KLXX chunks forwarding: OK")
 
 

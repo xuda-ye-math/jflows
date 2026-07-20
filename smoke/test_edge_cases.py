@@ -16,7 +16,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from jflows.core.transforms import LULinearTransform
+from jflows.core.transforms import LULinearTransform, MonotonicRQSTransform
 from jflows.flow import CNF, NCSF, NSF, OTFlow, RealNVP
 from jflows.potential import Nlog_Gaussian, Nlog_Gaussian_Mixture, Nlog_Uniform
 from jflows.train import (
@@ -91,6 +91,19 @@ def main():
     check("LU floored map round-trip", jnp.allclose(lu.inv(y), x, atol=2e-5))
     raises("LU rejects unsupported float16 inverse dtype", ValueError,
            lambda: LULinearTransform(jnp.zeros((2, 2), dtype=jnp.float16)))
+
+    # A valid RQS inverse discriminant can round slightly below zero in
+    # float32 after cancellation. The inverse must remain finite.
+    rqs = MonotonicRQSTransform(
+        jnp.asarray([[-33.53589630126953, 37.347991943359375]]),
+        jnp.asarray([[19.519683837890625, -48.280906677246094]]),
+        jnp.asarray([[29.062427520751953]]),
+        bound=4.0,
+    )
+    probe = jnp.asarray([1.4057083129882812])
+    restored = rqs.inv(rqs(probe))
+    check("RQS roundoff-safe inverse stays finite and in bounds",
+          jnp.isfinite(restored).all() & (jnp.abs(restored) <= 4.0).all())
 
     # Masked non-finite values must not leak through 0 * inf/NaN.
     values = jnp.asarray([1.0, jnp.inf, jnp.nan, 3.0])
@@ -177,6 +190,13 @@ def main():
     uniform_draw = resample(jax.random.key(9), samples, jnp.zeros(4), N=64)
     check("mixed +inf/NaN weights use invalid-vector fallback",
           jnp.array_equal(invalid_draw, uniform_draw))
+    contaminated = jnp.asarray([[jnp.nan, 0.0], [1.0, 1.0], [2.0, 2.0]])
+    clean_draw = resample(
+        jax.random.key(10), contaminated,
+        jnp.asarray([jnp.nan, 1.0, 1.0]), N=128,
+    )
+    check("resampling excludes nonfinite rows when finite rows exist",
+          jnp.isfinite(clean_draw).all())
 
     # Integer convenience inputs must produce inexact samples/energies.
     potentials = (

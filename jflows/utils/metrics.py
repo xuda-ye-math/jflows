@@ -299,10 +299,16 @@ def resample(key: Array, samples: Array, weights: Array, N: int | None = None) -
     if not jnp.issubdtype(weights.dtype, jnp.inexact):
         weights = weights.astype(jnp.result_type(float))
 
-    posinf = jnp.isposinf(weights)
+    finite_rows = jnp.all(
+        jnp.isfinite(samples.reshape(M, -1)), axis=-1
+    )
+    eligible = jnp.where(
+        jnp.any(finite_rows), finite_rows, jnp.ones_like(finite_rows)
+    )
+    posinf = jnp.isposinf(weights) & eligible
     has_posinf = jnp.any(posinf)
     valid = jnp.all((jnp.isfinite(weights) | posinf) & (weights >= 0))
-    finite_weights = jnp.where(jnp.isfinite(weights), weights, 0.0)
+    finite_weights = jnp.where(jnp.isfinite(weights) & eligible, weights, 0.0)
     total = finite_weights.sum()
     scale = jnp.max(finite_weights)
     # On some float32 accelerator kernels, reciprocal(scale) underflows for
@@ -319,7 +325,7 @@ def resample(key: Array, samples: Array, weights: Array, N: int | None = None) -
     safe = jnp.where(
         valid & has_posinf,
         posinf.astype(weights.dtype),
-        jnp.where(regular_ok, regular, jnp.ones_like(weights)),
+        jnp.where(regular_ok, regular, eligible.astype(weights.dtype)),
     )
     cdf = jnp.cumsum(safe)
     u = jax.random.uniform(key, (N,), dtype=cdf.dtype) * cdf[-1]

@@ -65,6 +65,8 @@ def langevin_step(
         log q(z|w) = -||z - w + dt * grad U(w)||^2 / (4 * dt) + const.
     Both the energy difference AND the asymmetric-proposal correction are
     needed; the energy term alone leaves a residual O(dt) bias.
+    Nonfinite acceptance ratios are rejected, leaving the corresponding
+    input particles unchanged.
 
     When `taming > 0`, the raw drift grad U(x) is replaced with the tamed
     effective force
@@ -101,6 +103,7 @@ def langevin_step(
     fy = potential.grad(y)
     log_q_xy = -((x - y + dt * fy) ** 2).sum(axis=-1) / (4.0 * dt)  # log q(x|y)
     log_alpha = potential(x) - potential(y) + log_q_xy - log_q_yx  # [N]
+    log_alpha = jnp.where(jnp.isfinite(log_alpha), log_alpha, -jnp.inf)
     accept = jnp.log(jax.random.uniform(key_mh, log_alpha.shape, dtype=x.dtype)) < log_alpha
     x_new = jnp.where(accept[:, None], y, x)
     return x_new, {"accept": accept, "log_alpha": log_alpha}

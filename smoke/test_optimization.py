@@ -187,6 +187,19 @@ def main() -> None:
         extreme_retry.step_scale, jnp.ones(1), tol=0.0,
     )
 
+    # A finite-energy Armijo trial can still have a nonfinite gradient.
+    # Reject it before it poisons the curvature history.
+    cusp = potential_from(lambda x: jnp.sqrt((x ** 2).sum(axis=-1)))
+    cusp0 = jnp.ones((1, 1))
+    cusp_state = lbfgs_init(cusp0, cusp, memory=3)
+    cusp_next = lbfgs_step(cusp_state, cusp, alpha=1.0, armijo=True)
+    check("nonfinite-gradient L-BFGS trial is rejected",
+          cusp_next.x, cusp0, tol=0.0)
+    check_true(
+        "rejected L-BFGS trial leaves finite state",
+        all(bool(jnp.isfinite(value).all()) for value in jax.tree.leaves(cusp_next)),
+    )
+
     # ── 3. loop == manual composition ──
     log("loop == lbfgs_init + lbfgs_step composition")
     state = lbfgs_init(x0m, gmm, memory=6)
@@ -228,6 +241,23 @@ def main() -> None:
     check("chunks=4 == chunks=1 (fusion rounding)",
           adamw(x0m, gmm, lr=0.02, steps=50, chunks=4),
           adamw(x0m, gmm, lr=0.02, steps=50, chunks=1), tol=1e-15)
+
+    huge = potential_from(lambda x: 1e200 * x.sum(axis=-1))
+    ordinary = potential_from(lambda x: x.sum(axis=-1))
+    adam0 = adamw_init(jnp.zeros((2, 1)))
+    rejected = adamw_step(adam0, huge, lr=0.1)
+    recovered = adamw_step(rejected, ordinary, lr=0.1)
+    clean = adamw_step(adam0, ordinary, lr=0.1)
+    check_true(
+        "AdamW rejects derived overflow without poisoning state",
+        rejected.k == adam0.k
+        and all(jnp.array_equal(a, b) for a, b in zip(
+            jax.tree.leaves(rejected), jax.tree.leaves(adam0)
+        ))
+        and all(jnp.array_equal(a, b) for a, b in zip(
+            jax.tree.leaves(recovered), jax.tree.leaves(clean)
+        )),
+    )
 
     if FAILURES:
         log(f"DONE — {FAILURES} FAILURE(S)")
