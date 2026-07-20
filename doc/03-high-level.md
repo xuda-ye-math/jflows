@@ -545,7 +545,10 @@ After an attempt is accepted, the controller:
 `mc_adjust=True` gives MALA advancement; `False` gives ULA. `chunks` partitions
 full-validation weighting, flow application, and rejuvenation. The generator
 derives deterministic operation keys from `seed`, stage, attempt, and operation
-namespace.
+namespace. After advancement is synchronized, every coordinate in the new
+population must be finite. Otherwise the generator raises `FloatingPointError`
+before yielding the stage record, so persistence cannot label or store that
+invalid population as a complete stage.
 
 ## Fixed-schedule generators
 

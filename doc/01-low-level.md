@@ -159,6 +159,12 @@ concrete public constructors. Ordinary sampling and training should use a
 `Flow` directly; transform primitives are intended for custom flow packages
 and explicit composition.
 
+The monotonic RQS inverse guards a valid-bin discriminant that can round
+slightly below zero in finite precision, and clips the recovered normalized
+coordinate to its selected bin. This protects ordinary float32 inversion from
+cancellation-induced NaNs; it is not a repair for nonfinite inputs or invalid
+spline parameters.
+
 ## Explicit PRNG keys
 
 There is no package-global RNG. Constructors and random kernels take a JAX key
@@ -380,8 +386,11 @@ resample(key, samples, weights, N=None)
 
 This performs multinomial resampling with replacement using an inverse CDF.
 `N` defaults to the input population size. Weights need not sum to one.
-Positive infinities share the mass; invalid or zero-total vectors fall back to
-uniform resampling.
+When at least one sample row is finite, nonfinite rows receive zero selection
+mass. Positive infinities on eligible rows share the mass; invalid or
+zero-total weight vectors fall back to uniform resampling over the eligible
+finite rows. If every sample row is nonfinite, resampling cannot manufacture a
+finite output.
 
 ## Rejuvenation kernels
 
@@ -403,6 +412,12 @@ population after a compiled scan.
 - `adjust=False`: unadjusted Langevin (ULA), with step-size bias.
 - `taming>0`: tamed ULA drift for rapidly growing gradients; it is
   incompatible with `adjust=True`.
+
+MALA maps a nonfinite Metropolis log-acceptance value to `-inf`, rejects that
+proposal, and retains the corresponding input particle. This is a rejection
+safeguard; it does not alter finite MALA transitions. ULA and stochastic Heun
+remain unadjusted integrators and therefore do not have an accept/reject
+fallback.
 
 `rejuvenation` is a stable alias of `langevin`.
 
@@ -491,7 +506,10 @@ lbfgs(
 
 `LBFGS_State` stores one optimizer state per sample. The complete `lbfgs`
 routine minimizes the potential independently for every row. `optimization`
-is the stable alias.
+is the stable alias. A candidate with nonfinite coordinates, cached energy, or
+new gradient is rejected row by row, leaving that row at its preceding finite
+state. In Armijo mode, such a rejection also reduces the carried trial scale
+for the next iteration.
 
 ### AdamW
 
@@ -509,7 +527,11 @@ adamw(
 ```
 
 `AdamW_State` is public for custom loops. This optimizer moves sample
-positions down an energy, rather than optimizing flow parameters.
+positions down an energy, rather than optimizing flow parameters. An update is
+committed atomically: if its gradient, moments, or resulting coordinates are
+nonfinite, the complete state and bias-correction counter for that processed
+chunk remain unchanged. A later finite step therefore resumes from the last
+valid state.
 
 ## Quench and temper
 

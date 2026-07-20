@@ -125,6 +125,11 @@ jflows/
   partition. It is the only generic memory-partition keyword.
 - MALA is the default Langevin mode. Positive taming is for ULA and therefore
   requires `adjust=False`.
+- Finite-state safeguards are local and explicit: RQS inversion guards
+  roundoff, MALA rejects nonfinite proposals, L-BFGS and AdamW reject
+  nonfinite state transitions, resampling excludes nonfinite rows when a
+  finite row exists, and a Boltzmann generator raises before yielding a
+  nonfinite post-stage population.
 - Prefer log weights and `compute_ESS_log` for numerically difficult targets.
   Normalized ESS lies in `[0, 1]`.
 
