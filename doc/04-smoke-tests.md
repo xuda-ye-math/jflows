@@ -47,7 +47,7 @@ compilation. First calls include JIT compilation.
 <tr><td><a href="../smoke/test_boltzmann_artifacts.py"><code>test_boltzmann_artifacts</code></a></td><td>complete-stage persistence</td><td>create/write/load, interruption boundary, continuation flow, and stage readers</td></tr>
 <tr><td><a href="../smoke/test_boltzmann_chunks.py"><code>test_boltzmann_chunks</code></a></td><td>KLXX memory-control and advancement path</td><td>one <code>chunks</code> spelling, forwarding into quench-and-temper, and rejection of a nonfinite post-stage population</td></tr>
 <tr><td><a href="../smoke/test_chunk.py"><code>test_chunk</code></a></td><td>chunked full-set weights</td><td>chunk-count equivalence and eager device-memory partition behavior</td></tr>
-<tr><td><a href="../smoke/test_public_api.py"><code>test_public_api</code></a></td><td>package namespace</td><td><code>jflows.train</code>/<code>jflows.boltzmann</code> split, retired <code>jflows.training</code>, trainer signatures, KLXX pool semantics</td></tr>
+<tr><td><a href="../smoke/test_public_api.py"><code>test_public_api</code></a></td><td>package namespace</td><td>client-free backend report, <code>jflows.train</code>/<code>jflows.boltzmann</code> split, retired <code>jflows.training</code>, trainer signatures, KLXX pool semantics</td></tr>
 </tbody>
 </table>
 

@@ -9,7 +9,7 @@ This directory is the standalone user documentation for the generic
 3. high-level annealed Boltzmann generators.
 
 The live source is authoritative. Public code should import from
-`jflows.flow`, `jflows.potential`, `jflows.loss`, `jflows.utils`,
+`jflows`, `jflows.flow`, `jflows.potential`, `jflows.loss`, `jflows.utils`,
 `jflows.train`, `jflows.artifacts`, or `jflows.boltzmann`. The retired
 `jflows.training` namespace and the private `jflows.core` implementation are
 not user interfaces.

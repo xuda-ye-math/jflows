@@ -34,6 +34,10 @@ target sampler.
 - **Sampling and diagnostics.** Importance weights, normalized ESS, coverage,
   resampling, Langevin/MALA, stochastic Heun, HMC, SMC, flow-proposal AIS,
   L-BFGS, AdamW, and quench-and-temper are available from `jflows.utils`.
+- **Runtime backend report.** `jflows.backend()` lists CPU and installed JAX
+  accelerator plugins backed by visible hardware, identifies the configured
+  runtime, and reports JAX/Equinox versions and accelerator models without
+  creating a JAX device client or performing device computation.
 - **Progressive training objectives.** Reverse KL, forward KL, KLX, and KLXX
   share one validation convention while adding progressively richer
   target-batch and density-ratio information.
@@ -65,6 +69,7 @@ SMC/AIS, optimization, and quench-and-temper:
 from jflows.flow import NSF, NCSF, CNF, OTFlow, RealNVP
 from jflows.potential import Potential, Nlog_Gaussian, potential_from
 from jflows.loss import reverse_KL_F, forward_KL_G, forward_KLX_G, forward_X_G
+from jflows import backend
 from jflows.utils import compute_ESS_log, importance_weights_log, langevin, smc
 ```
 
@@ -123,6 +128,14 @@ separately through `jflows.boltzmann.write` and `jflows.boltzmann.load`.
 pip install "jax[cuda13]" equinox
 pip install -e .
 ```
+
+```python
+import jflows
+
+jflows.backend()
+```
+
+A minimal training setup is:
 
 ```python
 import jax

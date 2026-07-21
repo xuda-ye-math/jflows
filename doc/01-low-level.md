@@ -20,11 +20,29 @@ from jflows.potential import (
 from jflows.loss import (
     reverse_KL_F, forward_KL_G, forward_KLX_G, forward_X_G,
 )
+from jflows import backend
 from jflows.utils import *
 ```
 
 Use the explicit imports shown throughout this page in application code. The
 wildcard above only summarizes the flat utility namespace.
+
+## JAX backend and accelerator report
+
+`backend()` inspects installed JAX accelerator plugins and visible hardware
+without creating a JAX device client, placing an array, or performing device
+computation. The report distinguishes CUDA and ROCm, prints the JAX and
+Equinox versions, and includes hardware models reported by the platform:
+
+```python
+from jflows import backend
+
+backend()
+```
+
+Typical backend names are `cpu`, `cuda`, `rocm`, and `tpu`. Availability here
+means that the corresponding JAX plugin and visible hardware are present; the
+report deliberately does not initialize the backend merely to test it.
 
 ## Flow interface
 
@@ -613,6 +631,7 @@ reimplementing their optimizer scans.
 The closest low-level checks are:
 
 - [flow and Jacobian tests](../smoke/test_flow.py)
+- [public API and backend report](../smoke/test_public_api.py)
 - [periodic seam tests](../smoke/test_circular.py)
 - [potential tests](../smoke/test_potential.py)
 - [potential-algebra tests](../smoke/test_linear_combination.py)

@@ -1,11 +1,14 @@
 """Focused checks for the direct public training surface."""
 
+from contextlib import redirect_stdout
 import inspect
+import io
 from pathlib import Path
 
 import jax
 import jax.numpy as jnp
 
+import jflows
 import jflows.train as training
 import jflows.boltzmann as boltzmann_api
 import jflows.boltzmann.load as boltzmann_load
@@ -64,6 +67,17 @@ def _problem():
 
 
 def test_signatures():
+    assert "backend" in jflows.__all__
+    output = io.StringIO()
+    with redirect_stdout(output):
+        result = jflows.backend()
+    report = output.getvalue()
+    assert result is None
+    assert f"JAX {jax.__version__}" in report
+    assert "Equinox " in report
+    assert "Selected backend:" in report
+    assert "Available backends:" in report
+    assert "- CPU — cpu" in report
     assert Path(boltzmann_api.__file__).name == "__init__.py"
     assert Path(boltzmann_api.__file__).parent.name == "boltzmann"
     assert train_api.__all__ == [
