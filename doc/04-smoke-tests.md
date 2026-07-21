@@ -42,6 +42,8 @@ compilation. First calls include JIT compilation.
 <tr><td><a href="../smoke/test_checkpoint.py"><code>test_checkpoint</code></a></td><td>flow serialization and stochastic CNF state</td><td>Equinox leaf serialization, template reconstruction, approximate-CNF trace keys, ordinary packed training</td></tr>
 <tr><td><a href="../smoke/test_edge_cases.py"><code>test_edge_cases</code></a></td><td>cross-module numerical contracts</td><td>RQS inverse roundoff, degenerate weights, nonfinite-row resampling, extreme values, small configurations, identity starts</td></tr>
 <tr><td><a href="../smoke/test_boltzmann.py"><code>test_boltzmann</code></a></td><td>adaptive and fixed Boltzmann generators</td><td>stage records, ESS selection, identity fallback, fixed advancement, completion</td></tr>
+<tr><td><a href="../smoke/test_boltzmann_identity.py"><code>test_boltzmann_identity</code></a></td><td>identity-only adaptive Boltzmann generator</td><td>flow-free signature, ESS shrinking, deterministic advancement, and absence of trainer calls</td></tr>
+<tr><td><a href="../smoke/test_boltzmann_identity_artifacts.py"><code>test_boltzmann_identity_artifacts</code></a></td><td>flow-free complete-stage persistence</td><td>identity save/load/resume with no flow artifacts</td></tr>
 <tr><td><a href="../smoke/test_boltzmann_artifacts.py"><code>test_boltzmann_artifacts</code></a></td><td>complete-stage persistence</td><td>create/write/load, interruption boundary, continuation flow, and stage readers</td></tr>
 <tr><td><a href="../smoke/test_boltzmann_chunks.py"><code>test_boltzmann_chunks</code></a></td><td>KLXX memory-control and advancement path</td><td>one <code>chunks</code> spelling, forwarding into quench-and-temper, and rejection of a nonfinite post-stage population</td></tr>
 <tr><td><a href="../smoke/test_chunk.py"><code>test_chunk</code></a></td><td>chunked full-set weights</td><td>chunk-count equivalence and eager device-memory partition behavior</td></tr>
@@ -82,7 +84,9 @@ numerical boundaries    -> test_edge_cases
 
 ```text
 stage controller        -> test_boltzmann
+identity controller     -> test_boltzmann_identity
 stage persistence       -> test_boltzmann_artifacts
+identity persistence    -> test_boltzmann_identity_artifacts
 full-set chunking       -> test_chunk, test_boltzmann_chunks
 public module split     -> test_public_api
 ```

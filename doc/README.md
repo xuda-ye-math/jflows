@@ -68,7 +68,8 @@ jflows
 │       └── save_history / load_history
 └── HIGH LEVEL
     └── boltzmann
-        ├── four adaptive boltzmann_* generators
+        ├── boltzmann_identity without flow training
+        ├── four adaptive trained boltzmann_* generators
         ├── four fixed-schedule boltzmann_*_fixed generators
         ├── accepted-stage records and identity fallback
         ├── write: create / stage / finish

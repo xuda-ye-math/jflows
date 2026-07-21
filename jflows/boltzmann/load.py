@@ -44,29 +44,33 @@ def validate(run_dir) -> dict:
     """Check the files required to continue a stage-level run."""
     root = Path(run_dir).expanduser().resolve()
     record = manifest(root)
-    required = [record["initial_samples_path"], record["initial_flow_path"]]
+    required = [record["initial_samples_path"]]
+    if "initial_flow_path" in record:
+        required.append(record["initial_flow_path"])
     for item in record["stages"]:
         stage = _stage(root, item)
-        required.extend([
-            stage["selected_flow_path"],
-            stage["continuation_flow_path"],
-            stage["validation_samples_path"],
-            stage["history_path"],
-        ])
+        required.extend([stage["validation_samples_path"], stage["history_path"]])
+        if "selected_flow_path" in stage:
+            required.extend([
+                stage["selected_flow_path"],
+                stage["continuation_flow_path"],
+            ])
     for relative in required:
         if not (root / relative).is_file():
             raise FileNotFoundError(root / relative)
     return record
 
 
-def load(run_dir, template):
-    """Load the last population, continuation flow, and stage records."""
+def load(run_dir, template=None):
+    """Load the last population, optional flow, and stage records."""
     root = Path(run_dir).expanduser().resolve()
     run = validate(root)
     samples = np.load(root / run["initial_samples_path"], allow_pickle=False)
-    continuation = eqx.tree_deserialise_leaves(
-        root / run["initial_flow_path"], template
-    )
+    continuation = None
+    if "initial_flow_path" in run:
+        continuation = eqx.tree_deserialise_leaves(
+            root / run["initial_flow_path"], template
+        )
     stages = []
     for item in run["stages"]:
         saved = _stage(root, item)
@@ -75,32 +79,28 @@ def load(run_dir, template):
                 "t": float(saved["t"]),
                 "t_start": float(saved["t_start"]),
                 "valid_selected_ess": float(saved["valid_selected_ess"]),
-                "valid_trained_ess": float(saved["valid_trained_ess"]),
                 "valid_identity_ess": float(saved["valid_identity_ess"]),
                 "valid_sample_count": int(saved["valid_sample_count"]),
                 "selected": saved["selected"],
-                "t_hist": data["t_hist"].copy(),
-                "batch_ess_hist": data["batch_ess_hist"].copy(),
-                "valid_trained_ess_hist": data[
-                    "valid_trained_ess_hist"
-                ].copy(),
-                "valid_identity_ess_hist": data[
-                    "valid_identity_ess_hist"
-                ].copy(),
                 "attempt_status_hist": tuple(saved["attempt_status_hist"]),
                 "selection_history": tuple(saved["selection_history"]),
                 "elapsed_seconds": float(saved["elapsed_seconds"]),
-                "selected_flow_path": saved["selected_flow_path"],
-                "continuation_flow_path": saved["continuation_flow_path"],
                 "validation_samples_path": saved["validation_samples_path"],
             }
-        record["flow"] = eqx.tree_deserialise_leaves(
-            root / saved["selected_flow_path"], template
-        )
-        continuation = eqx.tree_deserialise_leaves(
-            root / saved["continuation_flow_path"], template
-        )
-        record["continuation_flow"] = continuation
+            record.update({key: data[key].copy() for key in data.files})
+        if "selected_flow_path" in saved:
+            record.update({
+                "valid_trained_ess": float(saved["valid_trained_ess"]),
+                "selected_flow_path": saved["selected_flow_path"],
+                "continuation_flow_path": saved["continuation_flow_path"],
+            })
+            record["flow"] = eqx.tree_deserialise_leaves(
+                root / saved["selected_flow_path"], template
+            )
+            continuation = eqx.tree_deserialise_leaves(
+                root / saved["continuation_flow_path"], template
+            )
+            record["continuation_flow"] = continuation
         stages.append(record)
         samples = np.load(
             root / saved["validation_samples_path"], allow_pickle=False

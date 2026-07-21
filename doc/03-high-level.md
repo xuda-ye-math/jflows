@@ -41,6 +41,7 @@ deterministic proposal map, but it does not reproduce the stochastic
 
 ```python
 from jflows.boltzmann import (
+    boltzmann_identity,
     boltzmann_reverse_KL_F,
     boltzmann_forward_KL_G,
     boltzmann_forward_KLX_G,
@@ -48,7 +49,8 @@ from jflows.boltzmann import (
 )
 ```
 
-These four functions share one adaptive stage controller. They differ in the
+`boltzmann_identity` is the flow-free reference controller. The other four
+functions share one adaptive trained-stage controller. They differ in the
 medium-level trainer dispatched inside each stage: the direction in which the
 flow is parameterized, how the optimizer obtains its training samples, and
 which loss is differentiated. The endpoint proposal, optional SMC gate,
@@ -77,6 +79,47 @@ stage. In simple terms:
 They are not four unrelated pipelines. They share the same bridge selection,
 validation, identity fallback, acceptance, and particle advancement. Only the
 stage-training objective becomes progressively richer.
+
+## Identity-only adaptive generator
+
+```python
+boltzmann_identity(
+    x_valid,
+    source,
+    target,
+    ladder,
+    mc_dt,
+    mc_steps,
+    *,
+    mc_adjust=True,
+    monitor=None,
+    bg_param=None,
+    chunks=1,
+    seed=0,
+)
+```
+
+This function runs the same adaptive bridge policy without constructing or
+training a flow. For each candidate `a -> b`, it:
+
+1. optionally applies the SMC endpoint gate controlled by `tau_smc`;
+2. evaluates exact identity log weights `U_a(x)-U_b(x)` on all `x_valid`;
+3. requires their ESS to reach `tau_ess`, shrinking `b-a` on rejection;
+4. resamples the complete population; and
+5. applies Langevin at `U_b`, using MALA when `mc_adjust=True`.
+
+It returns `(samples, stages)`. Its signature deliberately omits `flow`,
+`batch_size`, `train_steps`, `lr`, optimizer controls, and initialization
+controls. `chunks` is used for SMC, complete-set identity weights, and
+rejuvenation. This makes `boltzmann_identity` the direct adaptive
+reweight/resample/MCMC baseline rather than a flow generator configured with
+zero training steps.
+
+Identity records contain `t`, `t_start`, `valid_selected_ess`,
+`valid_identity_ess`, `valid_sample_count`, `selected="identity"`, `t_hist`,
+`valid_identity_ess_hist`, `attempt_status_hist`, `selection_history`, and
+`elapsed_seconds`. They contain no trained ESS, batch history, flow, or
+continuation flow.
 
 ### Design philosophy
 
@@ -499,7 +542,7 @@ with coverage or target-specific observables.
 
 </div>
 
-The controller uses two distinct gates:
+The trained controller uses two distinct gates:
 
 1. If `tau_smc>0`, potential-space SMC tests a proposed endpoint before
    training. A failed proposal shrinks the interval.
@@ -508,6 +551,8 @@ The controller uses two distinct gates:
    shrinks and training retries with a fresh operation key.
 
 Batch ESS emitted during optimization is never an acceptance gate.
+For `boltzmann_identity`, the second gate is simply the complete-validation
+identity ESS; no training or trained-versus-identity comparison occurs.
 
 ## Identity fallback and initialization
 
@@ -704,7 +749,7 @@ if not stages or stages[-1]["t"] != 1.0:
 
 ## Complete-stage persistence
 
-The eight generator functions are computation-only. They do not accept
+The nine generator functions are computation-only. They do not accept
 `run_dir`, `problem_id`, or `resume`. Persistence is an explicit high-level
 layer for advanced workflows.
 
@@ -727,10 +772,11 @@ saved_record = stage(run_dir, run, record, samples)
 finish(run_dir, run, status)
 ```
 
-- `create` writes `initial_samples.npy`, `initial_flow.eqx`, and `run.json`.
-- `stage` atomically writes the selected flow, continuation flow, validation
-  samples, ESS histories, and stage metadata, then appends the stage to the
-  manifest.
+- `create` writes `initial_samples.npy` and `run.json`; it also writes
+  `initial_flow.eqx` when `flow` is not `None`.
+- `stage` atomically writes validation samples, histories, and stage metadata,
+  plus selected and continuation flows for trained records, then appends the
+  stage to the manifest.
 - `finish` changes the manifest status, normally to `"complete"` or
   `"exhausted"`.
 
@@ -752,7 +798,7 @@ from jflows.boltzmann.load import (
 ```python
 manifest(run_dir) -> dict
 validate(run_dir) -> dict
-load(run_dir, template)
+load(run_dir, template=None)
 fork(run_dir, destination, problem_id=None) -> dict
 load_stage_flow(run_dir, stage, role, template)
 load_validation_samples(run_dir, stage=None, *, mmap_mode=None)
@@ -764,7 +810,8 @@ run(run_dir, problem_id, config, samples, flow, iterate, *, resume=False)
 - `validate` verifies that every file referenced by the complete-stage
   manifest exists.
 - `load` returns `(samples, continuation_flow, stages)` at the last complete
-  stage. It requires a matching flow template.
+  stage. A trained run requires a matching flow template; an identity run is
+  loaded without a template and returns `continuation_flow=None`.
 - `fork` copies a validated run to a new destination and resets its status to
   running. The destination must not already exist.
 - `load_stage_flow` uses one-based stage indices and `role="selected"` or
@@ -804,7 +851,7 @@ iterate(samples, flow, accepted_t, start_stage)
 With `resume=True`, `run` loads the last complete population, continuation
 flow, records, accepted endpoints, and next one-based stage index before
 calling the iterator. It writes every newly yielded complete stage. This is an
-advanced persistence hook; ordinary callers should use one of the eight
+advanced persistence hook; ordinary callers should use one of the nine
 generators directly.
 
 ## Stored run tree
@@ -824,6 +871,10 @@ run-directory/
     └── stage_000002/
         └── ...
 ```
+
+An identity run omits `initial_flow.eqx`, `selected.eqx`, and
+`continuation.eqx`; its run tree contains only the manifest, initial samples,
+and per-stage metadata, samples, and histories.
 
 The manifest stores relative paths. Flow files contain Equinox array leaves,
 so loading still requires the original architecture template.

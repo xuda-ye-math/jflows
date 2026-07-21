@@ -95,6 +95,7 @@ with an exact identity fallback using full-validation incremental ESS:
 
 ```python
 from jflows.boltzmann import (
+    boltzmann_identity,
     boltzmann_reverse_KL_F,
     boltzmann_forward_KL_G,
     boltzmann_forward_KLX_G,
@@ -102,15 +103,19 @@ from jflows.boltzmann import (
 )
 ```
 
+- identity runs the adaptive SMC/ESS/resampling/rejuvenation controller with
+  no flow or optimizer;
 - reverse KL is the simplest source-sampled F baseline;
 - forward KL manufactures target-side batches and trains G;
 - KLX adds target-measure log-weight variation control; and
 - KLXX adds a quench-and-temper/proposal mixture for wider mode and leakage
   regularization.
 
-Adaptive and fixed-schedule variants use the same stage record and identity
-selection rules. Complete-stage persistence is exposed separately through
-`jflows.boltzmann.write` and `jflows.boltzmann.load`.
+The four trained generators compare their candidate with identity. The
+standalone `boltzmann_identity` function instead advances every accepted
+stage by exact identity reweighting, so it requires no flow, batch size,
+training steps, or learning rate. Complete-stage persistence is exposed
+separately through `jflows.boltzmann.write` and `jflows.boltzmann.load`.
 
 ## Minimal setup
 

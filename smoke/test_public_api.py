@@ -13,6 +13,7 @@ import jflows.boltzmann.write as boltzmann_write
 import jflows.artifacts as artifacts_api
 import jflows.train as train_api
 from jflows.boltzmann import (
+    boltzmann_identity,
     boltzmann_forward_KL_G,
     boltzmann_forward_KL_G_fixed,
     boltzmann_forward_KLX_G,
@@ -73,6 +74,7 @@ def test_signatures():
         "train_reverse_KL_F",
     ]
     assert boltzmann_api.__all__ == [
+        "boltzmann_identity",
         "boltzmann_forward_KL_G",
         "boltzmann_forward_KL_G_fixed",
         "boltzmann_forward_KLX_G",
@@ -116,6 +118,11 @@ def test_signatures():
         assert parameters["initialize_from_identity"].default is True
         assert "run_dir" not in parameters
         assert "resume" not in parameters
+    identity_parameters = inspect.signature(boltzmann_identity).parameters
+    assert not {
+        "flow", "batch_size", "train_steps", "lr", "checkpoint",
+        "initialize_from_identity", "run_dir", "resume",
+    } & set(identity_parameters)
     for function in (
         train_forward_KLXX_G,
         boltzmann_forward_KLXX_G,
