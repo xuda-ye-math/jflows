@@ -28,7 +28,7 @@ when repository cleanliness matters.
 <tbody>
 <tr><td><a href="../example/2D_single.py"><code>2D_single.py</code></a></td><td>low + medium</td><td>NSF, Gaussian mixture, reverse KL vs forward KL, ESS</td><td><code>2D_single.png</code>, log</td></tr>
 <tr><td><a href="../example/3D_periodic.py"><code>3D_periodic.py</code></a></td><td>low + medium</td><td>NCSF on a torus, log weights, resampling, target MALA</td><td><code>3D_periodic.png</code>, log</td></tr>
-<tr><td><a href="../example/4D_boltzmann.py"><code>4D_boltzmann.py</code></a></td><td>low + medium + high</td><td>adaptive reverse/forward Boltzmann ladders, stage ESS, identity comparison</td><td><code>4D_boltzmann.png</code>, log</td></tr>
+<tr><td><a href="../example/4D_boltzmann.py"><code>4D_boltzmann.py</code></a></td><td>low + medium + high</td><td>adaptive-staging reverse/forward Boltzmann generators, stage ESS, identity comparison</td><td><code>4D_boltzmann.png</code>, log</td></tr>
 <tr><td><a href="../example/CNF_vs_OTFlow.py"><code>CNF_vs_OTFlow.py</code></a></td><td>low + medium</td><td>continuous flows, checkpointing, held-out ESS, dimension scaling</td><td><code>CNF_vs_OTFlow.csv</code>, log</td></tr>
 <tr><td><a href="../example/flow_scaling_law.py"><code>flow_scaling_law.py</code></a></td><td>low</td><td>NSF forward/inverse latency, warmup, synchronization, architecture scaling</td><td><code>flow_scaling_law.csv</code>, log</td></tr>
 </tbody>
@@ -87,17 +87,17 @@ The verified run reported final ESS `0.8980` for reverse KL and `0.9046` for
 forward KL. The plot uses periodic projections rather than treating the domain
 as ordinary unconstrained Euclidean space.
 
-## 4D adaptive Boltzmann generator
+## 4D adaptive-staging Boltzmann generator
 
 [Source](../example/4D_boltzmann.py) ·
 [Figure](../example/4D_boltzmann.png) ·
-[Results](../example/results.md#4d_boltzmann--annealed-bg-with-the-adaptive-ladder)
+[Results](../example/results.md#4d_boltzmann--adaptive-staging-bg)
 
 The two-charge problem is the canonical high-level example. It demonstrates:
 
 ```text
 source validation population
-  -> adaptive endpoint proposal
+  -> adaptive stage-endpoint proposal
   -> one direct stage trainer
   -> trained vs identity full-validation ESS
   -> accept/retry
@@ -105,8 +105,8 @@ source validation population
   -> next bridge stage
 ```
 
-It runs adaptive reverse KL and forward KL generators separately and records
-their accepted bridge endpoints and incremental ESS values.
+It runs adaptive-staging reverse KL and forward KL generators separately and
+records their accepted bridge endpoints and incremental ESS values.
 
 The verified reverse run accepted:
 
@@ -117,7 +117,7 @@ ESS = [0.780, 0.931, 0.947, 0.971, 0.991]
 
 The initial candidates `0.2` and `0.14` were rejected attempts before the
 accepted first endpoint `0.098`; rejected candidates do not appear in the
-accepted ladder.
+accepted stage schedule.
 
 The verified forward run accepted:
 
@@ -183,7 +183,7 @@ sampling direction. The CSV contains all `3 x 6` architecture/dimension cells.
 <tbody>
 <tr><td>a minimal bounded flow training script</td><td><code>2D_single.py</code></td></tr>
 <tr><td>periodic coordinates and post-training MALA</td><td><code>3D_periodic.py</code></td></tr>
-<tr><td>adaptive accepted-stage training</td><td><code>4D_boltzmann.py</code></td></tr>
+<tr><td>adaptive-staging accepted-stage training</td><td><code>4D_boltzmann.py</code></td></tr>
 <tr><td>continuous-flow checkpointing and held-out ESS</td><td><code>CNF_vs_OTFlow.py</code></td></tr>
 <tr><td>correct accelerator latency measurement</td><td><code>flow_scaling_law.py</code></td></tr>
 </tbody>

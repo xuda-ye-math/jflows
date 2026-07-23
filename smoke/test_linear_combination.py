@@ -8,10 +8,10 @@ renders the normalized densities exp(-U_c) as a sequence of heatmaps
 (smoke/test_linear_combination.png) so the uniform -> Gaussian-
 mixture transition is visible as a smooth concentration of mass.
 
-This is the standard temperature-annealed Boltzmann-generator setting:
-SMC / AIS anneal along exactly such a linear bridge of potentials, with
-the level coefficient c retuned per level (no recompile — the coefficients
-are an array leaf).
+This is the standard linear potential bridge used by staged Boltzmann
+generators: SMC / AIS traverse exactly such an interpolation, with the
+coefficient c retuned per inner level (no recompile — the coefficients are an
+array leaf).
 
 Checks per level:
     1. algebra: U_c(x) == (1 - c) * U_uniform(x) + c * U_gmm(x);

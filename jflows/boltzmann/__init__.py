@@ -1,4 +1,4 @@
-"""Pure adaptive and fixed-schedule Boltzmann computations.
+"""Pure adaptive-staging and fixed-schedule Boltzmann computations.
 
 The controller calls only the public direct trainers.  It contains no file,
 manifest, resume, or artifact logic; ``jflows.boltzmann.write`` and
@@ -152,7 +152,7 @@ def _select_adaptive_endpoint(
     chunks,
     emit,
 ):
-    """Apply the optional SMC gate to one proposed adaptive endpoint."""
+    """Apply the optional SMC gate to one proposed stage endpoint."""
     if policy["tau_smc"] == 0.0:
         return t_end, [{
             "index": 0,
@@ -365,7 +365,7 @@ def iterate_identity(
     accepted_t=(0.0,),
     start_stage=1,
 ):
-    """Yield adaptive identity-only Boltzmann stages."""
+    """Yield adaptive-staging identity-only Boltzmann stages."""
     samples = jnp.asarray(samples)
     policy = _adaptive_policy(bg_param)
     accepted = [float(value) for value in accepted_t]
@@ -765,7 +765,7 @@ def boltzmann_identity(
     chunks=1,
     seed=0,
 ):
-    """Run adaptive identity-only Boltzmann stages without flow training."""
+    """Run adaptive-staging identity-only Boltzmann stages without flow training."""
     stages = []
     current = jnp.asarray(x_valid)
     for current, record, _ in iterate_identity(
@@ -805,7 +805,7 @@ def boltzmann_reverse_KL_F(
     checkpoint=False,
     seed=0,
 ):
-    """Run adaptive reverse-KL Boltzmann stages."""
+    """Run adaptive-staging reverse-KL Boltzmann stages."""
     return run_boltzmann(
         x_valid, source, target, flow, objective="reverse_kl", pool_size=0,
         batch_size=batch_size, train_steps=train_steps, lr=lr, ladder=ladder,
@@ -838,7 +838,7 @@ def boltzmann_forward_KL_G(
     g_clip=float("inf"),
     seed=0,
 ):
-    """Run adaptive forward-KL Boltzmann stages."""
+    """Run adaptive-staging forward-KL Boltzmann stages."""
     return run_boltzmann(
         x_valid, source, target, flow, objective="forward_kl", pool_size=0,
         batch_size=batch_size, train_steps=train_steps, lr=lr, ladder=ladder,
@@ -873,7 +873,7 @@ def boltzmann_forward_KLX_G(
     g_clip=float("inf"),
     seed=0,
 ):
-    """Run adaptive forward-KLX Boltzmann stages."""
+    """Run adaptive-staging forward-KLX Boltzmann stages."""
     return run_boltzmann(
         x_valid, source, target, flow, objective="forward_klx", pool_size=0,
         batch_size=batch_size, train_steps=train_steps, lr=lr, ladder=ladder,
@@ -914,7 +914,7 @@ def boltzmann_forward_KLXX_G(
     g_clip=float("inf"),
     seed=0,
 ):
-    """Run adaptive KLXX stages with full or separately sampled QT pools."""
+    """Run adaptive-staging KLXX stages with full or separately sampled QT pools."""
     return run_boltzmann(
         x_valid, source, target, flow, objective="forward_klxx",
         pool_size=pool_size, batch_size=batch_size, train_steps=train_steps,

@@ -63,9 +63,9 @@ Run by [`3D_periodic.py`](3D_periodic.py): its purpose is to show that the **NCS
 
 Both panels show the resampled and rejuvenated particle sets (left: reverse KL; right: forward KL) concentrating on the wrap-around ridge tubes of the target — the structure a non-periodic flow cannot represent without seam artifacts. The healthy ESS of both objectives on this domain is the point: the NCSF's circular splines carry the periodic geometry end to end.
 
-## 4D_boltzmann — annealed BG with the adaptive ladder
+## 4D_boltzmann — adaptive-staging BG
 
-The 4D two-charge target, sampled by [`4D_boltzmann.py`](4D_boltzmann.py) with BOTH annealed generators — `boltzmann_reverse_KL_F` and `boltzmann_forward_KL_G` — along the bridge ladder $U_t = (1-t)\,U_0 + t\,U_1$, with the coefficient $t$ selected adaptively instead of a fixed schedule $c_k = k/12$.
+The 4D two-charge target, sampled by [`4D_boltzmann.py`](4D_boltzmann.py) with both adaptive-staging generators — `boltzmann_reverse_KL_F` and `boltzmann_forward_KL_G` — along the stage schedule $U_t = (1-t)\,U_0 + t\,U_1$, with the coefficient $t$ selected adaptively instead of a fixed schedule $c_k = k/12$.
 
 ### Setup
 
@@ -74,19 +74,19 @@ The 4D two-charge target, sampled by [`4D_boltzmann.py`](4D_boltzmann.py) with B
   $U_1(x) = a\,[(\lVert x_1\rVert^2 - r_0^2)^2 + (\lVert x_2\rVert^2 - r_0^2)^2] + q^2 / \sqrt{\lVert x_1 - x_2\rVert^2 + \varepsilon^2}$
   with $r_0 = 2$, $a = 1$, $q^2 = 4$, $\varepsilon = 10^{-3}$ (identical to the original).
 - **Flow**: NSF on $[-3, 3]^4$, 8 bins, 6 autoregressive transforms, $(64, 64)$ conditioners, identity-initialised.
-- **Boltzmann generators**: the stage flows are connected step by step — stage $k$ selects $t_k$ through the SMC gate (`tau_smc`, `LADDER = 1` level, on the exact full validation population), trains an identity-initialized incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$ on the advancing particle set, accepts on the incremental importance-sampling ESS (`tau_ess`), and advances the set by reweight → resample → MALA at $U_{t_k}$ (`mc_adjust = True`; the Metropolis gate keeps the near-singular Coulomb tail out of the particle set). The reverse KL stages train on Langevin-freshened batches of the set; the forward KL stages train on target batches manufactured per Adam step by AIS through the current flow (SMC gate and AIS share `LADDER`). Parameters: `VALID_SZIE = 120000`, `BATCH_SZIE = 2000`, `TRAIN_STEPS = 500`, `LR = 1e-4`, MALA `1e-3 × 100`; ladder `t_safe = 0.2`, `shrink_factor = 0.7`, `enlarge_factor = 1.5`, `tau_smc = 0.2`, `tau_ess = 0.6`.
+- **Boltzmann generators**: the stage flows are connected step by step — stage $k$ selects $t_k$ through the SMC gate (`tau_smc`, `LADDER = 1` level, on the exact full validation population), trains an identity-initialized incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$ on the advancing particle set, accepts on the incremental importance-sampling ESS (`tau_ess`), and advances the set by reweight → resample → MALA at $U_{t_k}$ (`mc_adjust = True`; the Metropolis gate keeps the near-singular Coulomb tail out of the particle set). The reverse KL stages train on Langevin-freshened batches of the set; the forward KL stages train on target batches manufactured per Adam step by AIS through the current flow (SMC gate and AIS share `LADDER`). Parameters: `VALID_SZIE = 120000`, `BATCH_SZIE = 2000`, `TRAIN_STEPS = 500`, `LR = 1e-4`, MALA `1e-3 × 100`; stage-schedule controls `t_safe = 0.2`, `shrink_factor = 0.7`, `enlarge_factor = 1.5`, `tau_smc = 0.2`, `tau_ess = 0.6`.
 
 ### Results
 
-The verified rerun completed both adaptive ladders. Reverse KL accepted five
-levels, $t=[0.098, 0.245, 0.4655, 0.7963, 1.0]$, with incremental ESS
-$[0.794, 0.933, 0.949, 0.970, 0.990]$. Forward KL accepted four levels,
+The verified rerun completed both adaptive stage schedules. Reverse KL accepted five
+stages, $t=[0.098, 0.245, 0.4655, 0.7963, 1.0]$, with incremental ESS
+$[0.794, 0.933, 0.949, 0.970, 0.990]$. Forward KL accepted four stages,
 $t=[0.2, 0.5, 0.95, 1.0]$, with ESS
 $[0.764, 0.901, 0.959, 0.998]$. The first reverse stage reached $t=0.098$
 after the expected rejected candidates $0.2$ and $0.14$ under
 `shrink_factor = 0.7`; the table reports accepted stages only. Exact ESS values
 can move slightly with accelerator kernels, and the script refuses to produce
-a target-labelled figure if either ladder is incomplete.
+a target-labelled figure if either stage schedule is incomplete.
 
 The accepted ESS is per stage the better of the trained flow and the identity
 map (pure SMC reweighting): after training, each stage keeps whichever has the
@@ -94,11 +94,11 @@ higher incremental ESS, so a stage is never worse than SMC.
 
 <p align="center"><img src="4D_boltzmann.png" alt="4D Boltzmann generator" width="1000px"></p>
 
-Each row (top: reverse KL; bottom: forward KL) shows the adaptive ladder ($t_k$ and the per-stage incremental ESS), the particle-1 marginal at $t = 1$ concentrated on the annulus $\lVert x_1 \rVert = r_0$ (dashed circle), and the relative angle $\Delta\theta$ between the two particles, peaked at $\pm\pi$ with vanishing density at $0$ — the antipodal Coulomb minimum.
+Each row (top: reverse KL; bottom: forward KL) shows the adaptive stage schedule ($t_k$ and the per-stage incremental ESS), the particle-1 marginal at $t = 1$ concentrated on the annulus $\lVert x_1 \rVert = r_0$ (dashed circle), and the relative angle $\Delta\theta$ between the two particles, peaked at $\pm\pi$ with vanishing density at $0$ — the antipodal Coulomb minimum.
 
 ### Reading the result
 
-The ESS trace follows the reference behaviour of the original fixed-ladder run — a lower leading level, then a high plateau — while the ESS-gated selection compresses the schedule: the leading increment is small (`t_safe`), the accepted step then grows by the enlarge factor, and the final extrapolation snaps to $t = 1$, so four or five stages cover what the fixed schedule spent twelve levels on. The generator's sample output is the advanced particle set; the per-stage incremental flows and their acceptance ESS are returned in the stage records.
+The ESS trace follows the reference behaviour of the original fixed-schedule run — a lower leading stage, then a high plateau — while the ESS-gated selection compresses the schedule: the leading increment is small (`t_safe`), the accepted step then grows by the enlarge factor, and the final extrapolation snaps to $t = 1$, so four or five stages cover what the fixed schedule spent twelve stages on. The generator's sample output is the advanced particle set; the per-stage incremental flows and their acceptance ESS are returned in the stage records.
 
 ## CNF_vs_OTFlow — continuous flows across dimension
 

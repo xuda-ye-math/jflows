@@ -11,7 +11,7 @@ Public surface:
     jflows.loss      : reverse_KL_F, forward_KL_G, forward_KLX_G,
                        forward_X_G
     jflows.train     : Monitor and all train_* stage drivers
-    jflows.boltzmann : all adaptive and fixed-schedule boltzmann_* generators
+    jflows.boltzmann : adaptive-staging and fixed-schedule boltzmann_* generators
     jflows.artifacts : save and load medium-level training outputs
     jflows.backend   : selected/available JAX backends and accelerator model
     jflows.utils     : metrics / optimization / rejuvenation / anneal / quench

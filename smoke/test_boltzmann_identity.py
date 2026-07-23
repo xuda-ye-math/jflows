@@ -1,4 +1,4 @@
-"""Identity-only adaptive Boltzmann computation smoke test."""
+"""Identity-only adaptive-staging Boltzmann computation smoke test."""
 
 import inspect
 import os

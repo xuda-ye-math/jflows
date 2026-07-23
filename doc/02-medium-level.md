@@ -2,8 +2,8 @@
 
 The medium level trains one flow map over one source-to-target stage. It
 composes low-level losses, target-batch construction, Adam updates, monitoring,
-and optional clipping into one call. It does not choose an annealing ladder or
-persist a multi-stage run.
+and optional clipping into one call. It does not choose an outer stage schedule
+or persist a multi-stage run.
 
 Public imports:
 
@@ -432,7 +432,7 @@ Boltzmann persistence modules for complete-stage storage.
 
 </div>
 
-If one direct stage is too difficult, move to the high-level annealed
+If one direct stage is too difficult, move to the high-level staged
 Boltzmann generator rather than adding hidden outer loops around a trainer.
 
 ## Executable references

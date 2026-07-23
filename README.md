@@ -4,7 +4,7 @@
 # jflows
 
 `jflows` is a JAX/Equinox package for unconditional normalizing flows,
-energy-based sampling, and annealed Boltzmann generators. It provides a small
+energy-based sampling, and staged Boltzmann generators. It provides a small
 public API for building flows, defining unnormalized target energies, training
 one transport stage, and connecting accepted stages into a complete source-to-
 target sampler.
@@ -58,7 +58,7 @@ identity map.
 ## Three-level interface
 
 The public API is deliberately arranged from basic numerical components to a
-complete annealed generator.
+complete staged generator.
 
 ### LOW — building blocks
 
@@ -93,7 +93,7 @@ from jflows.train import (
 Every trainer returns a new flow and its optimizer-batch ESS history. Simple
 flow, sample, and history serialization lives in `jflows.artifacts`.
 
-### HIGH — annealed Boltzmann generation
+### HIGH — staged Boltzmann generation
 
 The high level connects accepted bridge stages and compares every trained map
 with an exact identity fallback using full-validation incremental ESS:
@@ -108,8 +108,8 @@ from jflows.boltzmann import (
 )
 ```
 
-- identity runs the adaptive SMC/ESS/resampling/rejuvenation controller with
-  no flow or optimizer;
+- identity runs the adaptive-staging controller for stage selection, ESS
+  gating, resampling, and rejuvenation with no flow or optimizer;
 - reverse KL is the simplest source-sampled F baseline;
 - forward KL manufactures target-side batches and trains G;
 - KLX adds target-measure log-weight variation control; and

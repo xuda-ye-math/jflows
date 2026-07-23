@@ -1,4 +1,4 @@
-"""4D annealed Boltzmann generator — reverse KL vs forward KL, ADAPTIVE ladder.
+"""4D adaptive-staging Boltzmann generator — reverse KL vs forward KL.
 
 The 4D two-charge target:
 x = (x1, x2), x_i in R^2, confined to a soft annulus and repelling via a
@@ -8,8 +8,8 @@ regularized 3D Coulomb interaction,
                 + q2 / sqrt(|x1 - x2|^2 + eps^2).
 
 A direct flow proposal from the 4D Gaussian source has ESS ~ 0, so both
-generators anneal along the bridge ladder U_t = (1 - t) U_0 + t U_1 with
-the ADAPTIVE coefficient (SMC-gated safe start, enlarge-factor
+generators traverse the interpolation U_t = (1 - t) U_0 + t U_1 with
+an adaptive stage schedule (SMC-gated safe start, enlarge-factor
 extrapolation, ESS-gated rejection/shrink) replacing the fixed
 c_k = k / 12 schedule of the original:
 
@@ -82,7 +82,7 @@ LADDER: int = 1        # SMC levels of the tau_smc selection gate
 MC_DT: float = 1e-3  # Langevin rejuvenation step size
 MC_STEPS: int = 100    # Langevin rejuvenation steps (MALA default: rejects Coulomb-wall proposals)
 
-# adaptive ladder (bg_param of boltzmann_reverse_KL_F)
+# adaptive stage schedule (bg_param of boltzmann_reverse_KL_F)
 BG_PARAM = {
     "t_safe": 0.2,        # stage-1 coefficient (the safe start)
     "shrink_factor": 0.7,  # rejected stage: t_k <- t_prev + shrink (t_k - t_prev)
@@ -162,13 +162,13 @@ def main() -> None:
                 monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log), bg_param=BG_PARAM,
             )
         ts = [s["t"] for s in stages]
-        log(f"[{name}] ladder done in {time.time() - t0:.1f}s: "
+        log(f"[{name}] stage schedule completed in {time.time() - t0:.1f}s: "
             f"t = {[round(t, 4) for t in ts]}  "
             f"ESS = {[round(s['valid_selected_ess'], 3) for s in stages]}  "
             f"({'COMPLETE' if ts and ts[-1] == 1.0 else 'INCOMPLETE'})")
         if not ts or ts[-1] != 1.0:
             raise RuntimeError(
-                f"{name} ladder stopped before the target; refusing to label or plot "
+                f"{name} stage schedule stopped before the target; refusing to label or plot "
                 f"the particles as t=1 (last t={ts[-1] if ts else 0.0:.4f})"
             )
         if stages:
@@ -180,7 +180,7 @@ def main() -> None:
             )
         results[name] = (y, stages)
 
-    # figure (2, 3): per row — adaptive ladder | particle-1 marginal | relative angle
+    # figure (2, 3): per row — adaptive stage schedule | particle-1 marginal | relative angle
     fig, axes = plt.subplots(2, 3, figsize=(8.4, 6.0), constrained_layout=True)
     theta = np.linspace(-np.pi, np.pi, 400)
     for row, (name, scatter_c, hist_c) in enumerate(
@@ -199,7 +199,7 @@ def main() -> None:
         ax.set_xlabel("stage $k$")
         ax.set_xticks(range(1, len(ts) + 1))
         ax.set_ylim(0.0, 1.05)
-        ax.set_title(f"{name}: adaptive ladder")
+        ax.set_title(f"{name}: adaptive stage schedule")
         ax.legend(loc="lower right")
         ax.set_box_aspect(1.0)
 

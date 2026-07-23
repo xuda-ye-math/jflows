@@ -6,7 +6,7 @@ This directory is the standalone user documentation for the generic
 
 1. low-level building blocks;
 2. medium-level single-stage trainers; and
-3. high-level annealed Boltzmann generators.
+3. high-level staged Boltzmann generators.
 
 The live source is authoritative. Public code should import from
 `jflows`, `jflows.flow`, `jflows.potential`, `jflows.loss`, `jflows.utils`,
@@ -69,7 +69,7 @@ jflows
 └── HIGH LEVEL
     └── boltzmann
         ├── boltzmann_identity without flow training
-        ├── four adaptive trained boltzmann_* generators
+        ├── four adaptive-staging trained boltzmann_* generators
         ├── four fixed-schedule boltzmann_*_fixed generators
         ├── accepted-stage records and identity fallback
         ├── write: create / stage / finish

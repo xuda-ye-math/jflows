@@ -19,7 +19,7 @@ parameters of the forward training drivers (`train_forward_KL_G`,
        normalization means the effect on the final step size is weak; the
        clip is a spike guard on the gradient, not a bound on the update);
     4. the boltzmann_forward_* wrappers accept and forward u_clip / g_clip
-       (a short 2-stage ladder runs to completion under a finite screen).
+       (a short two-stage schedule runs to completion under a finite screen).
 
 Float32 (the drivers' working precision), on the default JAX backend (GPU
 when available). Exits nonzero on any failure.

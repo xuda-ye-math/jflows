@@ -1,6 +1,6 @@
 # High-level interfaces
 
-The high level builds an annealed Boltzmann generator from medium-level stage
+The high level builds a staged Boltzmann generator from medium-level stage
 trainers. It chooses or consumes bridge endpoints, trains an incremental map,
 compares that map with an exact identity fallback on the complete validation
 population, advances particles, and records every accepted stage.
@@ -37,7 +37,7 @@ that global diagnostic is needed. Composing the selected flows gives a useful
 deterministic proposal map, but it does not reproduce the stochastic
 `y_valid` population by itself.
 
-## Adaptive generators
+## Adaptive-staging generators
 
 ```python
 from jflows.boltzmann import (
@@ -50,7 +50,7 @@ from jflows.boltzmann import (
 ```
 
 `boltzmann_identity` is the flow-free reference controller. The other four
-functions share one adaptive trained-stage controller. They differ in the
+functions share one adaptive-staging controller. They differ in the
 medium-level trainer dispatched inside each stage: the direction in which the
 flow is parameterized, how the optimizer obtains its training samples, and
 which loss is differentiated. The endpoint proposal, optional SMC gate,
@@ -80,7 +80,7 @@ They are not four unrelated pipelines. They share the same bridge selection,
 validation, identity fallback, acceptance, and particle advancement. Only the
 stage-training objective becomes progressively richer.
 
-## Identity-only adaptive generator
+## Identity-only adaptive-staging generator
 
 ```python
 boltzmann_identity(
@@ -99,7 +99,7 @@ boltzmann_identity(
 )
 ```
 
-This function runs the same adaptive bridge policy without constructing or
+This function runs the same adaptive stage policy without constructing or
 training a flow. For each candidate `a -> b`, it:
 
 1. optionally applies the SMC endpoint gate controlled by `tau_smc`;
@@ -111,7 +111,7 @@ training a flow. For each candidate `a -> b`, it:
 It returns `(samples, stages)`. Its signature deliberately omits `flow`,
 `batch_size`, `train_steps`, `lr`, optimizer controls, and initialization
 controls. `chunks` is used for SMC, complete-set identity weights, and
-rejuvenation. This makes `boltzmann_identity` the direct adaptive
+rejuvenation. This makes `boltzmann_identity` the direct adaptive-staging
 reweight/resample/MCMC baseline rather than a flow generator configured with
 zero training steps.
 
@@ -208,7 +208,7 @@ with another generator.
 
 ### Shared controller, objective-specific trainer
 
-Every adaptive generator performs this outer sequence:
+Every adaptive-staging generator performs this outer sequence:
 
 ```text
 propose t_end
@@ -273,7 +273,7 @@ mode-seeking baseline. That qualitative tendency is not an acceptance rule:
 the outer controller still measures full-validation ESS and can select
 identity or reject the proposed endpoint.
 
-The adaptive reverse signature contains `ladder`, but
+The adaptive-staging reverse signature contains `ladder`, but
 `train_reverse_KL_F` itself has no ladder argument. Here `ladder` is used only
 when `bg_param["tau_smc"] > 0` asks the outer controller to evaluate a proposed
 endpoint with potential-space SMC. With the default `tau_smc=0`, reverse
@@ -447,7 +447,7 @@ when evaluating `z` on those locations.
 
 KLXX is the most computationally and memory intensive option:
 
-- QT runs once for every stage attempt, including adaptive retries;
+- QT runs once for every stage attempt, including stage retries;
 - `pool_size=0` applies QT to the complete current validation population;
 - `pool_size>0` draws a separate pool with replacement from that population;
 - `melt`, `opt_dt`, and `opt_steps` control the melt/quench construction;
@@ -457,7 +457,7 @@ KLXX is the most computationally and memory intensive option:
 
 Use KLXX when explicit wide-coverage and proposal-leakage diagnostics justify
 that added cost. Its richer objective still passes through the same
-trained-versus-identity validation and adaptive ESS gate as the other three
+trained-versus-identity validation and stage ESS gate as the other three
 generators.
 
 The KLXX pool semantics are identical to the medium-level trainer:
@@ -478,8 +478,8 @@ the target only when:
 complete = bool(stages and stages[-1]["t"] == 1.0)
 ```
 
-If the adaptive controller exhausts its stage or retry budget, it returns the
-accepted prefix rather than claiming completion.
+If the adaptive-staging controller exhausts its stage or retry budget, it
+returns the accepted prefix rather than claiming completion.
 
 ### Choosing among the four
 
@@ -505,7 +505,7 @@ budget can change which objective yields the best held-out ESS. Compare the
 four under matched stage policy and architecture, and interpret ESS together
 with coverage or target-specific observables.
 
-## Adaptive policy
+## Adaptive stage policy
 
 `bg_param` overrides any subset of the default policy:
 
@@ -536,7 +536,7 @@ with coverage or target-specific observables.
 <tr><td><code>tau_ess</code></td><td>minimum selected trained-or-identity validation ESS</td></tr>
 <tr><td><code>t_tol</code></td><td>snap a proposed endpoint near one to exactly one</td></tr>
 <tr><td><code>max_stages</code></td><td>maximum accepted-stage index attempted</td></tr>
-<tr><td><code>max_retry</code></td><td>maximum training attempts for one adaptive stage</td></tr>
+<tr><td><code>max_retry</code></td><td>maximum training attempts for one stage</td></tr>
 </tbody>
 </table>
 
@@ -705,7 +705,7 @@ Each element of `stages` has the following canonical fields:
 The three path fields are `None` for pure in-memory computation. The storage
 layer fills them with paths relative to the run root.
 
-## Minimal adaptive workflow
+## Minimal adaptive-staging workflow
 
 ```python
 import jax
@@ -744,7 +744,7 @@ y_valid, stages = boltzmann_forward_KLX_G(
 )
 
 if not stages or stages[-1]["t"] != 1.0:
-    raise RuntimeError("Boltzmann ladder did not reach the target")
+    raise RuntimeError("Boltzmann stage schedule did not reach the target")
 ```
 
 ## Complete-stage persistence
@@ -883,7 +883,7 @@ so loading still requires the original architecture template.
 
 - An empty `stages` list means no stage was accepted.
 - A nonempty list ending below `t=1` is an incomplete prefix.
-- Adaptive rejection is expected behavior when overlap is insufficient; it is
+- Stage rejection is expected behavior when overlap is insufficient; it is
   recorded in the accepted stage's attempt histories if a later retry succeeds.
 - Fixed schedules do not reject on ESS, but an exhausted schedule can still
   stop below the target.
@@ -893,10 +893,10 @@ so loading still requires the original architecture template.
 
 ## Executable references
 
-- [adaptive/fixed stage records and identity selection](../smoke/test_boltzmann.py)
+- [adaptive-staging/fixed-schedule records and identity selection](../smoke/test_boltzmann.py)
 - [complete-stage persistence](../smoke/test_boltzmann_artifacts.py)
 - [KLXX chunks through trainer and generator](../smoke/test_boltzmann_chunks.py)
 - [eager full-set weight chunk equivalence](../smoke/test_chunk.py)
 - [public namespace contract](../smoke/test_public_api.py)
-- [4D adaptive Boltzmann example](../example/4D_boltzmann.py)
-- [4D verified figure and results](../example/results.md#4d_boltzmann--annealed-bg-with-the-adaptive-ladder)
+- [4D adaptive-staging Boltzmann example](../example/4D_boltzmann.py)
+- [4D verified figure and results](../example/results.md#4d_boltzmann--adaptive-staging-bg)
