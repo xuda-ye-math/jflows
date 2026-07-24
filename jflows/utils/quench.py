@@ -87,5 +87,5 @@ def quench_and_temper(
     )
 
 
-# alias: the short name of the quench-and-temper construction
+# alias: the short name of the quench and temper construction
 qt = quench_and_temper

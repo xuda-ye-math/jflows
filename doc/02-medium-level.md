@@ -64,7 +64,7 @@ KLXX
   -> one compiled lax.scan containing all Adam steps
 ```
 
-Keeping KLXX quench-and-temper outside the enclosing optimizer JIT makes its
+Keeping KLXX quench and temper outside the enclosing optimizer JIT makes its
 `chunks` partition active at the QT boundary. The scan still contains batch
 selection, target-batch manufacture, loss/gradient evaluation, guarded Adam
 updates, and monitor callbacks.
@@ -90,7 +90,7 @@ updates, and monitor callbacks.
 <tr><td><code>t_start</code>, <code>t_end</code></td><td>labels for the stage interval, used by monitoring</td></tr>
 <tr><td><code>u_clip</code></td><td>exclude optimizer-loss rows whose target energy exceeds the threshold</td></tr>
 <tr><td><code>g_clip</code></td><td>global gradient-norm clipping threshold</td></tr>
-<tr><td><code>chunks</code></td><td>row partitions for KLXX quench-and-temper</td></tr>
+<tr><td><code>chunks</code></td><td>row partitions for KLXX quench and temper</td></tr>
 </tbody>
 </table>
 
@@ -283,7 +283,7 @@ mixture. Before the optimizer scan it constructs `hat_mu` with
 - `pool_size=0`: quench the complete `x_valid` population;
 - `pool_size>0`: draw a separate resampled pool of that size from `x_valid`.
 
-The old positive-pool route and the full-validation route are both explicit.
+The old positive-pool route and the complete-validation-set route are both explicit.
 There is no second chunk keyword: `chunks` is passed directly into QT.
 
 During each training step:

@@ -180,10 +180,10 @@ def main() -> None:
     check("2*U/2 == U", (2.0 * U1 / 2.0)(x), U1(x), tol=1e-15)
     check("scalar * nested flattens", (0.5 * (2.0 * U1) + U2)(x), U1(x) + U2(x), tol=1e-13)
 
-    # bridge with a traced coefficient: one trace, retuned without recompile
+    # interpolation with a traced coefficient: one trace, retuned without recompile
     bridge = jax.jit(lambda c, x: linear_combination([U1, U3], [1 - c, c])(x))
-    check("bridge c=0.3", bridge(0.3, x), 0.7 * U1(x) + 0.3 * U3(x), tol=1e-13)
-    check("bridge c=0.9", bridge(0.9, x), 0.1 * U1(x) + 0.9 * U3(x), tol=1e-13)
+    check("interpolation c=0.3", bridge(0.3, x), 0.7 * U1(x) + 0.3 * U3(x), tol=1e-13)
+    check("interpolation c=0.9", bridge(0.9, x), 0.1 * U1(x) + 0.9 * U3(x), tol=1e-13)
     check("jit(W.grad)", jax.jit(lambda x: W.grad(x))(x), W.grad(x), tol=1e-12)
 
     if FAILURES:

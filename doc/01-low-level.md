@@ -250,12 +250,12 @@ unnormalized; the constructor normalizes them internally.
 Potential expressions remain `Potential` objects:
 
 ```python
-bridge = (1.0 - t) * source + t * target
+interpolation = (1.0 - t) * source + t * target
 shifted = target - source
 scaled = target / 2.0
 combined = sum([source, target])
 
-bridge = linear_combination(
+interpolation = linear_combination(
     [target, source],
     [t, 1.0 - t],
 )
@@ -267,7 +267,7 @@ coeffs=None)` is the explicit annealing constructor. With `coeffs=None`, it
 uses uniform coefficients `1 / len(potentials)`, so the result is an average,
 not a sum. Nested linear combinations are flattened, and repeated references
 to the same potential object are merged by object identity with their
-coefficients added. The coefficient array is a pytree leaf, so changing bridge
+coefficients added. The coefficient array is a pytree leaf, so changing interpolation
 coefficients can reuse one compiled structure.
 
 ## Per-sample losses
@@ -336,7 +336,7 @@ forward_X_G(y, source, target, flow, key, trace_key=None)
 
 This returns only `abs(z - z[perm])`. The sample population `y` can come from
 the target or another weight measure. KLXX uses this idea with a mixture of a
-quench-and-temper coverage measure and the detached flow proposal.
+quench and temper coverage measure and the detached flow proposal.
 
 ## Metrics and resampling
 
@@ -581,7 +581,7 @@ Every generic API uses only the spelling `chunks`. It means a count of row
 partitions. Larger values create smaller partitions.
 
 - Standalone `importance_weights_log` partitions rows in a plain Python loop;
-  it does not add a per-chunk JIT wrapper. Boltzmann full-validation weighting
+  it does not add a per-chunk JIT wrapper. Boltzmann weighting over the complete validation set
   uses eager sequential calls to its compiled chunk kernels.
 - Rejuvenation and optimization calls partition rows but may sit inside an
   enclosing JIT. XLA can co-schedule buffers, so this is not a universal peak

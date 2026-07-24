@@ -1,7 +1,7 @@
 # High-level interfaces
 
 The high level builds a staged Boltzmann generator from medium-level stage
-trainers. It chooses or consumes bridge endpoints, trains an incremental map,
+trainers. It chooses or consumes stage points, trains an incremental map,
 compares that map with an exact identity fallback on the complete validation
 population, advances particles, and records every accepted stage.
 
@@ -9,16 +9,16 @@ The eight computation functions are exported directly by
 `jflows.boltzmann`. Complete-stage persistence is separate in
 `jflows.boltzmann.write` and `jflows.boltzmann.load`.
 
-## Bridge and stage model
+## Interpolation and stage model
 
-The generator follows the linear potential bridge
+The generator follows the linear potential interpolation
 
 ```text
 U_t = (1 - t) U_source + t U_target,    0 <= t <= 1.
 ```
 
 A stage from `t_start` to `t_end` trains one incremental flow between those
-two bridge distributions. It is not a new global source-to-final map. The
+two stage distributions. It is not a new global source-to-final map. The
 selected flows form an ordered deterministic proposal chain, but the returned
 particle population also passes through weighting, resampling, and Langevin
 after every selected map.
@@ -53,8 +53,8 @@ from jflows.boltzmann import (
 functions share one adaptive-staging controller. They differ in the
 medium-level trainer dispatched inside each stage: the direction in which the
 flow is parameterized, how the optimizer obtains its training samples, and
-which loss is differentiated. The endpoint proposal, optional SMC gate,
-complete-validation trained-versus-identity comparison, ESS acceptance gate,
+which loss is differentiated. The stage-point proposal, optional SMC gate,
+  trained-versus-identity comparison over the complete validation set, ESS acceptance gate,
 and accepted-particle advancement are otherwise the same.
 
 ### Background: why four generators?
@@ -62,7 +62,7 @@ and accepted-particle advancement are otherwise the same.
 The package assumes that the source is easy to sample but the target is known
 only through its energy. For a difficult target, learning one direct map can
 fail because the source and target barely overlap. The Boltzmann generator
-therefore replaces one hard fit with a sequence of easier bridge stages.
+therefore replaces one hard fit with a sequence of easier stages.
 
 The four public functions are four ways to train the map inside one such
 stage. In simple terms:
@@ -76,7 +76,7 @@ stage. In simple terms:
 - **KLXX** also tests the density ratio on a wider mixture designed to expose
   missed modes and proposal leakage.
 
-They are not four unrelated pipelines. They share the same bridge selection,
+They are not four unrelated pipelines. They share the same stage selection,
 validation, identity fallback, acceptance, and particle advancement. Only the
 stage-training objective becomes progressively richer.
 
@@ -132,12 +132,12 @@ The interface follows five principles:
    the three forward objectives train `G` directly. The optimizer never needs
    to differentiate through an autoregressive inverse.
 3. **Separate training from judgment.** Different losses propose different
-   maps, but the same complete-validation ESS compares every proposal with the
+   maps, but the same ESS over the complete validation set compares every proposal with the
    same exact identity fallback.
 4. **Make regularization progressive and explicit.** `coeff_lambda` adds the
    target X term; KLXX then exposes `pool_size`, QT controls, and mixture
    coefficients rather than hiding those choices.
-5. **Keep the controller comparable.** With matched bridge policy, flow,
+5. **Keep the controller comparable.** With matched stage policy, flow,
    validation population, and training budget, differences mainly reflect the
    objective and its data-construction cost rather than a different acceptance
    rule.
@@ -177,7 +177,7 @@ map between `mu_a` and `mu_b`.
 <tbody>
 <tr><td><code>boltzmann_reverse_KL_F</code></td><td><code>F: mu_a -&gt; mu_b</code></td><td>current <code>mu_a</code> particles, source-freshened by Langevin</td><td>reverse KL</td><td>no objective regularizer; <code>ladder</code> only serves the optional SMC endpoint gate</td></tr>
 <tr><td><code>boltzmann_forward_KL_G</code></td><td><code>G: mu_b -&gt; mu_a</code></td><td>approximate <code>mu_b</code> batches manufactured by flow-proposal AIS</td><td>forward KL</td><td><code>ladder</code>, <code>u_clip</code>, <code>g_clip</code></td></tr>
-<tr><td><code>boltzmann_forward_KLX_G</code></td><td><code>G: mu_b -&gt; mu_a</code></td><td>the same AIS-manufactured target batches</td><td>forward KL plus target-measure X variation</td><td><code>coeff_lambda</code> plus the forward-KL controls</td></tr>
+<tr><td><code>boltzmann_forward_KLX_G</code></td><td><code>G: mu_b -&gt; mu_a</code></td><td>the same AIS-manufactured target batches</td><td>forward KL plus target-measure X variation</td><td><code>coeff_lambda</code> plus the forward KL controls</td></tr>
 <tr><td><code>boltzmann_forward_KLXX_G</code></td><td><code>G: mu_b -&gt; mu_a</code></td><td>AIS target batches plus a QT/proposal mixture</td><td>KLX plus a second mixture-measure X variation</td><td><code>pool_size</code>, <code>melt</code>, <code>opt_dt</code>, <code>opt_steps</code>, <code>coeff_alpha</code>, <code>coeff_beta</code>, <code>chunks</code></td></tr>
 </tbody>
 </table>
@@ -270,7 +270,7 @@ advancement applies `flow(x)`.
 
 Reverse KL is the least elaborate of the four stage objectives and is a useful
 mode-seeking baseline. That qualitative tendency is not an acceptance rule:
-the outer controller still measures full-validation ESS and can select
+the outer controller still measures ESS over the complete validation set and can select
 identity or reject the proposed endpoint.
 
 The adaptive-staging reverse signature contains `ladder`, but
@@ -324,7 +324,7 @@ pure reverse-KL baseline. It costs more per optimizer step because target-batch
 manufacture includes flow evaluation, weighting, resampling, and Langevin.
 `u_clip` can screen high-energy manufactured samples from the optimizer loss,
 and `g_clip` bounds the global gradient norm. They do not change the
-full-validation selection rule, but they can change the trained candidate and
+selection rule over the complete validation set, but they can change the trained candidate and
 therefore its validation ESS and the selected outcome.
 
 ### KLX
@@ -349,7 +349,7 @@ boltzmann_forward_KLX_G(
 ```
 
 KLX uses the same AIS-manufactured `mu_b` batches and the same G direction as
-forward KL. It defines the bridge density-ratio coordinate
+forward KL. It defines the stage log-density-ratio coordinate
 
 ```text
 z(y) = U_a(G(y)) - U_b(y) - log|det J_G(y)|
@@ -364,7 +364,7 @@ L_KLX(G)
 ```
 
 where `y_perm` is a random permutation of the current batch. The first term
-has the forward-KL gradient. The X term penalizes variation of the log density
+has the forward KL gradient. The X term penalizes variation of the log density
 ratio across target-measure samples: a proposal with a more nearly constant
 ratio has more uniform importance weights.
 
@@ -400,7 +400,7 @@ boltzmann_forward_KLXX_G(
 
 KLXX retains the KLX target-batch objective and adds a second X functional on
 a broader, deliberately constructed measure. At the beginning of every stage
-attempt, before the compiled Adam scan, it builds a fixed quench-and-temper
+attempt, before the compiled Adam scan, it builds a fixed quench and temper
 pool `hat_mu` for `U_b`:
 
 ```text
@@ -453,7 +453,7 @@ KLXX is the most computationally and memory intensive option:
 - `melt`, `opt_dt`, and `opt_steps` control the melt/quench construction;
 - `mc_dt` and `mc_steps` control both ordinary forward-batch manufacture and
   target freshening used by the KLXX path; and
-- `chunks` partitions QT and the outer full-validation operations.
+- `chunks` partitions QT and the outer operations over the complete validation set.
 
 Use KLXX when explicit wide-coverage and proposal-leakage diagnostics justify
 that added cost. Its richer objective still passes through the same
@@ -492,7 +492,7 @@ returns the accepted prefix rather than claiming completion.
 <tbody>
 <tr><td>simple, inexpensive stage baseline</td><td><code>boltzmann_reverse_KL_F</code></td><td>source-sampled native-F loss; no AIS target-batch construction inside Adam</td></tr>
 <tr><td>forward mass-covering objective</td><td><code>boltzmann_forward_KL_G</code></td><td>manufactures target batches and trains the native G direction</td></tr>
-<tr><td>explicit target-measure weight-uniformity penalty</td><td><code>boltzmann_forward_KLX_G</code></td><td>adds variation control for the bridge log-density ratio</td></tr>
+<tr><td>explicit target-measure weight-uniformity penalty</td><td><code>boltzmann_forward_KLX_G</code></td><td>adds variation control for the stage log-density ratio</td></tr>
 <tr><td>mode discovery plus proposal-leakage regularization</td><td><code>boltzmann_forward_KLXX_G</code></td><td>adds QT coverage and detached-proposal mixture samples</td></tr>
 </tbody>
 </table>
@@ -556,11 +556,11 @@ identity ESS; no training or trained-versus-identity comparison occurs.
 
 ## Identity fallback and initialization
 
-At every trained attempt, the controller computes full-validation log weights
+At every trained attempt, the controller computes log weights over the complete validation set
 for:
 
 - the trained stage flow; and
-- an exact identity map, equivalent to pure SMC reweighting for that bridge.
+- an exact identity map, equivalent to pure SMC reweighting for that stage transition.
 
 The higher-ESS map advances the particles. Therefore a stage does not select a
 trained map that is worse than the identity fallback on the validation metric.
@@ -585,10 +585,10 @@ After an attempt is accepted, the controller:
 1. applies the selected map in its F or G generation direction;
 2. converts its selected log weights to stable linear weights;
 3. resamples the complete particle population; and
-4. applies Langevin at the accepted bridge target `U_t_end`.
+4. applies Langevin at the accepted stage target `U_t_end`.
 
 `mc_adjust=True` gives MALA advancement; `False` gives ULA. `chunks` partitions
-full-validation weighting, flow application, and rejuvenation. The generator
+weighting over the complete validation set, flow application, and rejuvenation. The generator
 derives deterministic operation keys from `seed`, stage, attempt, and operation
 namespace. After advancement is synchronized, every coordinate in the new
 population must be finite. Otherwise the generator raises `FloatingPointError`
@@ -597,7 +597,7 @@ invalid population as a complete stage.
 
 ## Fixed-schedule generators
 
-Fixed generators consume explicit bridge endpoints and never shrink or retry.
+Fixed generators consume explicit stage points and never shrink or retry.
 They still compare the trained map with identity and advance with the better
 map.
 
@@ -685,7 +685,7 @@ Each element of `stages` has the following canonical fields:
 
 ### Scalar fields
 
-- `t_start`, `t`: accepted bridge interval.
+- `t_start`, `t`: accepted stage interval.
 - `valid_trained_ess`, `valid_identity_ess`: final attempt's two complete-set
   ESS values.
 - `valid_selected_ess`: the maximum of those two values.
@@ -849,7 +849,7 @@ iterate(samples, flow, accepted_t, start_stage)
 ```
 
 With `resume=True`, `run` loads the last complete population, continuation
-flow, records, accepted endpoints, and next one-based stage index before
+flow, records, accepted stage points, and next one-based stage index before
 calling the iterator. It writes every newly yielded complete stage. This is an
 advanced persistence hook; ordinary callers should use one of the nine
 generators directly.

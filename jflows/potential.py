@@ -148,7 +148,7 @@ def potential_from(fn: Callable[[Array], Array]) -> Potential:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Compositional — linear combinations of potentials (annealing bridges)
+# Compositional — linear combinations of potentials (interpolations)
 # ──────────────────────────────────────────────────────────────────────
 
 class _Linear_Combination(Potential):
@@ -174,7 +174,7 @@ class _Linear_Combination(Potential):
     def _scale(coeff: Array, value: Array) -> Array:
         """Scale one term without allowing an exact zero times infinity.
 
-        Bridge endpoints and algebraic cancellations legitimately retain
+        Interpolation endpoints and algebraic cancellations legitimately retain
         zero coefficient leaves so their pytree structure stays fixed under
         jit. Mask only a nonfinite value under an inactive coefficient; this
         keeps hard-wall terms neutral without changing the derivative with
@@ -244,12 +244,12 @@ def linear_combination(
         potentials: list/tuple of N Potential instances (N >= 1).
         coeffs:     list/tuple of N floats or a 1-d array of shape [N]
                     holding the matching coefficients; entries may be
-                    traced (building a bridge `(1 - c) * U0 + c * U1`
+                    traced (building an interpolation `(1 - c) * U0 + c * U1`
                     inside a jitted step is fine). If None (default),
                     defaults to a uniform 1/N on each potential, i.e.
                     the plain average U(x) = (1/N) * sum_k U_k(x).
 
-    Annealing bridges: retune by rebuilding
+    Interpolations: retune by rebuilding
     `linear_combination([u0, u1], [1 - c, c])` per level, or replace the
     `.coeffs` leaf via `eqx.tree_at` with an array of the same dtype
     (plain `jnp.asarray([...])` matches — coefficients are stored with

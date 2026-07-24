@@ -8,8 +8,6 @@ contracts and edge cases.
 Run examples as modules from the repository root:
 
 ```bash
-source ~/.envs/jflows/bin/activate
-PYTHONPATH=/data/projects/jflows \
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
 python -m example.2D_single
 ```
@@ -96,17 +94,17 @@ as ordinary unconstrained Euclidean space.
 The two-charge problem is the canonical high-level example. It demonstrates:
 
 ```text
-source validation population
-  -> adaptive stage-endpoint proposal
+source validation set
+  -> adaptive stage-point proposal
   -> one direct stage trainer
-  -> trained vs identity full-validation ESS
+  -> trained vs identity ESS over the complete validation set
   -> accept/retry
   -> reweight/resample/MALA advancement
-  -> next bridge stage
+  -> next stage
 ```
 
 It runs adaptive-staging reverse KL and forward KL generators separately and
-records their accepted bridge endpoints and incremental ESS values.
+records their accepted stage points and incremental ESS values.
 
 The verified reverse run accepted:
 
@@ -143,7 +141,7 @@ This sweep compares two continuous-flow families over dimensions
 - the `OTFlow.near_identity()` training requirement;
 - optional checkpointing for continuous-flow losses;
 - JIT compilation and synchronized timing;
-- full-validation log weights and ESS; and
+- log weights and ESS over the complete validation set; and
 - CSV output after the complete sweep.
 
 In the verified run, ESS at `d=128` was `0.4291` for CNF and `0.5927` for

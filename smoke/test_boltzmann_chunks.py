@@ -1,4 +1,4 @@
-"""Verify that the single ``chunks`` control reaches KLXX quench-and-temper."""
+"""Verify that the single ``chunks`` control reaches KLXX quench and temper."""
 
 import inspect
 

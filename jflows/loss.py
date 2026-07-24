@@ -146,7 +146,7 @@ def forward_X_G(y: Array, source: Potential, target: Potential, flow: Flow,
     variation of z under omega — the X term of `forward_KLX_G` on its own, so
     the weight is free to differ from the target: y ~ target gives the shape
     term X_mu, and y drawn from the mixture alpha*hat_mu + beta*bar_nu —
-    hat_mu the quench-and-temper wide-coverage measure (mode discovery),
+    hat_mu the quench and temper wide-coverage measure (mode discovery),
     bar_nu the detached pushforward of source samples through G^{-1}
     (leakage suppression) — gives the mixture term
     X_{alpha hat_mu + beta bar_nu} of the total training loss.

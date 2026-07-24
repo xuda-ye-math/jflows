@@ -130,7 +130,7 @@ jflows/
   roundoff, MALA rejects nonfinite proposals, L-BFGS and AdamW reject
   nonfinite state transitions, resampling excludes nonfinite rows when a
   finite row exists, and a Boltzmann generator raises before yielding a
-  nonfinite post-stage population.
+  nonfinite post-stage sample set.
 - Prefer log weights and `compute_ESS_log` for numerically difficult targets.
   Normalized ESS lies in `[0, 1]`.
 
@@ -140,7 +140,7 @@ jflows/
   [Low-level interfaces](01-low-level.md).
 - Training one direct source-to-target map: continue to
   [Medium-level interfaces](02-medium-level.md).
-- Bridging a difficult target through accepted stages: continue to
+- Advancing through accepted stages toward a difficult target: continue to
   [High-level interfaces](03-high-level.md).
 - Finding the executable contract for one function: use
   [Smoke tests](04-smoke-tests.md).
@@ -152,8 +152,8 @@ jflows/
 The project targets accelerator-backed JAX. From a source checkout:
 
 ```bash
-source ~/.envs/jflows/bin/activate
-PYTHONPATH=/data/projects/jflows python your_script.py
+python -m pip install -e .
+python your_script.py
 ```
 
 For standalone programs that should avoid JAX's default full-device

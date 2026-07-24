@@ -105,7 +105,7 @@ def _advance_stage_samples(
     mc_adjust,
     chunks,
 ):
-    """Push, resample, and rejuvenate one accepted stage population."""
+    """Push, resample, and rejuvenate one accepted stage sample set."""
     push = flow.__call__ if direction == "F" else flow.inv
     proposal = jnp.concatenate([
         push(part) for part in jnp.array_split(samples, chunks, axis=0)
@@ -152,7 +152,7 @@ def _select_adaptive_endpoint(
     chunks,
     emit,
 ):
-    """Apply the optional SMC gate to one proposed stage endpoint."""
+    """Apply the optional SMC gate to one proposed stage point."""
     if policy["tau_smc"] == 0.0:
         return t_end, [{
             "index": 0,
@@ -517,7 +517,7 @@ def iterate_boltzmann(
     accepted_t=(0.0,),
     start_stage=1,
 ):
-    """Yield each newly completed Boltzmann stage and particle population."""
+    """Yield each newly completed Boltzmann stage and particle set."""
     samples = jnp.asarray(samples)
 
     adaptive = t_list is None
@@ -838,7 +838,7 @@ def boltzmann_forward_KL_G(
     g_clip=float("inf"),
     seed=0,
 ):
-    """Run adaptive-staging forward-KL Boltzmann stages."""
+    """Run adaptive-staging forward KL Boltzmann stages."""
     return run_boltzmann(
         x_valid, source, target, flow, objective="forward_kl", pool_size=0,
         batch_size=batch_size, train_steps=train_steps, lr=lr, ladder=ladder,
@@ -873,7 +873,7 @@ def boltzmann_forward_KLX_G(
     g_clip=float("inf"),
     seed=0,
 ):
-    """Run adaptive-staging forward-KLX Boltzmann stages."""
+    """Run adaptive-staging forward KLX Boltzmann stages."""
     return run_boltzmann(
         x_valid, source, target, flow, objective="forward_klx", pool_size=0,
         batch_size=batch_size, train_steps=train_steps, lr=lr, ladder=ladder,
@@ -980,7 +980,7 @@ def boltzmann_forward_KL_G_fixed(
     g_clip=float("inf"),
     seed=0,
 ):
-    """Run fixed-schedule forward-KL Boltzmann stages."""
+    """Run fixed-schedule forward KL Boltzmann stages."""
     return run_boltzmann(
         x_valid, source, target, flow, objective="forward_kl", pool_size=0,
         batch_size=batch_size, train_steps=train_steps, lr=lr, ladder=ladder,
@@ -1014,7 +1014,7 @@ def boltzmann_forward_KLX_G_fixed(
     g_clip=float("inf"),
     seed=0,
 ):
-    """Run fixed-schedule forward-KLX Boltzmann stages."""
+    """Run fixed-schedule forward KLX Boltzmann stages."""
     return run_boltzmann(
         x_valid, source, target, flow, objective="forward_klx", pool_size=0,
         batch_size=batch_size, train_steps=train_steps, lr=lr, ladder=ladder,

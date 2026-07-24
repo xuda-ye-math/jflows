@@ -409,7 +409,7 @@ def adamw(
     convergence — expect O(init_err / lr) iterations to reach the
     basin, and an O(lr)-scale residual oscillation around the mode
     (shrink `lr` or switch to `lbfgs` for the final refinement; the
-    quench in a quench-and-temper pipeline is a natural user).
+    quench in a quench and temper pipeline is a natural user).
 
     Exactly a `lax.scan` over `adamw_step` started from
     `adamw_init(x)` — compose those directly for custom loops

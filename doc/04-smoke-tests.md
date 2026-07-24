@@ -8,8 +8,6 @@ ESS values are not scientific benchmark results.
 Run a module from the repository root:
 
 ```bash
-source ~/.envs/jflows/bin/activate
-PYTHONPATH=/data/projects/jflows \
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
 python -m smoke.test_flow
 ```
@@ -29,7 +27,7 @@ compilation. First calls include JIT compilation.
 <tr><td><a href="../smoke/test_flow.py"><code>test_flow</code></a></td><td><code>NSF</code>, <code>NCSF</code>, <code>CNF</code>, <code>OTFlow</code>, <code>RealNVP</code></td><td>constructors, identity initialization, forward/inverse reconstruction, opposite log-Jacobian signs, JIT and gradients</td></tr>
 <tr><td><a href="../smoke/test_circular.py"><code>test_circular</code></a></td><td><code>NCSF</code> and circular RQS</td><td>periodic seams, wrapped representatives, Jacobian continuity, circular invertibility</td></tr>
 <tr><td><a href="../smoke/test_potential.py"><code>test_potential</code></a></td><td>built-in and custom potentials</td><td>energies, gradients, sampling shapes, Gaussian variance convention, JIT behavior</td></tr>
-<tr><td><a href="../smoke/test_linear_combination.py"><code>test_linear_combination</code></a></td><td>potential vector-space algebra</td><td>coefficient semantics, flattening, gradients, bridge evaluation, visualization</td></tr>
+<tr><td><a href="../smoke/test_linear_combination.py"><code>test_linear_combination</code></a></td><td>potential vector-space algebra</td><td>coefficient semantics, flattening, gradients, interpolation evaluation, visualization</td></tr>
 <tr><td><a href="../smoke/test_loss.py"><code>test_loss</code></a></td><td>four low-level losses</td><td>per-sample shape, F/G formulas, permutation-based X term, stochastic trace-key route</td></tr>
 <tr><td><a href="../smoke/test_loss_training.py"><code>test_loss_training</code></a></td><td>loss differentiability across flows</td><td>finite gradients, trainability, architecture comparison on one target</td></tr>
 <tr><td><a href="../smoke/test_metrics.py"><code>test_metrics</code></a></td><td>weights, ESS, coverage, resampling</td><td>analytic ESS cases, log/linear agreement, F/G weight agreement, numerical degeneracies, k-NN coverage, resampling frequencies</td></tr>
@@ -45,7 +43,7 @@ compilation. First calls include JIT compilation.
 <tr><td><a href="../smoke/test_boltzmann_identity.py"><code>test_boltzmann_identity</code></a></td><td>identity-only adaptive-staging Boltzmann generator</td><td>flow-free signature, ESS shrinking, deterministic advancement, and absence of trainer calls</td></tr>
 <tr><td><a href="../smoke/test_boltzmann_identity_artifacts.py"><code>test_boltzmann_identity_artifacts</code></a></td><td>flow-free complete-stage persistence</td><td>identity save/load/resume with no flow artifacts</td></tr>
 <tr><td><a href="../smoke/test_boltzmann_artifacts.py"><code>test_boltzmann_artifacts</code></a></td><td>complete-stage persistence</td><td>create/write/load, interruption boundary, continuation flow, and stage readers</td></tr>
-<tr><td><a href="../smoke/test_boltzmann_chunks.py"><code>test_boltzmann_chunks</code></a></td><td>KLXX memory-control and advancement path</td><td>one <code>chunks</code> spelling, forwarding into quench-and-temper, and rejection of a nonfinite post-stage population</td></tr>
+<tr><td><a href="../smoke/test_boltzmann_chunks.py"><code>test_boltzmann_chunks</code></a></td><td>KLXX memory-control and advancement path</td><td>one <code>chunks</code> spelling, forwarding into quench and temper, and rejection of a nonfinite post-stage sample set</td></tr>
 <tr><td><a href="../smoke/test_chunk.py"><code>test_chunk</code></a></td><td>chunked full-set weights</td><td>chunk-count equivalence and eager device-memory partition behavior</td></tr>
 <tr><td><a href="../smoke/test_public_api.py"><code>test_public_api</code></a></td><td>package namespace</td><td>client-free backend report, <code>jflows.train</code>/<code>jflows.boltzmann</code> split, retired <code>jflows.training</code>, trainer signatures, KLXX pool semantics</td></tr>
 </tbody>
@@ -113,15 +111,15 @@ For verification that must leave the public checkout unchanged, copy the
 package and selected module to a temporary repository root:
 
 ```bash
-source ~/.envs/jflows/bin/activate
-temp_root=$(mktemp -d /tmp/jflows-smoke.XXXXXX)
+repo_root=$(pwd)
+temp_root=$(mktemp -d)
 mkdir -p "$temp_root/jflows"
 rsync -a \
   --exclude='.git/' \
   --exclude='__pycache__/' \
-  /data/projects/jflows/jflows \
-  /data/projects/jflows/smoke \
-  /data/projects/jflows/pyproject.toml \
+  "$repo_root/jflows" \
+  "$repo_root/smoke" \
+  "$repo_root/pyproject.toml" \
   "$temp_root/jflows/"
 
 cd "$temp_root/jflows"

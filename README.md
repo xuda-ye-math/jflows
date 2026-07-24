@@ -27,13 +27,13 @@ target sampler.
   and Gaussian-mixture potentials support explicit-key sampling, while
   `potential_from` wraps a plain batched energy function.
 - **Potential algebra.** Addition, subtraction, scaling, and
-  `linear_combination` construct bridge energies without introducing a second
+  `linear_combination` construct interpolated energies without introducing a second
   target abstraction.
 - **Explicit randomness.** Every random constructor and sampler takes a JAX
   PRNG key. There is no package-global random state.
 - **Sampling and diagnostics.** Importance weights, normalized ESS, coverage,
   resampling, Langevin/MALA, stochastic Heun, HMC, SMC, flow-proposal AIS,
-  L-BFGS, AdamW, and quench-and-temper are available from `jflows.utils`.
+  L-BFGS, AdamW, and quench and temper are available from `jflows.utils`.
 - **Runtime backend report.** `jflows.backend()` lists CPU and installed JAX
   accelerator plugins backed by visible hardware, identifies the configured
   runtime, and reports JAX/Equinox versions and accelerator models without
@@ -63,7 +63,7 @@ complete staged generator.
 ### LOW — building blocks
 
 The low level contains flows, potentials, per-sample losses, metrics, MCMC,
-SMC/AIS, optimization, and quench-and-temper:
+SMC/AIS, optimization, and quench and temper:
 
 ```python
 from jflows.flow import NSF, NCSF, CNF, OTFlow, RealNVP
@@ -95,8 +95,8 @@ flow, sample, and history serialization lives in `jflows.artifacts`.
 
 ### HIGH — staged Boltzmann generation
 
-The high level connects accepted bridge stages and compares every trained map
-with an exact identity fallback using full-validation incremental ESS:
+The high level connects accepted stages and compares every trained map
+with an exact identity fallback using incremental ESS over the complete validation set:
 
 ```python
 from jflows.boltzmann import (
@@ -113,7 +113,7 @@ from jflows.boltzmann import (
 - reverse KL is the simplest source-sampled F baseline;
 - forward KL manufactures target-side batches and trains G;
 - KLX adds target-measure log-weight variation control; and
-- KLXX adds a quench-and-temper/proposal mixture for wider mode and leakage
+- KLXX adds a quench and temper/proposal mixture for wider mode and leakage
   regularization.
 
 The four trained generators compare their candidate with identity. The

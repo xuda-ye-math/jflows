@@ -105,7 +105,7 @@ def main():
         ("AIS", y_ais, x.shape),
         ("L-BFGS", y_lbfgs, x.shape),
         ("AdamW", y_adamw, x.shape),
-        ("quench-and-temper", y_qt, x.shape),
+        ("quench and temper", y_qt, x.shape),
         ("importance weights", log_w, (x.shape[0],)),
     ):
         check(f"{name} finite", value.shape == shape and jnp.all(jnp.isfinite(value)))

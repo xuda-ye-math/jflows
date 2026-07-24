@@ -267,7 +267,7 @@ def train_forward_KL_G(
     t_start=0.0,
     t_end=1.0,
 ):
-    """Train one forward-KL G map and return flow plus batch ESS history."""
+    """Train one forward KL G map and return flow plus batch ESS history."""
     x_valid = jnp.asarray(x_valid)
     if initialize_from_identity:
         flow = _training_identity(flow)

@@ -1,19 +1,19 @@
-"""Standalone linear_combination test with a visual bridge (jflows only) —
+"""Standalone linear_combination test with a visual interpolation (jflows only) —
 run after installation from the repo root as
 `python -m smoke.test_linear_combination`.
 
-Builds the annealing bridge U_c = (1 - c) * U_uniform + c * U_gmm in 2D
-with the potential algebra, checks it quantitatively at every level, and
+Builds the interpolation U_c = (1 - c) * U_uniform + c * U_gmm in 2D
+with the potential algebra, checks it quantitatively at every point, and
 renders the normalized densities exp(-U_c) as a sequence of heatmaps
 (smoke/test_linear_combination.png) so the uniform -> Gaussian-
 mixture transition is visible as a smooth concentration of mass.
 
-This is the standard linear potential bridge used by staged Boltzmann
+This is the standard linear potential interpolation used by staged Boltzmann
 generators: SMC / AIS traverse exactly such an interpolation, with the
 coefficient c retuned per inner level (no recompile — the coefficients are an
 array leaf).
 
-Checks per level:
+Checks per interpolation point:
     1. algebra: U_c(x) == (1 - c) * U_uniform(x) + c * U_gmm(x);
     2. structure: two identity-merged terms, coeffs (1 - c, c);
     3. endpoints reproduce the pure potentials exactly;
@@ -97,7 +97,7 @@ def main() -> None:
     grid = jnp.stack(jnp.meshgrid(g, g, indexing="xy"), axis=-1).reshape(-1, 2)
     xs = jax.random.uniform(jax.random.key(0), (64, 2), minval=-BOX, maxval=BOX)
 
-    log(f"bridge U_c = (1 - c) * U_uniform + c * U_gmm, levels c = {np.round(LEVELS, 3)}")
+    log(f"interpolation U_c = (1 - c) * U_uniform + c * U_gmm, points c = {np.round(LEVELS, 3)}")
     densities = []
     for c in LEVELS:
         bridge = (1.0 - c) * u0 + c * u1
@@ -122,7 +122,7 @@ def main() -> None:
     q_gmm /= np.trapezoid(np.trapezoid(q_gmm, np.asarray(g), axis=1), np.asarray(g))
     check("endpoint c=1 == mixture", densities[-1], q_gmm, tol=1e-14)
 
-    # Exact zero coefficients remain in the pytree so a bridge can retune
+    # Exact zero coefficients remain in the pytree so an interpolation can retune
     # without recompilation. They must neutralize nonfinite hard-wall values
     # without changing ordinary differentiation with respect to the scalar
     # coefficient.
@@ -138,7 +138,7 @@ def main() -> None:
         jax.jit(lambda x: cancelled(x))(hard_x), jnp.zeros(2), tol=0.0,
     )
     endpoint = linear_combination([hard_wall, u1], [0.0, 1.0])
-    check("hard-wall bridge endpoint", endpoint(hard_x), u1(hard_x), tol=1e-14)
+    check("hard-wall interpolation endpoint", endpoint(hard_x), u1(hard_x), tol=1e-14)
     active = linear_combination([hard_wall], [1.0])(hard_x)
     check_true(
         "nonzero hard-wall coefficient still propagates infinity",

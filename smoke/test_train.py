@@ -15,8 +15,8 @@ For train_reverse_KL_F / train_forward_KL_G / Monitor:
     4. train_forward_KLX_G: the X-regularized forward KL at a general
        coeff_lambda — same contract, deterministic;
     5. train_forward_KLXX_G: the full mixture loss at general
-       (coeff_lambda, coeff_alpha, coeff_beta) — full-validation
-       quench-and-temper population,
+       (coeff_lambda, coeff_alpha, coeff_beta) — complete-validation-set
+       quench and temper sample set,
        per-step hat_mu freshening, detached pushforward — same contract;
     6. Monitor: reports step 1, interval steps, and the final step with an
        explicit numeric transition;

@@ -62,7 +62,7 @@ def validate(run_dir) -> dict:
 
 
 def load(run_dir, template=None):
-    """Load the last population, optional flow, and stage records."""
+    """Load the latest validation samples, optional flow, and stage records."""
     root = Path(run_dir).expanduser().resolve()
     run = validate(root)
     samples = np.load(root / run["initial_samples_path"], allow_pickle=False)
@@ -137,7 +137,7 @@ def load_stage_flow(run_dir, stage: int, role: str, template):
 
 
 def load_validation_samples(run_dir, stage=None, *, mmap_mode=None):
-    """Load the initial or post-stage validation population."""
+    """Load the initial or post-stage validation samples."""
     root = Path(run_dir).expanduser().resolve()
     record = validate(root)
     if stage is None:
