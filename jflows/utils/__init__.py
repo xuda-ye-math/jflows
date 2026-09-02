@@ -12,15 +12,12 @@ Split across five modules, re-exported here in the flat
     rejuvenation : langevin (alias rejuvenation), stochastic_heun,
                    hamiltonian_monte_carlo (alias hmc) + the low-level
                    *_step kernels and the leapfrog integrator
-    anneal       : sequential_monte_carlo (alias smc),
-                   annealed_importance_sampling (alias ais; same 'F'/'G'
-                   type argument)
+    anneal       : sequential_monte_carlo (alias smc; same 'F'/'G' type
+                   argument, flow proposal)
     quench       : quench_and_temper (alias qt)
 """
 
 from .anneal import (
-    ais,
-    annealed_importance_sampling,
     sequential_monte_carlo,
     smc,
 )
@@ -66,8 +63,6 @@ __all__ = [
     "adamw",
     "adamw_init",
     "adamw_step",
-    "ais",
-    "annealed_importance_sampling",
     "compute_ESS",
     "compute_ESS_log",
     "coverage",

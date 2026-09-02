@@ -52,7 +52,7 @@ jflows
 │   └── utils
 │       ├── weights / ESS / coverage / resampling
 │       ├── Langevin / stochastic Heun / HMC
-│       ├── SMC / flow-proposal AIS
+│       ├── flow-proposal SMC
 │       ├── L-BFGS / AdamW
 │       └── quench_and_temper
 ├── MEDIUM LEVEL
@@ -119,8 +119,11 @@ jflows/
 - `F` means source to target. `G = F^{-1}` means target to source. For an
   F-native flow, generate with `flow(x)`; for a G-native flow, generate from
   source samples with `flow.inv(x)`.
-- Primitive kernels use `dt` and `steps`; composite controls use `mc_dt`,
-  `mc_steps`, `opt_dt`, `opt_steps`, `train_steps`, `batch_size`, and
+- Primitive kernels use `dt` and `steps`; the utility samplers
+  `sequential_monte_carlo` and `quench_and_temper` use `mc_dt`, `mc_steps`,
+  `opt_dt`, and `opt_steps`; trainers and generators split the Langevin
+  budget into `mc_steps_1` (batch-sized sets) and `mc_steps_2`
+  (population-sized sets) and use `steps_total`, `batch_size`, and
   `pool_size`.
 - `chunks` is the number of row partitions, not the number of rows in one
   partition. It is the only generic memory-partition keyword.

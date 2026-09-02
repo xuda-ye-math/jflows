@@ -75,7 +75,7 @@ class Flow(eqx.Module):
         def t(self) -> ComposedTransform: ...
 
     High-level usage goes through the flow itself — the `type` argument
-    of the losses / importance weights / AIS names the direction the
+    of the losses / importance weights / SMC names the direction the
     flow's transform acts in:
 
         y       = flow(x)                 # forward map

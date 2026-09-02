@@ -110,7 +110,6 @@ def stage(run_dir, run: dict, record: dict, samples) -> dict:
         "valid_sample_count": record["valid_sample_count"],
         "selected": record["selected"],
         "attempt_status_hist": record["attempt_status_hist"],
-        "selection_history": record["selection_history"],
         "elapsed_seconds": record["elapsed_seconds"],
         "validation_samples_path": str(population),
         "history_path": str(history),

@@ -1,13 +1,21 @@
-"""Annealed transport samplers for jflows — SMC and flow-proposal AIS.
+"""Sequential Monte Carlo with a flow proposal for jflows.
 
-Built on the other utils modules:
-importance reweighting + `resample` (metrics) alternating with Langevin
-rejuvenation (rejuvenation), whose `taming` stabilizer is exposed here
-as well.
+`sequential_monte_carlo` (alias `smc`) manufactures target samples from
+source samples through a trained flow: the source particles are pushed
+through the flow, and every level then reweights them towards the target,
+resamples, and rejuvenates under the target. Each intermediate level
+rejuvenates with one Hamiltonian Monte Carlo trajectory (a random momentum,
+`mc_steps` leapfrog steps of size `mc_dt`, one Metropolis decision), which
+moves the resampled particles far enough for the next reweighting to act on
+new positions; the last level rejuvenates with `mc_steps` Langevin steps of
+size `mc_dt` (MALA by default). Built on the other
+utils modules: importance reweighting + `resample` (metrics) alternating
+with the rejuvenation kernels (rejuvenation), whose `taming` stabilizer is
+exposed here as well.
 
 Key convention: level k (1-indexed) uses `fold_in(key, k)`, split into
 one resampling key and one rejuvenation key — so a manual composition of
-`resample` + `langevin` with the same derivation reproduces the loops.
+`resample` + `langevin` with the same derivation reproduces the loop.
 
 There are no temperature arguments: to anneal between tempered
 distributions, pass the scaled potentials (the potential algebra covers
@@ -21,123 +29,23 @@ import jax.numpy as jnp
 from jax import Array
 
 from ..flow import Flow
-from ..potential import Potential, linear_combination
-from .metrics import compute_ESS_log, linear_weights_from_log, resample
-from .rejuvenation import langevin
+from ..potential import Potential
+from .metrics import linear_weights_from_log, resample
+from .rejuvenation import hamiltonian_monte_carlo, langevin
 
 
 __all__ = [
-    "ais",
-    "annealed_importance_sampling",
     "sequential_monte_carlo",
     "smc",
 ]
 
 
 # ──────────────────────────────────────────────────────────────────────
-# SMC — annealed Langevin on a linear bridge of potentials (no flow)
+# SMC — flow proposal, geometric path to the target, resampling per level,
+# HMC rejuvenation on the intermediate levels and MALA on the last
 # ──────────────────────────────────────────────────────────────────────
 
 def sequential_monte_carlo(
-    key: Array,
-    samples: Array,
-    source: Potential,
-    target: Potential,
-    ladder: int = 1,
-    mc_dt: float = 1e-3,
-    mc_steps: int = 100,
-    adjust: bool = True,
-    taming: float = 0,
-    chunks: int = 1,
-) -> tuple[Array, Array]:
-    """
-    Sequential Monte Carlo (annealed Langevin) that transports the input
-    particles from the source `mu_0 ~ exp(-source)` to the target
-    `mu_1 ~ exp(-target)` (both on the SAME space, no flow) through a
-    ladder of M = `ladder` linearly-interpolated bridge potentials,
-    alternating importance reweighting (with multinomial resampling) and
-    Langevin rejuvenation **on each bridge** at every level.
-
-    The bridge at level k is the linear combination
-        u_k(x) = (1 - k/M) * source(x) + (k/M) * target(x),   k = 0, ..., M,
-    so u_0 = source (the distribution `samples` follow) and u_M = target.
-    Built via `linear_combination([target, source], [k/M, 1 - k/M])`,
-    rebuilt each level (same pytree structure — no recompile).
-
-    For each k = 1, ..., M, starting from particles x ~ exp(-u_{k-1}):
-      1. Incremental self-normalised importance weights from u_{k-1} to u_k:
-             log w(x) = u_{k-1}(x) - u_k(x) = (1/M) * (source(x) - target(x)),
-         exponentiated after subtracting the max for numerical stability.
-      2. Multinomial resampling of x by w.
-      3. Langevin rejuvenation targeting exp(-u_k) — i.e. ON THE
-         BRIDGE POTENTIAL u_k itself — for `mc_steps` steps, with the tamed
-         drift when `taming > 0`.
-    After the final level the particles approximate exp(-target).
-
-    Contrast with `annealed_importance_sampling`, which uses a
-    trained flow as the proposal and rejuvenates only in the final target
-    `mu_1`: here there is no flow, the bridge is built directly in
-    potential space, and Langevin runs on each intermediate `u_k`.
-
-    Input:
-        key:     PRNG key (level k uses fold_in(key, k), split into the
-                 resampling and rejuvenation keys)
-        samples: Array [N, d]   particles drawn from exp(-source)
-        source:  Potential      source potential
-        target:  Potential      target potential
-        ladder:  int            number of annealing levels M (>= 1). M=1 is a
-                                single reweight + resample + Langevin hop
-                                straight from source to target; larger M
-                                bridges low-overlap source/target pairs.
-        mc_dt:   float          Langevin step size, shared across levels
-        mc_steps: int           Langevin steps per level
-        adjust:  bool           if True, MALA rejuvenation on each bridge
-                                (unbiased); if False, ULA (see `langevin`)
-        taming:  float          if > 0, tamed Langevin drift
-                                grad u_k / (1 + taming * ||grad u_k||) —
-                                stabilizes the rejuvenation on potentials
-                                whose gradients grow super-linearly
-        chunks:  int            split along dim 0 into this many execution
-                                chunks inside each Langevin call
-                                (statistically equivalent to chunks=1; when the
-                                enclosing routine is jitted this is not a
-                                strict peak-memory guarantee)
-    Output:
-        samples: Array [N, d]   particles approximating exp(-target)
-        ess:     Array [M]      per-level effective sample size (in [0, 1]) of
-                                the incremental importance weights, computed
-                                *before* resampling — a diagnostic of how well
-                                consecutive bridges overlap (close to 1 =
-                                well-spaced ladder)
-    """
-    M = ladder
-    x = samples
-    ess = []  # per-level effective sample size of the incremental weights
-    for k in range(1, M + 1):
-        c = k / M
-        u_k = linear_combination([target, source], [c, 1.0 - c])
-        # (1) incremental IS weights from u_{k-1} to u_k on x ~ exp(-u_{k-1}).
-        #     The bridge difference u_{k-1}(x) - u_k(x) telescopes (for every
-        #     k) to (1/M) * (source(x) - target(x)).
-        log_w = (source(x) - target(x)) / M
-        ess.append(compute_ESS_log(log_w))
-        w = linear_weights_from_log(log_w)
-        # (2) resample onto high-weight particles, then (3) Langevin-rejuvenate
-        #     ON the bridge u_k to obtain fresh samples ~ exp(-u_k).
-        key_r, key_l = jax.random.split(jax.random.fold_in(key, k))
-        x = resample(key_r, x, w)
-        x = langevin(
-            key_l, x, u_k, dt=mc_dt, steps=mc_steps, adjust=adjust,
-            taming=taming, chunks=chunks,
-        )
-    return x, jnp.stack(ess)
-
-
-# ──────────────────────────────────────────────────────────────────────
-# AIS — flow-proposal SMC along the geometric path to the target
-# ──────────────────────────────────────────────────────────────────────
-
-def annealed_importance_sampling(
     key: Array,
     samples: Array,
     source: Potential,
@@ -151,14 +59,14 @@ def annealed_importance_sampling(
     taming: float = 0,
     chunks: int = 1,
     trace_key: Array | None = None,
-    return_initial_log_weights: bool = False,
-) -> Array | tuple[Array, Array]:
+) -> tuple[Array, Array, Array]:
     """
-    Flow-proposal annealing surrogate that uses a trained flow as the
-    proposal. The source `mu_0 ~ exp(-source)` and target
-    `mu_1 ~ exp(-target)` live in the same space, and the flow has been
-    trained so that the pushforward `F_# mu_0 ~~ mu_1`. The input `samples`
-    are drawn from `mu_0`; the routine returns samples from `mu_1`.
+    Sequential Monte Carlo with a trained flow as the proposal. The source
+    `mu_0 ~ exp(-source)` and target `mu_1 ~ exp(-target)` live in the same
+    space, and the flow has been trained so that the pushforward
+    `F_# mu_0 ~~ mu_1`. The input `samples` are drawn from `mu_0`; the
+    routine returns samples from `mu_1` together with the proposal it
+    started from.
 
     The flow acts either as the forward map F (type='F',
     source -> target) or as the inverse map G = F^{-1} (type='G',
@@ -186,17 +94,24 @@ def annealed_importance_sampling(
                 log w_full <- -target(y) + source(x) + log|det J_F(x)|
             log w <- (1/M) * log w_full
             y     <- resample(y, self-normalised w)
-            y     <- langevin(y, target, ...)   # rejuvenate in mu_1
+            y     <- hmc(y, target, ...)        # k < M: one trajectory in mu_1
+            y     <- langevin(y, target, ...)   # k = M: rejuvenate in mu_1
 
     No bridge potential is constructed: the weights come directly from the
-    raw `source` / `target` energies and the flow Jacobian. The Langevin
+    raw `source` / `target` energies and the flow Jacobian. Every
     rejuvenation targets `mu_1 = exp(-target)` **directly** rather than the
     exact intermediate `pi_k`: evaluating / differentiating `log pi_k`
     would require the pushforward density of F (hence F^{-1} and its
     Jacobian gradient), which is far more expensive. Consequently this is a
-    deliberately biased, score-free target surrogate rather than exact AIS
-    or SMC. MALA makes each rejuvenation kernel invariant for `mu_1`; it does
-    not remove the intermediate-path approximation.
+    biased, score-free target surrogate rather than an exact SMC sampler
+    on the geometric path. Each intermediate level uses one
+    Metropolis-adjusted HMC trajectory: a random momentum, `mc_steps`
+    leapfrog steps of size `mc_dt`, one accept/reject decision, so that the
+    resampled particles move O(mc_dt * mc_steps) before the next
+    reweighting instead of the O(sqrt(mc_dt)) of a Langevin step; the last
+    level uses `mc_steps` Langevin steps of size `mc_dt` (MALA by default).
+    Both kernels are invariant for `mu_1`; neither removes the
+    intermediate-path approximation.
 
     Input:
         key:       PRNG key (level k uses fold_in(key, k), split into the
@@ -210,8 +125,11 @@ def annealed_importance_sampling(
         ladder:    int               number of annealing levels M (>= 1). M=1 is
                                      a single reweight + resample + Langevin hop
                                      from the flow proposal to the target.
-        mc_dt:     float             Langevin step size, shared across levels
-        mc_steps:  int               Langevin steps per level
+        mc_dt:     float             step size: leapfrog step of the HMC
+                                     trajectory on levels 1 .. M-1, Langevin
+                                     step on level M
+        mc_steps:  int               leapfrog steps of the HMC trajectory on
+                                     levels 1 .. M-1, Langevin steps on level M
         adjust:    bool              if True, MALA rejuvenation invariant for
                                      mu_1; if False, ULA (see `langevin`)
         taming:    float             if > 0, tamed Langevin drift on the target
@@ -225,19 +143,16 @@ def annealed_importance_sampling(
         trace_key: Array | None      optional base key for stochastic CNF
                                      log-Jacobian probes; packed trainers pass
                                      a fresh key automatically
-        return_initial_log_weights: bool
-                              if True, also return the full (not 1/M-scaled)
-                              proposal-to-target log importance weights
-                              evaluated immediately after the initial flow
-                              push and before any AIS resampling or target
-                              rejuvenation. Default False preserves the
-                              established samples-only return.
     Output:
-        samples: Array [N, d]      particles in mu_1 (target space),
-                                  approximating exp(-target)
-        initial_log_weights: Array [N], optional
-                                  log(mu_1 / F_#mu_0) on the initial proposal
-                                  particles; returned only when requested
+        samples:  Array [N, d]     particles in mu_1 (target space),
+                                   approximating exp(-target)
+        proposal: Array [N, d]     the pushforward particles y = F(samples)
+                                   the levels started from, before any
+                                   resampling or rejuvenation
+        proposal_log_weights: Array [N]
+                                   the full (not 1/M-scaled) log(mu_1 / F_#mu_0)
+                                   on `proposal`; its ESS is the batch
+                                   diagnostic the trainers report
     """
     M = ladder
 
@@ -259,15 +174,16 @@ def annealed_importance_sampling(
         yc, ladj = push(xc)
         y_parts.append(yc)
         initial_parts.append(-target(yc) + source(xc) + ladj)
-    y = jnp.concatenate(y_parts, axis=0)
-    initial_log_weights = jnp.concatenate(initial_parts, axis=0)
+    proposal = jnp.concatenate(y_parts, axis=0)
+    proposal_log_weights = jnp.concatenate(initial_parts, axis=0)
+    y = proposal
 
     for k in range(1, M + 1):
         # (1) Incremental weights w(y) ** (1/M). Level one reuses the
         # direct proposal weights above. Later levels refresh each moved
         # particle's latent pre-image and use that level's trace key.
         if k == 1:
-            full_log_weight = initial_log_weights
+            full_log_weight = proposal_log_weights
         else:
             parts = []
             flow_k = level_flow(k)
@@ -282,18 +198,22 @@ def annealed_importance_sampling(
             full_log_weight = jnp.concatenate(parts, axis=0)
         log_w = full_log_weight / M
         w = linear_weights_from_log(log_w)
-        # (2) resample onto high-weight particles, then rejuvenate in mu_1.
+        # (2) resample onto high-weight particles, then rejuvenate in mu_1:
+        #     HMC on the intermediate levels, Langevin on the last.
         key_r, key_l = jax.random.split(jax.random.fold_in(key, k))
         y = resample(key_r, y, w)
-        y = langevin(
-            key_l, y, target, dt=mc_dt, steps=mc_steps, adjust=adjust,
-            taming=taming, chunks=chunks,
-        )
-    if return_initial_log_weights:
-        return y, initial_log_weights
-    return y
+        if k < M:
+            y = hamiltonian_monte_carlo(
+                key_l, y, target, dt=mc_dt, leapfrog_steps=mc_steps,
+                trajectories=1, chunks=chunks,
+            )
+        else:
+            y = langevin(
+                key_l, y, target, dt=mc_dt, steps=mc_steps, adjust=adjust,
+                taming=taming, chunks=chunks,
+            )
+    return y, proposal, proposal_log_weights
 
 
-# aliases: the standard short names
+# alias: the standard short name
 smc = sequential_monte_carlo
-ais = annealed_importance_sampling

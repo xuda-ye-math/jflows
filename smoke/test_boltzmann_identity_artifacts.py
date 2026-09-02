@@ -18,12 +18,11 @@ from jflows.boltzmann.load import (
 from jflows.potential import Nlog_Gaussian
 
 
-VALID_SZIE = 32
+VALID_SIZE = 32
 BG_PARAM = {
     "t_safe": 0.5,
     "enlarge_factor": 1.0,
-    "tau_smc": 0.0,
-    "tau_ess": 0.0,
+    "tau_valid": 0.0,
     "max_stages": 2,
 }
 
@@ -31,7 +30,7 @@ BG_PARAM = {
 def main():
     source = Nlog_Gaussian([0.0, 0.0], [2.0, 2.0])
     target = Nlog_Gaussian([0.5, -0.5], [1.0, 1.0])
-    samples = source.samples(jax.random.key(1), VALID_SZIE)
+    samples = source.samples(jax.random.key(1), VALID_SIZE)
 
     def stages(current, flow, accepted, number):
         assert flow is None
@@ -39,9 +38,8 @@ def main():
             current,
             source,
             target,
-            ladder=1,
             mc_dt=1e-3,
-            mc_steps=0,
+            mc_steps_2=1,
             mc_adjust=True,
             monitor=None,
             bg_param=BG_PARAM,
@@ -99,7 +97,6 @@ def main():
             "t_hist",
             "valid_identity_ess_hist",
             "attempt_status_hist",
-            "selection_history",
         }
     print("identity Boltzmann persistence: OK")
 

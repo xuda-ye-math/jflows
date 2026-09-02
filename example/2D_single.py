@@ -5,21 +5,21 @@ which touches the inverse map during training (each transform is
 differentiated in its native direction only):
 
     reverse KL            : the flow acts as F (source -> target);
-                            `train_reverse_KL_F` draws an BATCH_SZIE subset of
+                            `train_reverse_KL_F` draws an BATCH_SIZE subset of
                             the fixed source set every Adam step and
                             freshens it with Langevin rejuvenation at the
                             source.
     forward KL            : the flow acts as G (target -> source);
                             `train_forward_KL_G` manufactures its target
-                            batch every Adam step by single-level AIS
+                            batch every Adam step by single-level SMC
                             through the CURRENT flow (pushforward ->
                             reweight -> resample -> Langevin rejuvenation
                             at the target).
 
-X-regularization conventions: one fixed set of VALID_SZIE source samples
+X-regularization conventions: one fixed set of VALID_SIZE source samples
 serves training and evaluation — the packed trainers regenerate their
-BATCH_SZIE training data inside every Adam step, so no frozen batch is ever
-reused; the final ESS is computed on the full VALID_SZIE set through the
+BATCH_SIZE training data inside every Adam step, so no frozen batch is ever
+reused; the final ESS is computed on the full VALID_SIZE set through the
 flow importance weights.
 
 Run after installation from the repo root:  python -m example.2D_single
@@ -65,16 +65,16 @@ TRANSFORMS: int = 4                 # number of autoregressive transforms stacke
 HIDDEN_FEATURES = (64, 64)          # widths of the hidden layers in each conditioner MLP
 
 # training parameters
-VALID_SZIE: int = 40000   # the fixed source set (training pool + final ESS evaluation)
-BATCH_SZIE: int = 2000    # batch drawn from the fixed set per Adam step
-TRAIN_STEPS: int = 200       # Adam steps (one compiled call per method)
+VALID_SIZE: int = 40000   # the fixed source set (training pool + final ESS evaluation)
+BATCH_SIZE: int = 2000    # batch drawn from the fixed set per Adam step
+STEPS_TOTAL: int = 200       # Adam steps (one compiled call per method)
 LR: float = 1e-3       # Adam learning rate
 MONITOR_EVERY: int = 10  # print loss + proposal ESS every MONITOR_EVERY steps
 
-# Langevin rejuvenation (reverse KL batches + the single-level AIS)
+# Langevin rejuvenation (reverse KL batches + the single-level SMC)
 LADDER: int = 1        # one reweight + resample + rejuvenation hop
 MC_DT: float = 1e-3  # Langevin rejuvenation step size
-MC_STEPS: int = 100    # Langevin rejuvenation steps per batch / AIS call
+MC_STEPS_1: int = 100  # Langevin rejuvenation steps per batch / SMC level
 
 
 # source: Gaussian U0
@@ -105,31 +105,31 @@ def log(msg: str) -> None:
 def main() -> None:
     open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START 2D_single | jax {jax.__version__} | backend {jax.default_backend()} | "
-        f"VALID_SZIE={VALID_SZIE} BATCH_SZIE={BATCH_SZIE} TRAIN_STEPS={TRAIN_STEPS} LR={LR} "
-        f"MC={MC_DT}x{MC_STEPS}")
-    x_valid = u0.samples(jax.random.key(2), VALID_SZIE)  # the fixed VALID_SZIE source set
+        f"VALID_SIZE={VALID_SIZE} BATCH_SIZE={BATCH_SIZE} STEPS_TOTAL={STEPS_TOTAL} LR={LR} "
+        f"MC={MC_DT}x{MC_STEPS_1}")
+    x_valid = u0.samples(jax.random.key(2), VALID_SIZE)  # the fixed VALID_SIZE source set
 
     log("[reverse KL] training (packed single stage) ...")
     flow_F, hist_F = train_reverse_KL_F(x_valid, u0, u1, new_flow(jax.random.key(0)),
-                                        batch_size=BATCH_SZIE, train_steps=TRAIN_STEPS, lr=LR,
-                                      mc_dt=MC_DT, mc_steps=MC_STEPS,
+                                        batch_size=BATCH_SIZE, steps_total=STEPS_TOTAL, lr=LR,
+                                      mc_dt=MC_DT, mc_steps_1=MC_STEPS_1,
                                       monitor=Monitor(MONITOR_EVERY, "[reverse KL] ", log))
-    log(f"[reverse KL] {TRAIN_STEPS} steps done   proposal ESS "
-        f"{float(hist_F[0]):.3f} -> {float(hist_F[TRAIN_STEPS // 2]):.3f} -> {float(hist_F[-1]):.3f}")
+    log(f"[reverse KL] {STEPS_TOTAL} steps done   proposal ESS "
+        f"{float(hist_F[0]):.3f} -> {float(hist_F[STEPS_TOTAL // 2]):.3f} -> {float(hist_F[-1]):.3f}")
 
     log("[forward KL] training (packed single stage) ...")
     flow_G, hist_G = train_forward_KL_G(x_valid, u0, u1, new_flow(jax.random.key(1)),
-                                        batch_size=BATCH_SZIE, train_steps=TRAIN_STEPS, lr=LR,
-                                      ladder=LADDER, mc_dt=MC_DT, mc_steps=MC_STEPS,
+                                        batch_size=BATCH_SIZE, steps_total=STEPS_TOTAL, lr=LR,
+                                      ladder=LADDER, mc_dt=MC_DT, mc_steps_1=MC_STEPS_1,
                                       monitor=Monitor(MONITOR_EVERY, "[forward KL] ", log))
-    log(f"[forward KL] {TRAIN_STEPS} steps done   proposal ESS "
-        f"{float(hist_G[0]):.3f} -> {float(hist_G[TRAIN_STEPS // 2]):.3f} -> {float(hist_G[-1]):.3f}")
+    log(f"[forward KL] {STEPS_TOTAL} steps done   proposal ESS "
+        f"{float(hist_G[0]):.3f} -> {float(hist_G[STEPS_TOTAL // 2]):.3f} -> {float(hist_G[-1]):.3f}")
 
     # final ESS on the full fixed set
     ess_F = float(compute_ESS(importance_weights(x_valid, u0, u1, flow_F, type="F")))
     ess_G = float(compute_ESS(importance_weights(x_valid, u0, u1, flow_G, type="G")))
-    log(f"[reverse KL] final ESS = {ess_F:.4f}   (VALID_SZIE = {VALID_SZIE})")
-    log(f"[forward KL] final ESS = {ess_G:.4f}   (VALID_SZIE = {VALID_SZIE})")
+    log(f"[reverse KL] final ESS = {ess_F:.4f}   (VALID_SIZE = {VALID_SIZE})")
+    log(f"[forward KL] final ESS = {ess_G:.4f}   (VALID_SIZE = {VALID_SIZE})")
 
     # figure: ESS history, then the two pushforward panels
     n = 300
@@ -145,12 +145,12 @@ def main() -> None:
 
     fig, axes = plt.subplots(1, 3, figsize=(8.4, 3.0), constrained_layout=True)
 
-    steps_axis = np.arange(1, TRAIN_STEPS + 1)
+    steps_axis = np.arange(1, STEPS_TOTAL + 1)
     axes[0].plot(steps_axis, np.asarray(hist_F), color="#1F77B4", lw=1.2, label="reverse KL")
     axes[0].plot(steps_axis, np.asarray(hist_G), color="#D62728", lw=1.2, label="forward KL")
     axes[0].set_xlabel("step")
     axes[0].set_ylabel("ESS")
-    axes[0].set_xlim(0, TRAIN_STEPS)
+    axes[0].set_xlim(0, STEPS_TOTAL)
     axes[0].set_ylim(0.0, 1.0)
     axes[0].set_title("proposal ESS history")
     axes[0].legend(loc="lower right")

@@ -32,7 +32,7 @@ target sampler.
 - **Explicit randomness.** Every random constructor and sampler takes a JAX
   PRNG key. There is no package-global random state.
 - **Sampling and diagnostics.** Importance weights, normalized ESS, coverage,
-  resampling, Langevin/MALA, stochastic Heun, HMC, SMC, flow-proposal AIS,
+  resampling, Langevin/MALA, stochastic Heun, HMC, flow-proposal SMC,
   L-BFGS, AdamW, and quench and temper are available from `jflows.utils`.
 - **Runtime backend report.** `jflows.backend()` lists CPU and installed JAX
   accelerator plugins backed by visible hardware, identifies the configured
@@ -63,7 +63,7 @@ complete staged generator.
 ### LOW — building blocks
 
 The low level contains flows, potentials, per-sample losses, metrics, MCMC,
-SMC/AIS, optimization, and quench and temper:
+flow-proposal SMC, optimization, and quench and temper:
 
 ```python
 from jflows.flow import NSF, NCSF, CNF, OTFlow, RealNVP
@@ -165,11 +165,11 @@ flow, batch_ess = train_forward_KLX_G(
     target,
     flow,
     batch_size=500,
-    train_steps=200,
+    steps_total=200,
     lr=1e-3,
     ladder=1,
     mc_dt=1e-3,
-    mc_steps=50,
+    mc_steps_1=50,
     coeff_lambda=1.0,
 )
 

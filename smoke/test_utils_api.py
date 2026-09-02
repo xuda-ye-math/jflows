@@ -12,8 +12,6 @@ from jflows.flow import NSF
 from jflows.potential import Nlog_Gaussian
 from jflows.utils import (
     adamw,
-    ais,
-    annealed_importance_sampling,
     coverage,
     hamiltonian_monte_carlo,
     importance_weights_log,
@@ -46,14 +44,14 @@ def main():
         hamiltonian_monte_carlo: (
             "dt", "leapfrog_steps", "trajectories", "chunks",
         ),
-        sequential_monte_carlo: ("ladder", "mc_dt", "mc_steps", "chunks"),
-        annealed_importance_sampling: (
+        sequential_monte_carlo: (
             "ladder", "mc_dt", "mc_steps", "chunks",
         ),
         lbfgs: ("alpha", "steps", "chunks"),
         adamw: ("lr", "steps", "chunks"),
         quench_and_temper: (
-            "opt_dt", "opt_steps", "mc_dt", "mc_steps", "chunks",
+            "opt_dt", "opt_steps", "mc_dt", "mc_steps", "chunks", "source",
+            "coeff_qt",
         ),
     }
     for function, expected in signatures.items():
@@ -65,8 +63,6 @@ def main():
         check(f"{function.__name__} has no variadic keyword shim", "kwargs" not in names)
 
     check("smc is the sequential-Monte-Carlo alias", smc is sequential_monte_carlo)
-    check("ais is the annealed-importance-sampling alias",
-          ais is annealed_importance_sampling)
 
     try:
         langevin(key, x, target, step=0.01)
@@ -82,12 +78,13 @@ def main():
         key, x, target, dt=0.05, leapfrog_steps=2,
         trajectories=2, chunks=2,
     )
-    y_smc, ess_smc = smc(
-        key, x, source, target, ladder=2, mc_dt=0.01, mc_steps=1, chunks=2,
-    )
-    y_ais = ais(
+    y_smc, y_proposal, log_w_smc = smc(
         key, x, source, target, flow, "G", ladder=2,
-        mc_dt=0.01, mc_steps=1, chunks=2,
+        mc_dt=0.05, mc_steps=4, chunks=2,
+    )
+    y_smc_one, _, _ = smc(
+        key, x, source, target, flow, "G", ladder=1,
+        mc_dt=0.05, mc_steps=4, chunks=2,
     )
     y_lbfgs = lbfgs(x, target, alpha=0.1, steps=2, chunks=2)
     y_adamw = adamw(x, target, lr=0.01, steps=2, chunks=2)
@@ -95,6 +92,19 @@ def main():
         key, x, target, 0.1, opt_dt=0.1, opt_steps=1,
         mc_dt=0.01, mc_steps=1, chunks=2,
     )
+    y_qt_partial = quench_and_temper(
+        key, x, target, 0.1, opt_dt=0.1, opt_steps=1,
+        mc_dt=0.01, mc_steps=1, chunks=2, source=source, coeff_qt=0.5,
+    )
+    try:
+        quench_and_temper(
+            key, x, target, 0.1, opt_dt=0.1, opt_steps=1,
+            mc_dt=0.01, mc_steps=1, coeff_qt=0.5,
+        )
+    except ValueError:
+        check("coeff_qt > 0 without a source is rejected", True)
+    else:
+        raise AssertionError("coeff_qt > 0 without a source is rejected")
     log_w = importance_weights_log(x, source, target, flow, "G", chunks=2)
     cov = coverage(x[:4], x, k=2, chunks=2)
 
@@ -102,14 +112,20 @@ def main():
         ("langevin", y_langevin, x.shape),
         ("HMC", y_hmc, x.shape),
         ("SMC", y_smc, x.shape),
-        ("AIS", y_ais, x.shape),
+        ("SMC proposal", y_proposal, x.shape),
+        ("SMC proposal log weights", log_w_smc, (x.shape[0],)),
         ("L-BFGS", y_lbfgs, x.shape),
         ("AdamW", y_adamw, x.shape),
         ("quench and temper", y_qt, x.shape),
+        ("quench and temper, coeff_qt = 0.5", y_qt_partial, x.shape),
         ("importance weights", log_w, (x.shape[0],)),
     ):
         check(f"{name} finite", value.shape == shape and jnp.all(jnp.isfinite(value)))
-    check("SMC ESS finite", ess_smc.shape == (2,) and jnp.all(jnp.isfinite(ess_smc)))
+    check("identity-flow SMC proposal is the input",
+          jnp.allclose(y_proposal, x, atol=1e-6))
+    check("single-level SMC finite", jnp.all(jnp.isfinite(y_smc_one)))
+    check("HMC intermediate level moves the particles",
+          float(jnp.abs(y_smc - x).mean()) > float(jnp.abs(y_smc_one - x).mean()))
     check("coverage finite", jnp.isfinite(cov))
 
 

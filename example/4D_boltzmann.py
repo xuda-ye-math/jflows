@@ -9,18 +9,19 @@ regularized 3D Coulomb interaction,
 
 A direct flow proposal from the 4D Gaussian source has ESS ~ 0, so both
 generators traverse the interpolation U_t = (1 - t) U_0 + t U_1 with
-an adaptive stage schedule (SMC-gated safe start, enlarge-factor
-extrapolation, ESS-gated rejection/shrink) replacing the fixed
+an adaptive stage schedule (safe start, enlarge-factor extrapolation,
+validation-ESS-gated rejection/shrink) replacing the fixed
 c_k = k / 12 schedule of the original:
 
     boltzmann_reverse_KL_F: each stage trains the increment by
         reverse KL on Langevin-freshened batches of the particle set;
     boltzmann_forward_KL_G: each stage trains the increment by
-        forward KL on target batches manufactured per Adam step by AIS
-        through the CURRENT flow (SMC gate and AIS share LADDER).
+        forward KL on target batches manufactured per Adam step by SMC
+        through the CURRENT flow (LADDER levels).
 
-Both advance the particle set by reweight -> resample -> MALA and are
-compared row by row in the figure (top: reverse KL; bottom: forward KL).
+Both advance the particle set by reweight -> resample -> MALA
+(MC_STEPS_2 steps) and are compared row by row in the figure
+(top: reverse KL; bottom: forward KL).
 
 Run after installation from the repo root:  python -m example.4D_boltzmann
 """
@@ -71,24 +72,24 @@ TRANSFORMS: int = 6    # autoregressive transforms stacked in the flow
 HIDDEN_FEATURES = (64, 64)   # hidden widths of each conditioner MLP
 
 # training parameters
-VALID_SZIE: int = 120000   # exact population for selection, training, and validation
-BATCH_SZIE: int = 2000    # batch drawn from the fixed set per Adam step
-TRAIN_STEPS: int = 500       # Adam steps per stage attempt (one compiled call)
+VALID_SIZE: int = 120000   # exact population for selection, training, and validation
+BATCH_SIZE: int = 2000    # batch drawn from the fixed set per Adam step
+STEPS_TOTAL: int = 500       # Adam steps per stage attempt (one compiled call)
 LR: float = 1e-4       # Adam learning rate
 MONITOR_EVERY: int = 20  # print loss + proposal ESS every MONITOR_EVERY steps
 
 # Langevin rejuvenation (training batches + the per-stage particle refresh)
-LADDER: int = 1        # SMC levels of the tau_smc selection gate
+LADDER: int = 1        # SMC levels of the forward KL target surrogate
 MC_DT: float = 1e-3  # Langevin rejuvenation step size
-MC_STEPS: int = 100    # Langevin rejuvenation steps (MALA default: rejects Coulomb-wall proposals)
+MC_STEPS_1: int = 100  # Langevin steps per training batch / SMC level (MALA default: rejects Coulomb-wall proposals)
+MC_STEPS_2: int = 100  # Langevin steps of the per-stage particle refresh after resampling
 
-# adaptive stage schedule (bg_param of boltzmann_reverse_KL_F)
+# adaptive stage schedule (bg_param of both generators)
 BG_PARAM = {
     "t_safe": 0.2,        # stage-1 coefficient (the safe start)
     "shrink_factor": 0.7,  # rejected stage: t_k <- t_prev + shrink (t_k - t_prev)
     "enlarge_factor": 1.5, # accepted stage: extrapolation growth
-    "tau_smc": 0.2,        # SMC pre-selection gate on t_k
-    "tau_ess": 0.6,        # incremental ESS acceptance threshold
+    "tau_valid": 0.6,      # validation ESS acceptance threshold
 }
 
 
@@ -133,9 +134,9 @@ def log(msg: str) -> None:
 def main() -> None:
     open(LOG, "w").close()   # fresh log per run (no appending)
     log(f"START 4D_boltzmann | jax {jax.__version__} | "
-        f"backend {jax.default_backend()} | VALID_SZIE={VALID_SZIE} "
-        f"BATCH_SZIE={BATCH_SZIE} TRAIN_STEPS={TRAIN_STEPS} LR={LR} MC={MC_DT}x{MC_STEPS} bg={BG_PARAM}")
-    x_valid = u0.samples(jax.random.key(2), VALID_SZIE)
+        f"backend {jax.default_backend()} | VALID_SIZE={VALID_SIZE} "
+        f"BATCH_SIZE={BATCH_SIZE} STEPS_TOTAL={STEPS_TOTAL} LR={LR} MC={MC_DT}x{MC_STEPS_1}/{MC_STEPS_2} bg={BG_PARAM}")
+    x_valid = u0.samples(jax.random.key(2), VALID_SIZE)
 
     def new_flow(key):
         return NSF(key, a=[-NSF_LIM] * 4, b=[NSF_LIM] * 4, bins=BINS,
@@ -150,15 +151,15 @@ def main() -> None:
         if name == "reverse KL":
             y, stages = boltzmann_reverse_KL_F(
                 x_valid, u0, u1, new_flow(key_f),
-                batch_size=BATCH_SZIE, train_steps=TRAIN_STEPS, lr=LR, ladder=LADDER,
-                mc_dt=MC_DT, mc_steps=MC_STEPS,
+                batch_size=BATCH_SIZE, steps_total=STEPS_TOTAL, lr=LR,
+                mc_dt=MC_DT, mc_steps_1=MC_STEPS_1, mc_steps_2=MC_STEPS_2,
                 monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log), bg_param=BG_PARAM,
             )
         else:
             y, stages = boltzmann_forward_KL_G(
                 x_valid, u0, u1, new_flow(key_f),
-                batch_size=BATCH_SZIE, train_steps=TRAIN_STEPS, lr=LR, ladder=LADDER,
-                mc_dt=MC_DT, mc_steps=MC_STEPS,
+                batch_size=BATCH_SIZE, steps_total=STEPS_TOTAL, lr=LR, ladder=LADDER,
+                mc_dt=MC_DT, mc_steps_1=MC_STEPS_1, mc_steps_2=MC_STEPS_2,
                 monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log), bg_param=BG_PARAM,
             )
         ts = [s["t"] for s in stages]
@@ -176,7 +177,7 @@ def main() -> None:
                 f"[{name}] stage ESS: min = "
                 f"{min(s['valid_selected_ess'] for s in stages):.4f}   "
                 f"last = {stages[-1]['valid_selected_ess']:.4f}   "
-                f"(VALID_SZIE = {VALID_SZIE})"
+                f"(VALID_SIZE = {VALID_SIZE})"
             )
         results[name] = (y, stages)
 

@@ -9,7 +9,7 @@ Public surface:
                        Nlog_Gaussian_Mixture, linear_combination (+ the operator
                        algebra c*U, U+V, U-V, -U, U/c, sum([...]))
     jflows.loss      : reverse_KL_F, forward_KL_G, forward_KLX_G,
-                       forward_X_G
+                       forward_X_G, pairwise_variation
     jflows.train     : Monitor and all train_* stage drivers
     jflows.boltzmann : adaptive-staging and fixed-schedule boltzmann_* generators
     jflows.artifacts : save and load medium-level training outputs
@@ -18,7 +18,7 @@ Public surface:
 
 Internals (`jflows.core.*`) adapt zuko's clean flow and transform design.
 The public computation API uses explicit PRNG keys and takes `Flow` objects
-directly for losses, importance weights, AIS, and training.
+directly for losses, importance weights, SMC, and training.
 """
 
 from importlib.metadata import entry_points

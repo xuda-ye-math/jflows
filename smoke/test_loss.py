@@ -10,9 +10,11 @@ For reverse_KL_F / forward_KL_G and forward_KLX_G / forward_X_G:
     3. definition vs the core layer: every loss reproduces the manual
        t() / t().inv computation exactly;
     4. forward_KLX_G / forward_X_G: against the manual log-ratio
-       z = source(G(y)) - target(y) - ladj, forward_X_G == |z - z[perm]|
-       and forward_KLX_G == z + coeff_lambda * forward_X_G at the same
-       key, exactly; coeff_lambda = 0 reduces to z; X >= 0;
+       z = source(G(y)) - target(y) - ladj, forward_X_G ==
+       pairwise_variation(z), whose mean is the brute-force mean of
+       |z_i - z_j| over all pairs i != j, and forward_KLX_G ==
+       z + coeff_lambda * forward_X_G exactly; coeff_lambda = 0 reduces
+       to z; the variation is >= 0 and shift invariant;
     5. autograd: filter_grad of the batch-mean is finite and nonzero
        (reverse_KL_F and forward_KLX_G).
 
@@ -36,7 +38,9 @@ import jax.numpy as jnp  # noqa: E402
 import numpy as np  # noqa: E402
 
 from jflows.flow import NSF  # noqa: E402
-from jflows.loss import forward_KL_G, forward_KLX_G, forward_X_G, reverse_KL_F  # noqa: E402
+from jflows.loss import (  # noqa: E402
+    forward_KL_G, forward_KLX_G, forward_X_G, pairwise_variation, reverse_KL_F,
+)
 from jflows.potential import Nlog_Gaussian  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -110,20 +114,23 @@ def main() -> None:
 
     log("forward_KLX_G / forward_X_G (flow fixed as G)")
     src = Nlog_Gaussian([0.2, -0.4, 0.5], [1.0, 0.9, 1.1])
-    key_perm = jax.random.key(3)
     lam = 0.7
-    klx = forward_KLX_G(y, src, target, nsf, key_perm, coeff_lambda=lam)
-    xf = forward_X_G(y, src, target, nsf, key_perm)
+    klx = forward_KLX_G(y, src, target, nsf, coeff_lambda=lam)
+    xf = forward_X_G(y, src, target, nsf)
     check_true("per-sample shapes [N]", klx.shape == (N,) and xf.shape == (N,),
                f"{klx.shape} / {xf.shape}")
     x_g2, l_g3 = T.call_and_ladj(y)                 # z = src(G(y)) - target(y) - ladj
     z = src(x_g2) - target(y) - l_g3
-    perm_z = jax.random.permutation(key_perm, N)    # same key -> same permutation
-    check("forward_X_G == |z - z[perm]|", xf, jnp.abs(z - z[perm_z]), tol=0)
+    check("forward_X_G == pairwise_variation(z)", xf, pairwise_variation(z), tol=0)
+    z_np = np.asarray(z)
+    brute = np.mean([abs(z_np[i] - z_np[j]) for i in range(N) for j in range(N) if i != j])
+    check("mean variation == brute-force pair mean", xf.mean(), jnp.asarray(brute), tol=1e-10)
     check("forward_KLX_G == z + lam * forward_X_G", klx, z + lam * xf, tol=0)
     check("coeff_lambda = 0 reduces to z",
-          forward_KLX_G(y, src, target, nsf, key_perm, coeff_lambda=0.0), z, tol=0)
-    check_true("X >= 0", bool(jnp.all(xf >= 0)), f"min {float(xf.min()):.2e}")
+          forward_KLX_G(y, src, target, nsf, coeff_lambda=0.0), z, tol=0)
+    check_true("variation >= 0", bool(xf.mean() >= 0), f"mean {float(xf.mean()):.2e}")
+    check("variation is shift invariant", pairwise_variation(z + 3.0).mean(),
+          pairwise_variation(z).mean(), tol=1e-10)
     check("z == forward_KL_G - target(y)",
           z, forward_KL_G(y, src, nsf) - target(y), tol=1e-12)
 
@@ -144,7 +151,7 @@ def main() -> None:
     @eqx.filter_jit
     @eqx.filter_grad
     def gklx(flow, y):
-        return forward_KLX_G(y, src, target, flow, key_perm, coeff_lambda=lam).mean()
+        return forward_KLX_G(y, src, target, flow, coeff_lambda=lam).mean()
 
     grads2 = gklx(nsf, y)
     leaves2 = [g for g in jax.tree_util.tree_leaves(grads2) if eqx.is_inexact_array(g)]

@@ -11,9 +11,9 @@ Single-stage flow training on a 2D three-mode target, comparing the reverse KL a
 - **Source** $\mu_0 \propto e^{-U_0}$: isotropic Gaussian, $U_0(x) = \lVert x\rVert^2 / (2\sigma^2)$, $\sigma = 2$.
 - **Target** $\mu_1 \propto e^{-U_1}$: three-mode Gaussian mixture placed like the Julia three-dot sign — equal weights, means $(0, 2.4)$, $(-2.2, -1.4)$, $(2.2, -1.4)$, per-coordinate variance $0.3$. The modes are separated by $\sim 8$ standard deviations, so a mode-seeking objective can lose mass while a mass-covering one should not.
 - **Flow**: NSF on $[-5, 5]^2$, 16 bins, 4 autoregressive transforms, $(64, 64)$ conditioners, identity-initialised (`zeros()`).
-- **Training**: one packed call per method — `VALID_SZIE = 40000` fixed source set, `BATCH_SZIE = 2000` per Adam step, `TRAIN_STEPS = 200`, `LR = 1e-3`, Langevin rejuvenation `MC_DT = 1e-3`, `MC_STEPS = 100`, single-level AIS (`LADDER = 1`).
+- **Training**: one packed call per method — `VALID_SIZE = 40000` fixed source set, `BATCH_SIZE = 2000` per Adam step, `STEPS_TOTAL = 200`, `LR = 1e-3`, Langevin rejuvenation `MC_DT = 1e-3`, `MC_STEPS_1 = 100`, single-level SMC (`LADDER = 1`).
 
-Both trainers regenerate their batch inside every Adam step. The reverse KL flow acts as $F$ (source → target, `train_reverse_KL_F`): each step draws a `BATCH_SZIE` subset of the fixed set and freshens it with Langevin steps at the source. The forward KL flow acts as $G$ (target → source, `train_forward_KL_G`): each step manufactures its target batch by single-level AIS through the *current* flow — inverse pushforward, self-normalized reweighting, multinomial resampling, and Langevin rejuvenation at the target. The loss is differentiated only in its native $G$ direction; the detached AIS data-generation path performs the inverse push. The final ESS is computed on the full fixed source set through the flow importance weights.
+Both trainers regenerate their batch inside every Adam step. The reverse KL flow acts as $F$ (source → target, `train_reverse_KL_F`): each step draws a `BATCH_SIZE` subset of the fixed set and freshens it with Langevin steps at the source. The forward KL flow acts as $G$ (target → source, `train_forward_KL_G`): each step manufactures its target batch by single-level SMC through the *current* flow — inverse pushforward, self-normalized reweighting, multinomial resampling, and Langevin rejuvenation at the target. The loss is differentiated only in its native $G$ direction; the detached SMC data-generation path performs the inverse push. The final ESS is computed on the full fixed source set through the flow importance weights.
 
 ### Results
 
@@ -21,18 +21,18 @@ Both trainers regenerate their batch inside every Adam step. The reverse KL flow
 
 | objective  | final ESS ($N = 40000$) | batch ESS along training |
 | :--------: | :---------------------: | :----------------------: |
-| reverse KL |         0.9425          |   0.19 -> 0.83 -> 0.94   |
-| forward KL |         0.9469          |   0.18 -> 0.92 -> 0.94   |
+| reverse KL |         0.9081          |   0.19 -> 0.82 -> 0.92   |
+| forward KL |         0.9427          |   0.19 -> 0.93 -> 0.94   |
 
 </div>
 
 <p align="center"><img src="2D_single.png" alt="2D single-stage training" width="1000px"></p>
 
-The left panel shows the per-step proposal-to-target batch-ESS histories returned by the trainers (x-axis exactly $[0, 200]$). For forward KL this is measured on the current proposal immediately before AIS correction, matching the final importance-weight convention. The middle and right panels show the `VALID_SZIE` pushforward samples of each method (blue: $y = F(x)$; red: $y = G^{-1}(x)$) over the target energy background, with 5000 source samples in gray for context.
+The left panel shows the per-step proposal-to-target batch-ESS histories returned by the trainers (x-axis exactly $[0, 200]$). For forward KL this is measured on the current proposal immediately before the SMC correction, matching the final importance-weight convention. The middle and right panels show the `VALID_SIZE` pushforward samples of each method (blue: $y = F(x)$; red: $y = G^{-1}(x)$) over the target energy background, with 5000 source samples in gray for context.
 
 ### Reading the result
 
-Both identity-initialized proposals begin with low overlap, near $0.19$. The AIS-fed forward loss then raises proposal ESS more rapidly and finishes higher, while both flows populate all three modes. On a harder target — farther modes, or modes the initial proposal never reaches — the reverse objective can collapse entirely, and the forward objective inherits whatever the AIS chain covers; that regime (and the regularization that addresses it) is the subject of the X-regularization line of work these conventions come from.
+Both identity-initialized proposals begin with low overlap, near $0.19$. The SMC-fed forward loss then raises proposal ESS more rapidly and finishes higher, while both flows populate all three modes. On a harder target — farther modes, or modes the initial proposal never reaches — the reverse objective can collapse entirely, and the forward objective inherits whatever the SMC chain covers; that regime (and the regularization that addresses it) is the subject of the X-regularization line of work these conventions come from.
 
 Two practical notes. First, each packed 200-step training compiles in a few seconds, and the complete script remains a seconds-scale example on a modern CUDA GPU. Second, the trainers are deterministic within a process (fixed internal seed — two identical calls agree bit for bit), while across separate launches XLA kernel autotuning can introduce last-ulp differences that 200 training steps amplify. The representative values above are therefore a current verified run, not bit-level cross-launch targets.
 
@@ -46,7 +46,7 @@ Run by [`3D_periodic.py`](3D_periodic.py): its purpose is to show that the **NCS
 - **Target** $\mu_1 \propto e^{-U_1}$: the von Mises ridge mixture on the 3-torus,
   $U_1(x) = -\log[\, e^{\kappa\cos(x_1 - x_2)} + e^{\kappa\cos(x_2 - x_3)} + e^{\kappa\cos(x_3 - x_1)} \,]$, $\kappa = 4$ — three pairwise ridges that wrap around the torus.
 - **Flow**: NCSF on $[-\pi, \pi]^3$, 8 bins, 4 autoregressive transforms, $(128, 128)$ conditioners, identity-initialised.
-- **Training**: one packed call per objective — `VALID_SZIE = 40000` fixed source set, `BATCH_SZIE = 2000` per Adam step, `TRAIN_STEPS = 200`, `LR = 1e-3` — followed by the reweighting pipeline: importance weights → ESS → multinomial resampling → MALA rejuvenation at the target (`1e-3 × 100`).
+- **Training**: one packed call per objective — `VALID_SIZE = 40000` fixed source set, `BATCH_SIZE = 2000` per Adam step, `STEPS_TOTAL = 200`, `LR = 1e-3` — followed by the reweighting pipeline: importance weights → ESS → multinomial resampling → MALA rejuvenation at the target (`MC_DT = 1e-3`, `MC_STEPS_2 = 100`).
 
 ### Results
 
@@ -54,8 +54,8 @@ Run by [`3D_periodic.py`](3D_periodic.py): its purpose is to show that the **NCS
 
 | objective  | final ESS ($N = 40000$) |
 | :--------: | :---------------------: |
-| reverse KL |         0.8980          |
-| forward KL |         0.9046          |
+| reverse KL |         0.8973          |
+| forward KL |         0.9003          |
 
 </div>
 
@@ -74,23 +74,24 @@ The 4D two-charge target, sampled by [`4D_boltzmann.py`](4D_boltzmann.py) with b
   $U_1(x) = a\,[(\lVert x_1\rVert^2 - r_0^2)^2 + (\lVert x_2\rVert^2 - r_0^2)^2] + q^2 / \sqrt{\lVert x_1 - x_2\rVert^2 + \varepsilon^2}$
   with $r_0 = 2$, $a = 1$, $q^2 = 4$, $\varepsilon = 10^{-3}$ (identical to the original).
 - **Flow**: NSF on $[-3, 3]^4$, 8 bins, 6 autoregressive transforms, $(64, 64)$ conditioners, identity-initialised.
-- **Boltzmann generators**: the stage flows are connected step by step — stage $k$ selects $t_k$ through the SMC gate (`tau_smc`, `LADDER = 1` level, on the exact full validation population), trains an identity-initialized incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$ on the advancing particle set, accepts on the incremental importance-sampling ESS (`tau_ess`), and advances the set by reweight → resample → MALA at $U_{t_k}$ (`mc_adjust = True`; the Metropolis gate keeps the near-singular Coulomb tail out of the particle set). The reverse KL stages train on Langevin-freshened batches of the set; the forward KL stages train on target batches manufactured per Adam step by AIS through the current flow (SMC gate and AIS share `LADDER`). Parameters: `VALID_SZIE = 120000`, `BATCH_SZIE = 2000`, `TRAIN_STEPS = 500`, `LR = 1e-4`, MALA `1e-3 × 100`; stage-schedule controls `t_safe = 0.2`, `shrink_factor = 0.7`, `enlarge_factor = 1.5`, `tau_smc = 0.2`, `tau_ess = 0.6`.
+- **Boltzmann generators**: the stage flows are connected step by step — stage $k$ proposes $t_k$ by the safe start or the enlarge-factor extrapolation, trains an identity-initialized incremental map $\mu_{t_{k-1}} \to \mu_{t_k}$ on the advancing particle set, accepts on the validation ESS of the better of the trained map and the identity (`tau_valid`), shrinks $t_k$ otherwise, and advances the set by reweight → resample → MALA at $U_{t_k}$ (`mc_adjust = True`; the Metropolis gate keeps the near-singular Coulomb tail out of the particle set). The reverse KL stages train on Langevin-freshened batches of the set; the forward KL stages train on target batches manufactured per Adam step by SMC through the current flow (`LADDER` levels). Parameters: `VALID_SIZE = 120000`, `BATCH_SIZE = 2000`, `STEPS_TOTAL = 500`, `LR = 1e-4`, MALA `MC_DT = 1e-3`, `MC_STEPS_1 = MC_STEPS_2 = 100`; stage-schedule controls `t_safe = 0.2`, `shrink_factor = 0.7`, `enlarge_factor = 1.5`, `tau_valid = 0.6`.
 
 ### Results
 
 The verified rerun completed both adaptive stage schedules. Reverse KL accepted five
 stages, $t=[0.098, 0.245, 0.4655, 0.7963, 1.0]$, with incremental ESS
-$[0.794, 0.933, 0.949, 0.970, 0.990]$. Forward KL accepted four stages,
+$[0.780, 0.931, 0.947, 0.969, 0.991]$. Forward KL accepted four stages,
 $t=[0.2, 0.5, 0.95, 1.0]$, with ESS
-$[0.764, 0.901, 0.959, 0.998]$. The first reverse stage reached $t=0.098$
-after the expected rejected candidates $0.2$ and $0.14$ under
-`shrink_factor = 0.7`; the table reports accepted stages only. Exact ESS values
+$[0.763, 0.902, 0.960, 0.997]$. The first reverse stage reached $t=0.098$
+after the rejected candidates $0.2$ and $0.14$ under `shrink_factor = 0.7`,
+each rejected by the validation ESS gate `tau_valid`; the table reports
+accepted stages only. Exact ESS values
 can move slightly with accelerator kernels, and the script refuses to produce
 a target-labelled figure if either stage schedule is incomplete.
 
 The accepted ESS is per stage the better of the trained flow and the identity
-map (pure SMC reweighting): after training, each stage keeps whichever has the
-higher incremental ESS, so a stage is never worse than SMC.
+map (pure importance reweighting): after training, each stage keeps whichever
+has the higher validation ESS, so a stage is never worse than the identity.
 
 <p align="center"><img src="4D_boltzmann.png" alt="4D Boltzmann generator" width="1000px"></p>
 
@@ -110,7 +111,7 @@ CNF versus OTFlow on a fixed multi-modal target as the dimension grows, run by [
 - **Target** $\mu_1 \propto e^{-U_1}$: a factorized multi-well potential whose mode count stays fixed while $d$ is swept,
   $U_1(x) = \sum_{i < 3} \beta_{\mathrm w}\,((x_i / s)^2 - 1)^2 + \sum_{i \ge 3} \tfrac12 x_i^2$, with $s = 1.5$, $\beta_{\mathrm w} = 1.5$. The first three coordinates are symmetric double wells (minima at $\pm s$), giving $2^3 = 8$ modes; the remaining $d - 3$ coordinates are standard Gaussian and only raise the dimension. The barrier is deliberately shallow so mode-seeking reverse KL must cover all eight modes rather than collapse onto a subset.
 - **Flows**: `CNF` (FFJORD, free-form MLP velocity, exact $O(d)$ augmented-Jacobian trace) with `frequency = 4`; `OTFlow` (velocity $= -\nabla\Phi$ with a closed-form Hessian trace) with `hidden = 64`, `layer = 3`, `rank = min(10, d+1)`. Both integrate with the same fixed-step RK4 (`nt = 12`) and width-64 networks. CNF starts at the exact identity; OTFlow uses `near_identity()`, whose $10^{-6}$ PSD-factor seed is a numerical identity in float32 while keeping its full quadratic head trainable.
-- **Training**: one packed `train_reverse_KL_F` call per cell — plain reverse KL with no rejuvenation (`MC_STEPS = 0`), `VALID_SZIE = 40000` fixed source pool, `BATCH_SZIE = 512` per Adam step, `TRAIN_STEPS = 1000`, `LR = 2e-3`, `checkpoint = True` (the CNF exact-trace path). The final ESS is the proposal importance-sampling ESS on a held-out $N = 20000$ source set.
+- **Training**: one packed `train_reverse_KL_F` call per cell — plain reverse KL with no rejuvenation (`MC_STEPS_1 = 0`), `VALID_SIZE = 40000` fixed source pool, `BATCH_SIZE = 512` per Adam step, `STEPS_TOTAL = 1000`, `LR = 2e-3`, `checkpoint = True` (the CNF exact-trace path). The final ESS is the proposal importance-sampling ESS on a held-out $N = 20000$ source set.
 
 ### Results
 

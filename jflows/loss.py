@@ -15,11 +15,12 @@ F: source -> target; G: target -> source):
                   as G (target -> source), so no `type` argument
     forward_X_G — the standalone X functional on samples of a weight
                   measure omega (the target for X_mu; the mixture
-                  alpha*hat_mu + beta*bar_nu for the mixture term),
+                  alpha*hat_mu + (1 - alpha)*bar_nu for the mixture term),
                   flow fixed as G
+    pairwise_variation — the exact batch estimate of the X functional from
+                  the per-sample log-ratios, by one sort (no random pairing)
 """
 
-import jax
 import jax.numpy as jnp
 from jax import Array
 
@@ -31,6 +32,7 @@ __all__ = [
     "forward_KL_G",
     "forward_KLX_G",
     "forward_X_G",
+    "pairwise_variation",
     "reverse_KL_F",
 ]
 
@@ -100,8 +102,30 @@ def forward_KL_G(
     return source(x) - ladj
 
 
+def pairwise_variation(z: Array) -> Array:
+    """
+    Per-sample contributions whose mean is the exact mean absolute difference
+    of `z` over all pairs i != j of the batch (the Gini mean difference):
+        mean_{i != j} |z_i - z_j| = 2 / (N (N - 1)) * sum_i (2 r_i - N - 1) z_i,
+    where r_i is the position of z_i in the ascending order of the batch. The
+    per-sample contribution is
+        2 (2 r_i - N - 1) / (N - 1) * z_i,
+    computed from one O(N log N) sort with no random pairing and no extra
+    energy evaluation; its mean is unbiased for E|z - z'| under the law the
+    batch was drawn from, and its gradient in z_i is the batch sign
+    correlation (1/(N - 1)) sum_{j != i} sgn(z_i - z_j).
+    Input:
+        z: Array [N]   per-sample log-ratios
+    Output:
+        v: Array [N]   contributions (reduce with .mean() for the variation)
+    """
+    n = z.shape[0]
+    position = jnp.argsort(jnp.argsort(z)).astype(z.dtype) + 1.0
+    return 2.0 * (2.0 * position - n - 1.0) / (n - 1.0) * z
+
+
 def forward_KLX_G(y: Array, source: Potential, target: Potential, flow: Flow,
-                  key: Array, coeff_lambda: float = 1.0,
+                  coeff_lambda: float = 1.0,
                   trace_key: Array | None = None) -> Array:
     """
     Forward KL regularised by the X functional, using target samples, with the
@@ -109,17 +133,16 @@ def forward_KLX_G(y: Array, source: Potential, target: Potential, flow: Flow,
     log-ratio z = log(mu/nu) as
         z = source(G(y)) - target(y) - log|det J_G(y)|,
     this returns the per-sample contributions
-        z + coeff_lambda * |z - z[perm]|
-    for a random permutation `perm` of the batch. Its mean is the forward KL
-    estimate mean(z) plus coeff_lambda times the X functional mean(|z - z[perm]|),
-    the mean absolute pairwise variation of z under the target, which penalises
-    the spread of the log-ratio that the plain forward KL leaves free.
+        z + coeff_lambda * pairwise_variation(z),
+    whose mean is the forward KL estimate mean(z) plus coeff_lambda times the
+    X functional mean_{i != j} |z_i - z_j|, the mean absolute pairwise
+    variation of z under the target, which penalises the spread of the
+    log-ratio that the plain forward KL leaves free.
     Input:
         y:            Array [N, d]   samples drawn from the target distribution
         source:       Potential      negative log-density of the source (up to const)
         target:       Potential      negative log-density of the target (up to const)
         flow:         Flow           the normalizing flow, applied as G (target -> source)
-        key:          Array          PRNG key seeding the batch permutation
         coeff_lambda: float          weight of the X functional term
         trace_key:    Array | None   optional Hutchinson key for an approximate CNF
     Output:
@@ -128,34 +151,32 @@ def forward_KLX_G(y: Array, source: Potential, target: Potential, flow: Flow,
     flow = _trace_flow(flow, trace_key)
     x, ladj = flow.call_and_ladj(y)      # x = G(y), log|det J_G(y)|
     z = source(x) - target(y) - ladj     # per-sample log-ratio  log(mu/nu)
-    perm = jax.random.permutation(key, y.shape[0])
-    return z + coeff_lambda * jnp.abs(z - z[perm])
+    return z + coeff_lambda * pairwise_variation(z)
 
 
 def forward_X_G(y: Array, source: Potential, target: Potential, flow: Flow,
-                key: Array, trace_key: Array | None = None) -> Array:
+                trace_key: Array | None = None) -> Array:
     """
     The standalone X functional X_omega, using samples of a weight measure
     omega, with the flow fixed as the inverse map G (target -> source).
     Writing the per-sample log-ratio z = log(mu/nu) as
         z = source(G(y)) - target(y) - log|det J_G(y)|,
     this returns the per-sample contributions
-        |z - z[perm]|
-    for a random permutation `perm` of the batch. Its mean is the X functional
-    X_omega = E_{y, y' ~ omega} |z(y) - z(y')|, the mean absolute pairwise
-    variation of z under omega — the X term of `forward_KLX_G` on its own, so
-    the weight is free to differ from the target: y ~ target gives the shape
-    term X_mu, and y drawn from the mixture alpha*hat_mu + beta*bar_nu —
-    hat_mu the quench and temper wide-coverage measure (mode discovery),
-    bar_nu the detached pushforward of source samples through G^{-1}
-    (leakage suppression) — gives the mixture term
-    X_{alpha hat_mu + beta bar_nu} of the total training loss.
+        pairwise_variation(z),
+    whose mean is the X functional X_omega = E_{y, y' ~ omega} |z(y) - z(y')|,
+    the mean absolute pairwise variation of z under omega — the X term of
+    `forward_KLX_G` on its own, so the weight is free to differ from the
+    target: y ~ target gives the shape term X_mu, and y drawn from the mixture
+    alpha*hat_mu + (1 - alpha)*bar_nu — hat_mu the quench and temper
+    wide-coverage measure (mode discovery), bar_nu the detached pushforward
+    of source samples through G^{-1} (leakage suppression) — gives the
+    mixture term X_{alpha hat_mu + (1 - alpha) bar_nu} of the total
+    training loss.
     Input:
         y:      Array [N, d]   samples drawn from the weight measure omega
         source: Potential      negative log-density of the source (up to const)
         target: Potential      negative log-density of the target (up to const)
         flow:   Flow           the normalizing flow, applied as G (target -> source)
-        key:    Array          PRNG key seeding the batch permutation
         trace_key: Array | None optional Hutchinson key for an approximate CNF
     Output:
         loss: Array [N]   per-sample losses (reduce with .mean() for the objective)
@@ -163,5 +184,4 @@ def forward_X_G(y: Array, source: Potential, target: Potential, flow: Flow,
     flow = _trace_flow(flow, trace_key)
     x, ladj = flow.call_and_ladj(y)      # x = G(y), log|det J_G(y)|
     z = source(x) - target(y) - ladj     # per-sample log-ratio  log(mu/nu)
-    perm = jax.random.permutation(key, y.shape[0])
-    return jnp.abs(z - z[perm])
+    return pairwise_variation(z)

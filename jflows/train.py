@@ -1,4 +1,19 @@
-"""Direct single-stage flow trainers."""
+"""Direct single-stage flow trainers.
+
+Every trainer runs ``steps_total`` Adam steps in one compiled scan and
+regenerates its batch inside every step. Two Langevin budgets: ``mc_steps_1``
+rejuvenates batch-sized sets (the reverse KL source batch, every level of the
+SMC target surrogate, and the quench-and-temper rows of the KLXX mixture
+batch); ``mc_steps_2`` is the temper of the whole quench-and-temper pool,
+which is built once before the scan. Inside the SMC target surrogate each
+intermediate level rejuvenates with one HMC trajectory of ``mc_steps_1``
+leapfrog steps of size ``mc_dt`` and the last level with ``mc_steps_1`` MALA
+steps of size ``mc_dt``.
+
+The X functional of KLX and KLXX is the exact batch Gini mean difference of
+the log-ratio, evaluated by one sort (``_variation``); there is no random
+pairing.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +25,7 @@ from jax import Array, lax
 from .flow import Flow
 from .loss import forward_KL_G, reverse_KL_F
 from .potential import Potential
-from .utils.anneal import annealed_importance_sampling
+from .utils.anneal import sequential_monte_carlo
 from .utils.metrics import compute_ESS_log, resample
 from .utils.quench import quench_and_temper
 from .utils.rejuvenation import langevin
@@ -32,9 +47,8 @@ def _training_identity(flow: Flow) -> Flow:
     return flow.zeros() if near_identity is None else near_identity()
 
 
-def _kept(target: Potential, samples: Array, u_clip: float) -> Array:
-    """Stop-gradient mask for finite samples below the potential screen."""
-    energy = target(samples)
+def _kept(energy: Array, u_clip: float) -> Array:
+    """Stop-gradient mask for finite target energies below the potential screen."""
     return lax.stop_gradient(jnp.isfinite(energy) & (energy <= u_clip))
 
 
@@ -45,12 +59,23 @@ def _masked_mean(values: Array, keep: Array) -> Array:
     return values.sum() / jnp.maximum(count, 1.0)
 
 
-def _masked_pair_mean(values: Array, keep: Array, permutation: Array) -> Array:
-    """Mean over permutation pairs whose two entries are retained."""
-    pair_keep = keep & keep[permutation]
-    count = pair_keep.astype(values.dtype).sum()
-    values = jnp.where(pair_keep, values, jnp.zeros_like(values))
-    return values.sum() / jnp.maximum(count, 1.0)
+def _variation(z: Array, keep: Array | None = None) -> Array:
+    """Exact mean of |z_i - z_j| over all pairs i != j (the Gini mean difference).
+
+    With z sorted ascending, sum_{i<j} (z_j - z_i) = sum_k (2 k - n - 1) z_(k), so
+    the unbiased pairwise mean is 2 / (n (n - 1)) times that sum: one sort, no
+    extra energy or flow evaluation, and no random pairing. Screened rows
+    (``keep`` false) are excluded; fewer than two retained rows give zero.
+    """
+    n = z.shape[0]
+    position = jnp.arange(1, n + 1, dtype=z.dtype)
+    if keep is None:
+        return 2.0 * jnp.sum((2.0 * position - n - 1.0) * jnp.sort(z)) / (n * (n - 1.0))
+    count = keep.astype(z.dtype).sum()
+    ordered = jnp.sort(jnp.where(keep, z, jnp.inf))            # retained rows first
+    coefficient = jnp.where(position <= count, 2.0 * position - count - 1.0, 0.0)
+    ordered = jnp.where(jnp.isfinite(ordered), ordered, 0.0)
+    return 2.0 * jnp.sum(coefficient * ordered) / jnp.maximum(count * (count - 1.0), 1.0)
 
 
 def _clip_global(grads, limit: float):
@@ -164,10 +189,10 @@ class Monitor:
             f"loss = {float(loss):+.4e}   ESS = {float(ess):.4f}"
         )
 
-    def report(self, step, loss, ess, train_steps, t_start, t_end) -> None:
-        """Emit the first, last, and configured intermediate steps."""
+    def report(self, step, loss, ess, steps_total, t_start, t_end) -> None:
+        """Emit every ``every``-th step and the last step."""
         lax.cond(
-            (step == 1) | (step == train_steps) | (step % self.every == 0),
+            (step == steps_total) | (step % self.every == 0),
             lambda: jax.debug.callback(
                 self._emit, step, loss, ess, t_start, t_end, ordered=True
             ),
@@ -182,10 +207,10 @@ def train_reverse_KL_F(
     target,
     flow,
     batch_size,
-    train_steps,
+    steps_total,
     lr,
     mc_dt,
-    mc_steps,
+    mc_steps_1,
     mc_adjust=True,
     monitor=None,
     seed=0,
@@ -216,7 +241,7 @@ def train_reverse_KL_F(
             jax.random.choice(key_index, count, (batch_size,), replace=False)
         ]
         x = langevin(
-            key_mc, x, source, dt=mc_dt, steps=mc_steps, adjust=mc_adjust
+            key_mc, x, source, dt=mc_dt, steps=mc_steps_1, adjust=mc_adjust
         )
 
         def loss_fn(values):
@@ -231,13 +256,13 @@ def train_reverse_KL_F(
         )(params)
         ess = compute_ESS_log(source(x) - losses)
         if monitor is not None:
-            monitor.report(step, loss, ess, train_steps, t_start, t_end)
+            monitor.report(step, loss, ess, steps_total, t_start, t_end)
         state = _adam_step(
             params, first, second, grads, loss, updates, lr, float("inf")
         )
         return state, ess
 
-    steps = jnp.arange(1, train_steps + 1)
+    steps = jnp.arange(1, steps_total + 1)
     (params, _, _, _), ess_history = lax.scan(
         step_fn, (params, first, second, updates), steps
     )
@@ -251,11 +276,11 @@ def train_forward_KL_G(
     target,
     flow,
     batch_size,
-    train_steps,
+    steps_total,
     lr,
     ladder,
     mc_dt,
-    mc_steps,
+    mc_steps_1,
     mc_adjust=True,
     monitor=None,
     seed=0,
@@ -282,14 +307,14 @@ def train_forward_KL_G(
     def step_fn(state, step):
         params, first, second, updates = state
         step_key = jax.random.fold_in(key, step)
-        key_index, key_ais = jax.random.split(step_key)
+        key_index, key_smc = jax.random.split(step_key)
         trace_key = jax.random.fold_in(step_key, 101)
-        ais_trace_key = jax.random.fold_in(step_key, 102)
+        smc_trace_key = jax.random.fold_in(step_key, 102)
         x = x_valid[
             jax.random.choice(key_index, count, (batch_size,), replace=False)
         ]
-        y, proposal_log_weight = annealed_importance_sampling(
-            key_ais,
+        y, _, proposal_log_weight = sequential_monte_carlo(
+            key_smc,
             x,
             source,
             target,
@@ -297,12 +322,11 @@ def train_forward_KL_G(
             "G",
             ladder=ladder,
             mc_dt=mc_dt,
-            mc_steps=mc_steps,
+            mc_steps=mc_steps_1,
             adjust=mc_adjust,
-            trace_key=ais_trace_key,
-            return_initial_log_weights=True,
+            trace_key=smc_trace_key,
         )
-        keep = _kept(target, y, u_clip) if u_clip != float("inf") else None
+        keep = _kept(target(y), u_clip) if u_clip != float("inf") else None
 
         def loss_fn(values):
             losses = forward_KL_G(
@@ -317,13 +341,13 @@ def train_forward_KL_G(
         (loss, _), grads = jax.value_and_grad(evaluated, has_aux=True)(params)
         ess = compute_ESS_log(proposal_log_weight)
         if monitor is not None:
-            monitor.report(step, loss, ess, train_steps, t_start, t_end)
+            monitor.report(step, loss, ess, steps_total, t_start, t_end)
         state = _adam_step(
             params, first, second, grads, loss, updates, lr, g_clip
         )
         return state, ess
 
-    steps = jnp.arange(1, train_steps + 1)
+    steps = jnp.arange(1, steps_total + 1)
     (params, _, _, _), ess_history = lax.scan(
         step_fn, (params, first, second, updates), steps
     )
@@ -337,11 +361,11 @@ def train_forward_KLX_G(
     target,
     flow,
     batch_size,
-    train_steps,
+    steps_total,
     lr,
     ladder,
     mc_dt,
-    mc_steps,
+    mc_steps_1,
     coeff_lambda=1.0,
     mc_adjust=True,
     monitor=None,
@@ -369,14 +393,14 @@ def train_forward_KLX_G(
     def step_fn(state, step):
         params, first, second, updates = state
         step_key = jax.random.fold_in(key, step)
-        key_index, key_ais, key_permutation = jax.random.split(step_key, 3)
+        key_index, key_smc = jax.random.split(step_key)
         trace_key = jax.random.fold_in(step_key, 101)
-        ais_trace_key = jax.random.fold_in(step_key, 102)
+        smc_trace_key = jax.random.fold_in(step_key, 102)
         x = x_valid[
             jax.random.choice(key_index, count, (batch_size,), replace=False)
         ]
-        y, proposal_log_weight = annealed_importance_sampling(
-            key_ais,
+        y, _, proposal_log_weight = sequential_monte_carlo(
+            key_smc,
             x,
             source,
             target,
@@ -384,39 +408,33 @@ def train_forward_KLX_G(
             "G",
             ladder=ladder,
             mc_dt=mc_dt,
-            mc_steps=mc_steps,
+            mc_steps=mc_steps_1,
             adjust=mc_adjust,
-            trace_key=ais_trace_key,
-            return_initial_log_weights=True,
+            trace_key=smc_trace_key,
         )
-        permutation = jax.random.permutation(key_permutation, batch_size)
-        keep = _kept(target, y, u_clip) if u_clip != float("inf") else None
+        energy = target(y)
+        keep = _kept(energy, u_clip) if u_clip != float("inf") else None
 
         def loss_fn(values):
             z = forward_KL_G(
                 y, source, eqx.combine(values, static), trace_key=trace_key
-            ) - target(y)
-            difference = jnp.abs(z - z[permutation])
+            ) - energy
             if keep is None:
-                return (z + coeff_lambda * difference).mean(), z
+                return z.mean() + coeff_lambda * _variation(z), z
             valid = keep & lax.stop_gradient(jnp.isfinite(z))
-            z_safe = jnp.where(valid, z, jnp.zeros_like(z))
-            loss = _masked_mean(z, valid) + coeff_lambda * _masked_pair_mean(
-                jnp.abs(z_safe - z_safe[permutation]), valid, permutation
-            )
-            return loss, z
+            return _masked_mean(z, valid) + coeff_lambda * _variation(z, valid), z
 
         evaluated = jax.checkpoint(loss_fn) if checkpoint else loss_fn
         (loss, _), grads = jax.value_and_grad(evaluated, has_aux=True)(params)
         ess = compute_ESS_log(proposal_log_weight)
         if monitor is not None:
-            monitor.report(step, loss, ess, train_steps, t_start, t_end)
+            monitor.report(step, loss, ess, steps_total, t_start, t_end)
         state = _adam_step(
             params, first, second, grads, loss, updates, lr, g_clip
         )
         return state, ess
 
-    steps = jnp.arange(1, train_steps + 1)
+    steps = jnp.arange(1, steps_total + 1)
     (params, _, _, _), ess_history = lax.scan(
         step_fn, (params, first, second, updates), steps
     )
@@ -430,17 +448,19 @@ def train_forward_KLXX_G(
     flow,
     pool_size,
     batch_size,
-    train_steps,
+    steps_total,
     lr,
     ladder,
     melt,
     opt_dt,
     opt_steps,
     mc_dt,
-    mc_steps,
+    mc_steps_1,
+    mc_steps_2,
     coeff_lambda=1.0,
+    coeff_theta=1.0,
     coeff_alpha=0.5,
-    coeff_beta=0.5,
+    coeff_qt=0.0,
     mc_adjust=True,
     monitor=None,
     seed=0,
@@ -453,7 +473,17 @@ def train_forward_KLXX_G(
     t_start=0.0,
     t_end=1.0,
 ):
-    """Train one KLXX G map and return flow plus batch ESS history."""
+    """Train one KLXX G map and return flow plus batch ESS history.
+
+    The loss is the forward KL plus ``coeff_lambda`` times the variation of
+    the log-ratio over the target batch plus ``coeff_theta`` times its
+    variation over the mixture batch, drawn with proportion ``coeff_alpha``
+    from the rejuvenated quench-and-temper pool and ``1 - coeff_alpha`` from
+    the detached pushforward of the source batch. ``coeff_qt > 0`` resamples
+    the pool by the partial importance weights exp(coeff_qt * (U_0 - U))
+    and rejuvenates it before the quench and temper (see
+    ``quench_and_temper``).
+    """
     x_valid = jnp.asarray(x_valid)
     if initialize_from_identity:
         flow = _training_identity(flow)
@@ -475,9 +505,11 @@ def train_forward_KLXX_G(
         opt_dt,
         opt_steps,
         mc_dt,
-        mc_steps,
+        mc_steps_2,
         mc_adjust,
         chunks=chunks,
+        source=source,
+        coeff_qt=coeff_qt,
     )
     count = x_valid.shape[0]
     pool_count = hat_pool.shape[0]
@@ -487,7 +519,7 @@ def train_forward_KLXX_G(
     updates = jnp.asarray(0, dtype=jnp.int32)
     mixture_weights = jnp.concatenate([
         jnp.full(batch_size, coeff_alpha),
-        jnp.full(batch_size, coeff_beta),
+        jnp.full(batch_size, 1.0 - coeff_alpha),
     ])
 
     def step_fn(state, step):
@@ -495,22 +527,23 @@ def train_forward_KLXX_G(
         step_key = jax.random.fold_in(key, step)
         (
             key_index,
-            key_ais,
-            key_permutation,
+            key_smc,
             key_hat,
             key_hat_mc,
             key_mixture,
-            key_mixture_permutation,
-        ) = jax.random.split(step_key, 7)
+        ) = jax.random.split(step_key, 5)
         trace_key = jax.random.fold_in(step_key, 101)
         mixture_trace_key = jax.random.fold_in(step_key, 102)
-        ais_trace_key = jax.random.fold_in(step_key, 103)
+        smc_trace_key = jax.random.fold_in(step_key, 103)
         flow_now = eqx.combine(params, static)
         x = x_valid[
             jax.random.choice(key_index, count, (batch_size,), replace=False)
         ]
-        y, proposal_log_weight = annealed_importance_sampling(
-            key_ais,
+        # y_bar is the SMC proposal itself: the pushforward of the source
+        # batch through the current G^{-1}, detached (computed outside the
+        # differentiated loss), so no second inverse pass is needed.
+        y, y_bar, proposal_log_weight = sequential_monte_carlo(
+            key_smc,
             x,
             source,
             target,
@@ -518,12 +551,10 @@ def train_forward_KLXX_G(
             "G",
             ladder=ladder,
             mc_dt=mc_dt,
-            mc_steps=mc_steps,
+            mc_steps=mc_steps_1,
             adjust=mc_adjust,
-            trace_key=ais_trace_key,
-            return_initial_log_weights=True,
+            trace_key=smc_trace_key,
         )
-        permutation = jax.random.permutation(key_permutation, batch_size)
         y_hat = hat_pool[
             jax.random.randint(key_hat, (batch_size,), 0, pool_count)
         ]
@@ -532,62 +563,47 @@ def train_forward_KLXX_G(
             y_hat,
             target,
             dt=mc_dt,
-            steps=mc_steps,
+            steps=mc_steps_1,
             adjust=mc_adjust,
         )
-        y_bar = flow_now.inv(x)
         y_mixture = resample(
             key_mixture,
             jnp.concatenate([y_hat, y_bar]),
             mixture_weights,
             N=batch_size,
         )
-        mixture_permutation = jax.random.permutation(
-            key_mixture_permutation, batch_size
-        )
+        energy = target(y)
+        energy_mixture = target(y_mixture)
         screen = u_clip != float("inf")
-        keep = _kept(target, y, u_clip) if screen else None
-        keep_mixture = _kept(target, y_mixture, u_clip) if screen else None
+        keep = _kept(energy, u_clip) if screen else None
+        keep_mixture = _kept(energy_mixture, u_clip) if screen else None
 
         def loss_fn(values):
             current = eqx.combine(values, static)
             z = forward_KL_G(
                 y, source, current, trace_key=trace_key
-            ) - target(y)
+            ) - energy
             z_mixture = forward_KL_G(
                 y_mixture,
                 source,
                 current,
                 trace_key=mixture_trace_key,
-            ) - target(y_mixture)
-            mixture_scale = (coeff_alpha + coeff_beta) ** 2
+            ) - energy_mixture
             if keep is None:
                 loss = (
-                    z + coeff_lambda * jnp.abs(z - z[permutation])
-                ).mean() + mixture_scale * jnp.abs(
-                    z_mixture - z_mixture[mixture_permutation]
-                ).mean()
+                    z.mean()
+                    + coeff_lambda * _variation(z)
+                    + coeff_theta * _variation(z_mixture)
+                )
                 return loss, z
             valid = keep & lax.stop_gradient(jnp.isfinite(z))
             valid_mixture = keep_mixture & lax.stop_gradient(
                 jnp.isfinite(z_mixture)
             )
-            z_safe = jnp.where(valid, z, jnp.zeros_like(z))
-            mixture_safe = jnp.where(
-                valid_mixture, z_mixture, jnp.zeros_like(z_mixture)
-            )
             loss = (
                 _masked_mean(z, valid)
-                + coeff_lambda * _masked_pair_mean(
-                    jnp.abs(z_safe - z_safe[permutation]), valid, permutation
-                )
-                + mixture_scale * _masked_pair_mean(
-                    jnp.abs(
-                        mixture_safe - mixture_safe[mixture_permutation]
-                    ),
-                    valid_mixture,
-                    mixture_permutation,
-                )
+                + coeff_lambda * _variation(z, valid)
+                + coeff_theta * _variation(z_mixture, valid_mixture)
             )
             return loss, z
 
@@ -595,13 +611,13 @@ def train_forward_KLXX_G(
         (loss, _), grads = jax.value_and_grad(evaluated, has_aux=True)(params)
         ess = compute_ESS_log(proposal_log_weight)
         if monitor is not None:
-            monitor.report(step, loss, ess, train_steps, t_start, t_end)
+            monitor.report(step, loss, ess, steps_total, t_start, t_end)
         state = _adam_step(
             params, first, second, grads, loss, updates, lr, g_clip
         )
         return state, ess
 
-    steps = jnp.arange(1, train_steps + 1)
+    steps = jnp.arange(1, steps_total + 1)
     (params, _, _, _), ess_history = lax.scan(
         step_fn, (params, first, second, updates), steps
     )

@@ -53,9 +53,10 @@ from jflows.boltzmann import (
 functions share one adaptive-staging controller. They differ in the
 medium-level trainer dispatched inside each stage: the direction in which the
 flow is parameterized, how the optimizer obtains its training samples, and
-which loss is differentiated. The stage-point proposal, optional SMC gate,
-  trained-versus-identity comparison over the complete validation set, ESS acceptance gate,
-and accepted-particle advancement are otherwise the same.
+which loss is differentiated. The stage-point proposal, the
+trained-versus-identity comparison over the complete validation set, the
+validation ESS gate `tau_valid`, and the accepted-particle advancement
+(reweight, resample, `mc_steps_2` Langevin steps) are otherwise the same.
 
 ### Background: why four generators?
 
@@ -87,9 +88,8 @@ boltzmann_identity(
     x_valid,
     source,
     target,
-    ladder,
     mc_dt,
-    mc_steps,
+    mc_steps_2,
     *,
     mc_adjust=True,
     monitor=None,
@@ -102,22 +102,22 @@ boltzmann_identity(
 This function runs the same adaptive stage policy without constructing or
 training a flow. For each candidate `a -> b`, it:
 
-1. optionally applies the SMC endpoint gate controlled by `tau_smc`;
-2. evaluates exact identity log weights `U_a(x)-U_b(x)` on all `x_valid`;
-3. requires their ESS to reach `tau_ess`, shrinking `b-a` on rejection;
-4. resamples the complete population; and
-5. applies Langevin at `U_b`, using MALA when `mc_adjust=True`.
+1. evaluates exact identity log weights `U_a(x)-U_b(x)` on all `x_valid`;
+2. requires their ESS to reach `tau_valid`, shrinking `b-a` on rejection;
+3. resamples the complete population; and
+4. applies `mc_steps_2` Langevin steps at `U_b`, using MALA when
+   `mc_adjust=True`.
 
 It returns `(samples, stages)`. Its signature deliberately omits `flow`,
-`batch_size`, `train_steps`, `lr`, optimizer controls, and initialization
-controls. `chunks` is used for SMC, complete-set identity weights, and
+`batch_size`, `steps_total`, `lr`, optimizer controls, and initialization
+controls. `chunks` is used for the complete-set identity weights and the
 rejuvenation. This makes `boltzmann_identity` the direct adaptive-staging
 reweight/resample/MCMC baseline rather than a flow generator configured with
 zero training steps.
 
 Identity records contain `t`, `t_start`, `valid_selected_ess`,
 `valid_identity_ess`, `valid_sample_count`, `selected="identity"`, `t_hist`,
-`valid_identity_ess_hist`, `attempt_status_hist`, `selection_history`, and
+`valid_identity_ess_hist`, `attempt_status_hist`, and
 `elapsed_seconds`. They contain no trained ESS, batch history, flow, or
 continuation flow.
 
@@ -175,10 +175,10 @@ map between `mu_a` and `mu_b`.
 <tr><th>Generator</th><th>Native flow</th><th>Optimizer population</th><th>Differentiated objective</th><th>Distinct controls</th></tr>
 </thead>
 <tbody>
-<tr><td><code>boltzmann_reverse_KL_F</code></td><td><code>F: mu_a -&gt; mu_b</code></td><td>current <code>mu_a</code> particles, source-freshened by Langevin</td><td>reverse KL</td><td>no objective regularizer; <code>ladder</code> only serves the optional SMC endpoint gate</td></tr>
-<tr><td><code>boltzmann_forward_KL_G</code></td><td><code>G: mu_b -&gt; mu_a</code></td><td>approximate <code>mu_b</code> batches manufactured by flow-proposal AIS</td><td>forward KL</td><td><code>ladder</code>, <code>u_clip</code>, <code>g_clip</code></td></tr>
-<tr><td><code>boltzmann_forward_KLX_G</code></td><td><code>G: mu_b -&gt; mu_a</code></td><td>the same AIS-manufactured target batches</td><td>forward KL plus target-measure X variation</td><td><code>coeff_lambda</code> plus the forward KL controls</td></tr>
-<tr><td><code>boltzmann_forward_KLXX_G</code></td><td><code>G: mu_b -&gt; mu_a</code></td><td>AIS target batches plus a QT/proposal mixture</td><td>KLX plus a second mixture-measure X variation</td><td><code>pool_size</code>, <code>melt</code>, <code>opt_dt</code>, <code>opt_steps</code>, <code>coeff_alpha</code>, <code>coeff_beta</code>, <code>chunks</code></td></tr>
+<tr><td><code>boltzmann_reverse_KL_F</code></td><td><code>F: mu_a -&gt; mu_b</code></td><td>current <code>mu_a</code> particles, source-freshened by Langevin</td><td>reverse KL</td><td>no objective regularizer and no <code>ladder</code></td></tr>
+<tr><td><code>boltzmann_forward_KL_G</code></td><td><code>G: mu_b -&gt; mu_a</code></td><td>approximate <code>mu_b</code> batches manufactured by flow-proposal SMC</td><td>forward KL</td><td><code>ladder</code>, <code>u_clip</code>, <code>g_clip</code></td></tr>
+<tr><td><code>boltzmann_forward_KLX_G</code></td><td><code>G: mu_b -&gt; mu_a</code></td><td>the same SMC-manufactured target batches</td><td>forward KL plus target-measure X variation</td><td><code>coeff_lambda</code> plus the forward KL controls</td></tr>
+<tr><td><code>boltzmann_forward_KLXX_G</code></td><td><code>G: mu_b -&gt; mu_a</code></td><td>SMC target batches plus a QT/proposal mixture</td><td>KLX plus a second mixture-measure X variation</td><td><code>pool_size</code>, <code>melt</code>, <code>opt_dt</code>, <code>opt_steps</code>, <code>mc_steps_2</code>, <code>coeff_theta</code>, <code>coeff_alpha</code>, <code>coeff_qt</code>, <code>chunks</code></td></tr>
 </tbody>
 </table>
 
@@ -191,7 +191,7 @@ reverse KL
   = source-sampled F training
 
 forward KL
-  = AIS-manufactured target-sampled G training
+  = SMC-manufactured target-sampled G training
 
 KLX
   = forward KL + density-ratio variation on the target measure
@@ -243,8 +243,8 @@ and rejuvenation occur only after the trained-or-identity map is selected.
 ```python
 boltzmann_reverse_KL_F(
     x_valid, source, target, flow,
-    batch_size, train_steps, lr,
-    ladder, mc_dt, mc_steps,
+    batch_size, steps_total, lr,
+    mc_dt, mc_steps_1, mc_steps_2,
     *,
     initialize_from_identity=True,
     mc_adjust=True,
@@ -263,7 +263,7 @@ L_reverse(F) = mean[U_b(F(x)) - log|det J_F(x)|].
 ```
 
 Each optimizer step samples rows from the current validation population and
-freshens them with Langevin targeting `U_a`. It never needs manufactured
+freshens them with `mc_steps_1` Langevin steps targeting `U_a`. It never needs manufactured
 target samples and differentiates the flow only in its native forward
 direction. The selected stage flow maps `mu_a` toward `mu_b`, so stage
 advancement applies `flow(x)`.
@@ -273,19 +273,13 @@ mode-seeking baseline. That qualitative tendency is not an acceptance rule:
 the outer controller still measures ESS over the complete validation set and can select
 identity or reject the proposed endpoint.
 
-The adaptive-staging reverse signature contains `ladder`, but
-`train_reverse_KL_F` itself has no ladder argument. Here `ladder` is used only
-when `bg_param["tau_smc"] > 0` asks the outer controller to evaluate a proposed
-endpoint with potential-space SMC. With the default `tau_smc=0`, reverse
-training does not use `ladder`.
-
 ### Forward KL
 
 ```python
 boltzmann_forward_KL_G(
     x_valid, source, target, flow,
-    batch_size, train_steps, lr,
-    ladder, mc_dt, mc_steps,
+    batch_size, steps_total, lr,
+    ladder, mc_dt, mc_steps_1, mc_steps_2,
     *,
     initialize_from_identity=True,
     mc_adjust=True,
@@ -303,9 +297,10 @@ The forward trainer represents the inverse map `G: mu_b -> mu_a`. It cannot
 draw exact `mu_b` batches directly, so every Adam step:
 
 1. samples source-side particles from the current validation population;
-2. applies flow-proposal AIS through the current G flow;
-3. reweights, resamples, and target-rejuvenates to manufacture an approximate
-   `mu_b` batch `y`; and
+2. applies flow-proposal SMC through the current G flow;
+3. reweights, resamples, and target-rejuvenates (one HMC trajectory of
+   `mc_steps_1` leapfrog steps on each intermediate level, `mc_steps_1` MALA
+   steps on the last) to manufacture an approximate `mu_b` batch `y`; and
 4. minimizes
 
 ```text
@@ -313,11 +308,11 @@ L_forward(G) = mean[U_a(G(y)) - log|det J_G(y)|].
 ```
 
 The omitted `-U_b(y)` term is constant with respect to the flow parameters for
-the fixed manufactured batch. `ladder` controls the number of AIS levels used
-inside every optimizer step. The AIS routine deliberately rejuvenates at
-`U_b` at each level, so it is the package's biased flow-proposal surrogate
-rather than classical exact AIS. It avoids differentiating a flow-proposal
-density, but target rejuvenation still evaluates `U_b.grad`.
+the fixed manufactured batch. `ladder` controls the number of SMC levels used
+inside every optimizer step. The SMC routine rejuvenates at `U_b` at each
+level, so it is the package's biased flow-proposal surrogate rather than an
+exact SMC sampler on the geometric path. It avoids differentiating a
+flow-proposal density, but target rejuvenation still evaluates `U_b.grad`.
 
 This objective is normally chosen when mass coverage is more important than a
 pure reverse-KL baseline. It costs more per optimizer step because target-batch
@@ -332,8 +327,8 @@ therefore its validation ESS and the selected outcome.
 ```python
 boltzmann_forward_KLX_G(
     x_valid, source, target, flow,
-    batch_size, train_steps, lr,
-    ladder, mc_dt, mc_steps,
+    batch_size, steps_total, lr,
+    ladder, mc_dt, mc_steps_1, mc_steps_2,
     *,
     initialize_from_identity=True,
     coeff_lambda=1.0,
@@ -348,7 +343,7 @@ boltzmann_forward_KLX_G(
 )
 ```
 
-KLX uses the same AIS-manufactured `mu_b` batches and the same G direction as
+KLX uses the same SMC-manufactured `mu_b` batches and the same G direction as
 forward KL. It defines the stage log-density-ratio coordinate
 
 ```text
@@ -360,33 +355,35 @@ and minimizes
 ```text
 L_KLX(G)
   = mean[z(y)]
-  + coeff_lambda * mean[|z(y) - z(y_perm)|],
+  + coeff_lambda * mean_{i != j}[|z(y_i) - z(y_j)|],
 ```
 
-where `y_perm` is a random permutation of the current batch. The first term
-has the forward KL gradient. The X term penalizes variation of the log density
-ratio across target-measure samples: a proposal with a more nearly constant
-ratio has more uniform importance weights.
+where the second term is the exact mean over all pairs of the current batch,
+evaluated by one sort (`pairwise_variation`). The first term has the forward
+KL gradient. The X term penalizes variation of the log density ratio across
+target-measure samples: a proposal with a more nearly constant ratio has more
+uniform importance weights.
 
 `coeff_lambda` controls only this target-measure X term. KLX adds little array
-storage compared with forward KL, but its per-step loss includes a random
-permutation and paired ratio differences. It is intended to improve weight
-uniformity; it does not mathematically guarantee that every finite run will
-have higher validation ESS than forward KL.
+storage compared with forward KL, but its per-step loss includes one sort of
+the batch log-ratios. It is intended to improve weight uniformity; it does
+not mathematically guarantee that every finite run will have higher
+validation ESS than forward KL.
 
 ### KLXX
 
 ```python
 boltzmann_forward_KLXX_G(
     x_valid, source, target, flow,
-    pool_size, batch_size, train_steps,
+    pool_size, batch_size, steps_total,
     lr, ladder, melt, opt_dt, opt_steps,
-    mc_dt, mc_steps,
+    mc_dt, mc_steps_1, mc_steps_2,
     *,
     initialize_from_identity=True,
     coeff_lambda=1.0,
+    coeff_theta=1.0,
     coeff_alpha=0.5,
-    coeff_beta=0.5,
+    coeff_qt=0.0,
     mc_adjust=True,
     monitor=None,
     bg_param=None,
@@ -405,39 +402,37 @@ pool `hat_mu` for `U_b`:
 
 ```text
 current stage population
+  -> (coeff_qt > 0) resample by exp(coeff_qt * (U_a - U_b)),
+     then mc_steps_2 Langevin steps at (1 - coeff_qt) U_a + coeff_qt U_b
   -> Gaussian melt
   -> L-BFGS quench into target basins
-  -> Langevin temper at U_b
+  -> Langevin temper at U_b (mc_steps_2 steps)
   -> hat_mu pool
 ```
 
 At each optimizer step it then forms two populations:
 
-- `y_hat`: samples from the QT pool, freshly Langevin-rejuvenated at `U_b`;
-- `y_bar`: the current detached G proposal, obtained as `flow.inv(x)` from a
-  current-stage source batch.
+- `y_hat`: samples from the QT pool, freshly Langevin-rejuvenated at `U_b`
+  for `mc_steps_1` steps;
+- `y_bar`: the current detached G proposal, the pushforward of the
+  current-stage source batch that the SMC target surrogate started from.
 
-It resamples using normalized component proportions derived from
-`coeff_alpha` and `coeff_beta`. The following `omega` notation is an
-unnormalized finite measure:
+It mixes them with probabilities `coeff_alpha` and `1 - coeff_alpha`:
 
 ```text
-omega = coeff_alpha * hat_mu + coeff_beta * bar_nu.
+omega = coeff_alpha * hat_mu + (1 - coeff_alpha) * bar_nu.
 ```
 
-Thus the actual mixture probabilities are proportional to those two
-coefficients. The loss separately retains the source code's
-`(coeff_alpha + coeff_beta)^2` scale.
-
-For a random mixture permutation, the complete loss is
+The complete loss is
 
 ```text
 L_KLXX(G)
   = mean[z(y)]
-  + coeff_lambda * mean[|z(y) - z(y_perm)|]
-  + (coeff_alpha + coeff_beta)^2
-      * mean[|z(y_omega) - z(y_omega_perm)|].
+  + coeff_lambda * mean_{i != j}[|z(y_i) - z(y_j)|]
+  + coeff_theta * mean_{i != j}[|z(y_omega,i) - z(y_omega,j)|],
 ```
+
+with both pair means evaluated exactly by sorting.
 
 The QT component emphasizes mode discovery through basin coverage. The
 detached proposal component exposes regions already produced by the flow and
@@ -450,9 +445,11 @@ KLXX is the most computationally and memory intensive option:
 - QT runs once for every stage attempt, including stage retries;
 - `pool_size=0` applies QT to the complete current validation population;
 - `pool_size>0` draws a separate pool with replacement from that population;
-- `melt`, `opt_dt`, and `opt_steps` control the melt/quench construction;
-- `mc_dt` and `mc_steps` control both ordinary forward-batch manufacture and
-  target freshening used by the KLXX path; and
+- `melt`, `opt_dt`, and `opt_steps` control the melt/quench construction,
+  and `coeff_qt` the partial importance resampling that precedes it;
+- `mc_dt` with `mc_steps_1` controls the forward-batch manufacture and the
+  `y_hat` freshening, and `mc_dt` with `mc_steps_2` the QT pool and the
+  stage advance; and
 - `chunks` partitions QT and the outer operations over the complete validation set.
 
 Use KLXX when explicit wide-coverage and proposal-leakage diagnostics justify
@@ -490,7 +487,7 @@ returns the accepted prefix rather than claiming completion.
 <tr><th>Primary need</th><th>Starting choice</th><th>Reason</th></tr>
 </thead>
 <tbody>
-<tr><td>simple, inexpensive stage baseline</td><td><code>boltzmann_reverse_KL_F</code></td><td>source-sampled native-F loss; no AIS target-batch construction inside Adam</td></tr>
+<tr><td>simple, inexpensive stage baseline</td><td><code>boltzmann_reverse_KL_F</code></td><td>source-sampled native-F loss; no SMC target-batch construction inside Adam</td></tr>
 <tr><td>forward mass-covering objective</td><td><code>boltzmann_forward_KL_G</code></td><td>manufactures target batches and trains the native G direction</td></tr>
 <tr><td>explicit target-measure weight-uniformity penalty</td><td><code>boltzmann_forward_KLX_G</code></td><td>adds variation control for the stage log-density ratio</td></tr>
 <tr><td>mode discovery plus proposal-leakage regularization</td><td><code>boltzmann_forward_KLXX_G</code></td><td>adds QT coverage and detached-proposal mixture samples</td></tr>
@@ -514,8 +511,7 @@ with coverage or target-specific observables.
     "t_safe": 0.2,
     "shrink_factor": 0.7,
     "enlarge_factor": 1.5,
-    "tau_smc": 0.0,
-    "tau_ess": 0.6,
+    "tau_valid": 0.6,
     "t_tol": 0.01,
     "max_stages": 30,
     "max_retry": 6,
@@ -532,8 +528,7 @@ with coverage or target-specific observables.
 <tr><td><code>t_safe</code></td><td>first proposed endpoint</td></tr>
 <tr><td><code>shrink_factor</code></td><td>multiply a rejected interval length before retrying</td></tr>
 <tr><td><code>enlarge_factor</code></td><td>grow the next interval from the last accepted interval</td></tr>
-<tr><td><code>tau_smc</code></td><td>optional pre-training minimum SMC ESS gate; zero disables it</td></tr>
-<tr><td><code>tau_ess</code></td><td>minimum selected trained-or-identity validation ESS</td></tr>
+<tr><td><code>tau_valid</code></td><td>minimum selected trained-or-identity validation ESS</td></tr>
 <tr><td><code>t_tol</code></td><td>snap a proposed endpoint near one to exactly one</td></tr>
 <tr><td><code>max_stages</code></td><td>maximum accepted-stage index attempted</td></tr>
 <tr><td><code>max_retry</code></td><td>maximum training attempts for one stage</td></tr>
@@ -542,16 +537,13 @@ with coverage or target-specific observables.
 
 </div>
 
-The trained controller uses two distinct gates:
-
-1. If `tau_smc>0`, potential-space SMC tests a proposed endpoint before
-   training. A failed proposal shrinks the interval.
-2. After training, complete-validation ESS compares the trained flow and exact
-   identity. Their better ESS must clear `tau_ess`; otherwise the interval
-   shrinks and training retries with a fresh operation key.
+An unknown key in `bg_param` raises `KeyError`. The trained controller uses
+one gate: after training, complete-validation ESS compares the trained flow
+and exact identity. Their better ESS must clear `tau_valid`; otherwise the
+interval shrinks and training retries with a fresh operation key.
 
 Batch ESS emitted during optimization is never an acceptance gate.
-For `boltzmann_identity`, the second gate is simply the complete-validation
+For `boltzmann_identity`, the gate is simply the complete-validation
 identity ESS; no training or trained-versus-identity comparison occurs.
 
 ## Identity fallback and initialization
@@ -560,7 +552,7 @@ At every trained attempt, the controller computes log weights over the complete 
 for:
 
 - the trained stage flow; and
-- an exact identity map, equivalent to pure SMC reweighting for that stage transition.
+- an exact identity map, equivalent to pure importance reweighting for that stage transition.
 
 The higher-ESS map advances the particles. Therefore a stage does not select a
 trained map that is worse than the identity fallback on the validation metric.
@@ -613,8 +605,8 @@ from jflows.boltzmann import (
 ```python
 boltzmann_reverse_KL_F_fixed(
     x_valid, source, target, flow,
-    batch_size, train_steps, lr,
-    mc_dt, mc_steps, t_list,
+    batch_size, steps_total, lr,
+    mc_dt, mc_steps_1, mc_steps_2, t_list,
     *, initialize_from_identity=True,
     mc_adjust=True, monitor=None, chunks=1,
     checkpoint=False, seed=0,
@@ -622,8 +614,8 @@ boltzmann_reverse_KL_F_fixed(
 
 boltzmann_forward_KL_G_fixed(
     x_valid, source, target, flow,
-    batch_size, train_steps, lr,
-    ladder, mc_dt, mc_steps, t_list,
+    batch_size, steps_total, lr,
+    ladder, mc_dt, mc_steps_1, mc_steps_2, t_list,
     *, initialize_from_identity=True,
     mc_adjust=True, monitor=None, chunks=1,
     checkpoint=False, u_clip=inf, g_clip=inf, seed=0,
@@ -631,8 +623,8 @@ boltzmann_forward_KL_G_fixed(
 
 boltzmann_forward_KLX_G_fixed(
     x_valid, source, target, flow,
-    batch_size, train_steps, lr,
-    ladder, mc_dt, mc_steps, t_list,
+    batch_size, steps_total, lr,
+    ladder, mc_dt, mc_steps_1, mc_steps_2, t_list,
     *, initialize_from_identity=True,
     coeff_lambda=1.0,
     mc_adjust=True, monitor=None, chunks=1,
@@ -641,11 +633,11 @@ boltzmann_forward_KLX_G_fixed(
 
 boltzmann_forward_KLXX_G_fixed(
     x_valid, source, target, flow,
-    pool_size, batch_size, train_steps,
+    pool_size, batch_size, steps_total,
     lr, ladder, melt, opt_dt, opt_steps,
-    mc_dt, mc_steps, t_list,
+    mc_dt, mc_steps_1, mc_steps_2, t_list,
     *, initialize_from_identity=True,
-    coeff_lambda=1.0, coeff_alpha=0.5, coeff_beta=0.5,
+    coeff_lambda=1.0, coeff_theta=1.0, coeff_alpha=0.5, coeff_qt=0.0,
     mc_adjust=True, monitor=None, chunks=1,
     checkpoint=False, u_clip=inf, g_clip=inf, seed=0,
 )
@@ -675,7 +667,6 @@ Each element of `stages` has the following canonical fields:
     "valid_trained_ess_hist": Array,
     "valid_identity_ess_hist": Array,
     "attempt_status_hist": tuple[str, ...],
-    "selection_history": tuple[dict, ...],
     "elapsed_seconds": float,
     "selected_flow_path": str | None,
     "continuation_flow_path": str | None,
@@ -696,11 +687,9 @@ Each element of `stages` has the following canonical fields:
 ### Attempt-aligned histories
 
 - `t_hist`: attempted endpoints.
-- `batch_ess_hist`: shape `(attempts, train_steps)`.
+- `batch_ess_hist`: shape `(attempts, steps_total)`.
 - `valid_trained_ess_hist`, `valid_identity_ess_hist`: one value per attempt.
 - `attempt_status_hist`: `"accepted"` or `"rejected"` per training attempt.
-- `selection_history`: pre-training SMC endpoint decisions, or a fixed/disabled
-  marker.
 
 The three path fields are `None` for pure in-memory computation. The storage
 layer fills them with paths relative to the run root.
@@ -727,17 +716,18 @@ flow = NSF(
 y_valid, stages = boltzmann_forward_KLX_G(
     x_valid, source, target, flow,
     batch_size=1000,
-    train_steps=300,
+    steps_total=300,
     lr=1e-3,
     ladder=1,
     mc_dt=1e-3,
-    mc_steps=50,
+    mc_steps_1=50,
+    mc_steps_2=100,
     coeff_lambda=1.0,
     bg_param={
         "t_safe": 0.2,
         "shrink_factor": 0.7,
         "enlarge_factor": 1.5,
-        "tau_ess": 0.6,
+        "tau_valid": 0.6,
     },
     chunks=8,
     monitor=Monitor(50, "[KLX] "),
@@ -893,10 +883,8 @@ so loading still requires the original architecture template.
 
 ## Executable references
 
-- [adaptive-staging/fixed-schedule records and identity selection](../smoke/test_boltzmann.py)
+- [trainers, adaptive and fixed schedules, policy keys](../smoke/test_train.py)
 - [complete-stage persistence](../smoke/test_boltzmann_artifacts.py)
-- [KLXX chunks through trainer and generator](../smoke/test_boltzmann_chunks.py)
-- [eager full-set weight chunk equivalence](../smoke/test_chunk.py)
-- [public namespace contract](../smoke/test_public_api.py)
+- [identity persistence](../smoke/test_boltzmann_identity_artifacts.py)
 - [4D adaptive-staging Boltzmann example](../example/4D_boltzmann.py)
 - [4D verified figure and results](../example/results.md#4d_boltzmann--adaptive-staging-bg)

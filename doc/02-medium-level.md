@@ -30,7 +30,7 @@ Every trainer takes:
   batches;
 - `source` and `target`: `Potential` objects for the current stage;
 - `flow`: the trainable map template;
-- `batch_size`, `train_steps`, and `lr`: Adam training controls;
+- `batch_size`, `steps_total`, and `lr`: Adam training controls;
 - an integer `seed`: deterministic internal key derivation; and
 - optional `monitor`: a `Monitor` called from the compiled optimizer scan.
 
@@ -40,10 +40,10 @@ Every trainer returns:
 trained_flow, batch_ess_hist
 ```
 
-`batch_ess_hist.shape == (train_steps,)`. It is an optimizer-batch diagnostic,
+`batch_ess_hist.shape == (steps_total,)`. It is an optimizer-batch diagnostic,
 not a held-out acceptance metric. For forward objectives it is computed from
-the full initial proposal-to-target log weights, before AIS resampling and
-target rejuvenation. Evaluate the returned flow on the complete validation
+the full proposal-to-target log weights of the pushforward batch, before the
+SMC resampling and target rejuvenation. Evaluate the returned flow on the complete validation
 population when a final sampling metric is required.
 
 The provided `flow` is preserved as the starting parameterization unless
@@ -79,10 +79,11 @@ updates, and monitor callbacks.
 </thead>
 <tbody>
 <tr><td><code>batch_size</code></td><td>optimizer batch size sampled from <code>x_valid</code></td></tr>
-<tr><td><code>train_steps</code></td><td>number of Adam updates</td></tr>
+<tr><td><code>steps_total</code></td><td>number of Adam updates</td></tr>
 <tr><td><code>lr</code></td><td>Adam learning rate</td></tr>
-<tr><td><code>ladder</code></td><td>AIS levels used to manufacture one forward-training batch</td></tr>
-<tr><td><code>mc_dt</code>, <code>mc_steps</code></td><td>Langevin step size and steps inside training data manufacture</td></tr>
+<tr><td><code>ladder</code></td><td>SMC levels used to manufacture one forward-training batch</td></tr>
+<tr><td><code>mc_dt</code>, <code>mc_steps_1</code></td><td>step size and steps on batch-sized sets: the reverse KL source batch (Langevin), each intermediate SMC level (one HMC trajectory of <code>mc_steps_1</code> leapfrog steps of size <code>mc_dt</code>), the last SMC level and the QT rows of the KLXX mixture batch (Langevin)</td></tr>
+<tr><td><code>mc_steps_2</code></td><td>Langevin steps on population-sized sets: the temper of the KLXX quench-and-temper pool (and its resampling when <code>coeff_qt &gt; 0</code>)</td></tr>
 <tr><td><code>mc_adjust</code></td><td><code>True</code> for MALA, <code>False</code> for ULA</td></tr>
 <tr><td><code>seed</code></td><td>deterministic trainer key namespace</td></tr>
 <tr><td><code>checkpoint</code></td><td>rematerialize the loss calculation during reverse-mode differentiation</td></tr>
@@ -110,10 +111,11 @@ and memory tradeoff depends on flow architecture and accelerator compiler.
 Monitor(every, prefix="", printer=print)
 ```
 
-The monitor emits the first step, every `every` steps, and the final step:
+The monitor emits every `every`-th step and the final step; the first step
+is not special:
 
 ```text
-[reverse] [t: 0.000000 -> 1.000000] step     1   loss = ...   ESS = ...
+[reverse] [t: 0.000000 -> 1.000000] step    20   loss = ...   ESS = ...
 ```
 
 It uses `jax.debug.callback` from inside the scan. A custom `printer` receives
@@ -129,8 +131,8 @@ monitor = Monitor(every=20, prefix="[forward KL] ")
 ```python
 train_reverse_KL_F(
     x_valid, source, target, flow,
-    batch_size, train_steps, lr,
-    mc_dt, mc_steps,
+    batch_size, steps_total, lr,
+    mc_dt, mc_steps_1,
     mc_adjust=True,
     monitor=None,
     seed=0,
@@ -157,10 +159,10 @@ The flow is trained in the source-to-target direction. Generate with
 flow, batch_ess = train_reverse_KL_F(
     x_valid, source, target, flow,
     batch_size=500,
-    train_steps=200,
+    steps_total=200,
     lr=1e-3,
     mc_dt=1e-3,
-    mc_steps=50,
+    mc_steps_1=50,
     monitor=Monitor(20, "[reverse] "),
 )
 ```
@@ -170,8 +172,8 @@ flow, batch_ess = train_reverse_KL_F(
 ```python
 train_forward_KL_G(
     x_valid, source, target, flow,
-    batch_size, train_steps, lr,
-    ladder, mc_dt, mc_steps,
+    batch_size, steps_total, lr,
+    ladder, mc_dt, mc_steps_1,
     mc_adjust=True,
     monitor=None,
     seed=0,
@@ -186,7 +188,9 @@ train_forward_KL_G(
 ```
 
 At every step, the trainer draws a source batch and manufactures approximate
-target samples with `annealed_importance_sampling` through the current G flow.
+target samples with `sequential_monte_carlo` through the current G flow
+(one HMC trajectory of `mc_steps_1` leapfrog steps on each intermediate
+level, `mc_steps_1` MALA steps on the last).
 It then minimizes `forward_KL_G` on that fresh population. The target batch is
 not frozen across steps.
 
@@ -197,11 +201,11 @@ The trained flow is G-native. Generate from source particles with
 flow, batch_ess = train_forward_KL_G(
     x_valid, source, target, flow,
     batch_size=500,
-    train_steps=200,
+    steps_total=200,
     lr=1e-3,
     ladder=1,
     mc_dt=1e-3,
-    mc_steps=50,
+    mc_steps_1=50,
     initialize_from_identity=True,
     u_clip=100.0,
     g_clip=100.0,
@@ -213,8 +217,8 @@ flow, batch_ess = train_forward_KL_G(
 ```python
 train_forward_KLX_G(
     x_valid, source, target, flow,
-    batch_size, train_steps, lr,
-    ladder, mc_dt, mc_steps,
+    batch_size, steps_total, lr,
+    ladder, mc_dt, mc_steps_1,
     coeff_lambda=1.0,
     mc_adjust=True,
     monitor=None,
@@ -229,11 +233,12 @@ train_forward_KLX_G(
 )
 ```
 
-KLX uses the same fresh AIS target-batch path as forward KL, then adds the
-pairwise X penalty on the log-density-ratio coordinate:
+KLX uses the same fresh SMC target-batch path as forward KL, then adds the
+pairwise X penalty on the log-density-ratio coordinate, the exact mean of
+`|z_i - z_j|` over all pairs of the batch evaluated by one sort:
 
 ```text
-mean(z) + coeff_lambda * mean(abs(z - z[perm])).
+mean(z) + coeff_lambda * mean_{i != j}(abs(z_i - z_j)).
 ```
 
 `coeff_lambda=0` removes the X penalty. The output flow is G-native.
@@ -242,11 +247,11 @@ mean(z) + coeff_lambda * mean(abs(z - z[perm])).
 flow, batch_ess = train_forward_KLX_G(
     x_valid, source, target, flow,
     batch_size=500,
-    train_steps=200,
+    steps_total=200,
     lr=1e-3,
     ladder=1,
     mc_dt=1e-3,
-    mc_steps=50,
+    mc_steps_1=50,
     coeff_lambda=1.0,
 )
 ```
@@ -256,12 +261,13 @@ flow, batch_ess = train_forward_KLX_G(
 ```python
 train_forward_KLXX_G(
     x_valid, source, target, flow,
-    pool_size, batch_size, train_steps,
+    pool_size, batch_size, steps_total,
     lr, ladder, melt, opt_dt, opt_steps,
-    mc_dt, mc_steps,
+    mc_dt, mc_steps_1, mc_steps_2,
     coeff_lambda=1.0,
+    coeff_theta=1.0,
     coeff_alpha=0.5,
-    coeff_beta=0.5,
+    coeff_qt=0.0,
     mc_adjust=True,
     monitor=None,
     seed=0,
@@ -283,39 +289,42 @@ mixture. Before the optimizer scan it constructs `hat_mu` with
 - `pool_size=0`: quench the complete `x_valid` population;
 - `pool_size>0`: draw a separate resampled pool of that size from `x_valid`.
 
-The old positive-pool route and the complete-validation-set route are both explicit.
-There is no second chunk keyword: `chunks` is passed directly into QT.
+The temper of the pool uses `mc_steps_2`, and `coeff_qt > 0` resamples the
+pool by the partial importance weights `exp(coeff_qt * (source - target))`
+and rejuvenates it (`mc_steps_2` steps) before the melt. There is no second
+chunk keyword: `chunks` is passed directly into QT.
 
 During each training step:
 
-1. manufacture an AIS target batch `y` through the current flow;
-2. sample and target-freshen `y_hat` from the fixed QT pool;
-3. obtain detached proposal samples `y_bar = flow.inv(x)`;
-4. resample a mixture using `coeff_alpha` and `coeff_beta` as component
-   weights; and
-5. optimize the target KLX term plus the mixture X term.
+1. manufacture an SMC target batch `y` through the current flow, whose
+   pushforward proposal is kept as the detached `y_bar`;
+2. draw `y_hat` from the fixed QT pool and rejuvenate it at the target for
+   `mc_steps_1` steps;
+3. mix `y_hat` and `y_bar` with probabilities `coeff_alpha` and
+   `1 - coeff_alpha`; and
+4. optimize the target KLX term plus `coeff_theta` times the mixture X term.
 
-`coeff_lambda` weights the target-measure X term. `coeff_alpha` and
-`coeff_beta` determine the wide-coverage/proposal mixture, and the mixture X
-term is scaled by `(coeff_alpha + coeff_beta) ** 2`. The returned flow is
-G-native.
+`coeff_lambda` weights the target-measure X term, `coeff_theta` weights the
+mixture X term, and `coeff_alpha` is the QT proportion of the mixture. Both
+X terms are the exact sorted pairwise means. The returned flow is G-native.
 
 ```python
 flow, batch_ess = train_forward_KLXX_G(
     x_valid, source, target, flow,
     pool_size=10000,
     batch_size=500,
-    train_steps=200,
+    steps_total=200,
     lr=1e-3,
     ladder=1,
     melt=2.0,
     opt_dt=0.5,
     opt_steps=100,
     mc_dt=1e-3,
-    mc_steps=50,
+    mc_steps_1=50,
+    mc_steps_2=100,
     coeff_lambda=1.0,
+    coeff_theta=1.0,
     coeff_alpha=0.5,
-    coeff_beta=0.5,
     chunks=16,
 )
 ```
@@ -437,13 +446,7 @@ Boltzmann generator rather than adding hidden outer loops around a trainer.
 
 ## Executable references
 
-- [direct trainer contracts](../smoke/test_train.py)
-- [screening and clipping](../smoke/test_clip.py)
-- [flow serialization and approximate-CNF trace-key behavior](../smoke/test_checkpoint.py)
-- [loss trainability](../smoke/test_loss_training.py)
-- [KLXX chunk forwarding](../smoke/test_boltzmann_chunks.py)
-- [public train/Boltzmann namespace split](../smoke/test_public_api.py)
-- [edge cases and deterministic behavior](../smoke/test_edge_cases.py)
+- [direct trainer and generator contracts](../smoke/test_train.py)
 
 Complete direct-training workflows appear in
 [2D_single.py](../example/2D_single.py),

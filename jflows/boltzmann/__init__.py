@@ -3,6 +3,14 @@
 The controller calls only the public direct trainers.  It contains no file,
 manifest, resume, or artifact logic; ``jflows.boltzmann.write`` and
 ``jflows.boltzmann.load`` handle complete-stage persistence separately.
+
+Each stage trains the increment ``t_{k-1} -> t_k`` on the current population,
+compares the trained map against the identity by population ESS, accepts the
+stage when the selected ESS reaches ``tau_valid`` (adaptive schedule) and
+otherwise shrinks ``t_k`` towards ``t_{k-1}``, and advances the population by
+reweight -> resample -> ``mc_steps_2`` Langevin steps under ``U_{t_k}``. The
+pushforward of the population by the trained map is computed once and reused
+for both the selection weights and the advance.
 """
 
 from __future__ import annotations
@@ -12,15 +20,12 @@ import time
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import numpy as np
 from jax import Array
 
 from ..flow import Flow
 from ..potential import Potential, linear_combination
-from ..utils.anneal import sequential_monte_carlo
 from ..utils.metrics import (
     compute_ESS_log,
-    importance_weights_log,
     linear_weights_from_log,
     resample,
 )
@@ -56,38 +61,60 @@ _POLICY = {
     "t_safe": 0.2,
     "shrink_factor": 0.7,
     "enlarge_factor": 1.5,
-    "tau_smc": 0.0,
-    "tau_ess": 0.6,
+    "tau_valid": 0.6,
     "t_tol": 0.01,
     "max_stages": 30,
     "max_retry": 6,
 }
-_SELECTION_PROPOSAL_LIMIT = 60
 
 
 def _adaptive_policy(values):
+    """Complete the stage-schedule policy; an unknown key is an error."""
     policy = dict(_POLICY)
     if values:
+        unknown = sorted(set(values) - set(_POLICY))
+        if unknown:
+            raise KeyError(f"unknown bg_param keys: {unknown}")
         policy.update(values)
     return policy
-_importance_kernel = eqx.filter_jit(importance_weights_log)
+
+
+_push_kernels = {
+    "G": eqx.filter_jit(lambda flow, x: flow.inv_and_ladj(x)),
+    "F": eqx.filter_jit(lambda flow, x: flow.call_and_ladj(x)),
+}
+_weight_kernel = eqx.filter_jit(
+    lambda x, y, ladj, source, target: -target(y) + source(x) + ladj
+)
 _identity_kernel = eqx.filter_jit(lambda y, source, target: source(y) - target(y))
 
 
-def _chunked_log_weights(samples, source, target, flow, direction, chunks):
-    """Evaluate trained-flow log weights in sequential device chunks."""
-    result = jnp.concatenate([
-        _importance_kernel(part, source, target, flow, direction)
-        for part in jnp.array_split(samples, chunks, axis=0)
-    ])
-    return jax.block_until_ready(result)
+def _slices(count, chunks):
+    """Row slices of a population, so that only one chunk is copied at a time."""
+    bounds = [round(i * count / chunks) for i in range(chunks + 1)]
+    return [slice(a, b) for a, b in zip(bounds[:-1], bounds[1:]) if b > a]
+
+
+def _push_and_weights(samples, source, target, flow, direction, chunks):
+    """One chunked pass: the map's pushforward of the population and its log weights."""
+    y_parts, w_parts = [], []
+    push = _push_kernels[direction]
+    for rows in _slices(samples.shape[0], chunks):
+        xc = samples[rows]
+        yc, ladj = push(flow, xc)
+        y_parts.append(yc)
+        w_parts.append(_weight_kernel(xc, yc, ladj, source, target))
+    y = jnp.concatenate(y_parts, axis=0)
+    log_w = jax.block_until_ready(jnp.concatenate(w_parts, axis=0))
+    del y_parts, w_parts
+    return y, log_w
 
 
 def _identity_log_weights(samples, source, target, chunks):
     """Evaluate exact-identity log weights in sequential device chunks."""
     result = jnp.concatenate([
-        _identity_kernel(part, source, target)
-        for part in jnp.array_split(samples, chunks, axis=0)
+        _identity_kernel(samples[rows], source, target)
+        for rows in _slices(samples.shape[0], chunks)
     ])
     return jax.block_until_ready(result)
 
@@ -95,33 +122,27 @@ def _identity_log_weights(samples, source, target, chunks):
 def _advance_stage_samples(
     key_resample,
     key_mc,
-    samples,
+    pushforward,
     log_weights,
-    flow,
-    direction,
     target,
     mc_dt,
-    mc_steps,
+    mc_steps_2,
     mc_adjust,
     chunks,
 ):
-    """Push, resample, and rejuvenate one accepted stage sample set."""
-    push = flow.__call__ if direction == "F" else flow.inv
-    proposal = jnp.concatenate([
-        push(part) for part in jnp.array_split(samples, chunks, axis=0)
-    ])
+    """Resample the selected map's pushforward, then rejuvenate under the stage target."""
     advanced = resample(
         key_resample,
-        proposal,
+        pushforward,
         linear_weights_from_log(log_weights),
-        N=samples.shape[0],
+        N=pushforward.shape[0],
     )
     return langevin(
         key_mc,
         advanced,
         target,
         dt=mc_dt,
-        steps=mc_steps,
+        steps=mc_steps_2,
         adjust=mc_adjust,
         chunks=chunks,
     )
@@ -133,79 +154,6 @@ def _operation_key(base_key, namespace, stage, attempt=0, index=0):
     key = jax.random.fold_in(key, stage)
     key = jax.random.fold_in(key, attempt)
     return jax.random.fold_in(key, index)
-
-
-def _select_adaptive_endpoint(
-    *,
-    base_key,
-    stage,
-    samples,
-    source,
-    target,
-    t_start,
-    t_end,
-    policy,
-    ladder,
-    mc_dt,
-    mc_steps,
-    mc_adjust,
-    chunks,
-    emit,
-):
-    """Apply the optional SMC gate to one proposed stage point."""
-    if policy["tau_smc"] == 0.0:
-        return t_end, [{
-            "index": 0,
-            "t_start": t_start,
-            "t_end": t_end,
-            "status": "skipped",
-            "reason": "tau_smc_zero",
-            "validation_sample_count": int(samples.shape[0]),
-        }], True
-    history = []
-    source_bridge = linear_combination(
-        [target, source], [t_start, 1.0 - t_start]
-    )
-    for index in range(_SELECTION_PROPOSAL_LIMIT):
-        target_bridge = linear_combination(
-            [target, source], [t_end, 1.0 - t_end]
-        )
-        key = _operation_key(base_key, 201, stage, index=index)
-        _, per_level = sequential_monte_carlo(
-            key,
-            samples,
-            source_bridge,
-            target_bridge,
-            ladder=ladder,
-            mc_dt=mc_dt,
-            mc_steps=mc_steps,
-            adjust=mc_adjust,
-            chunks=chunks,
-        )
-        per_level = jax.block_until_ready(per_level)
-        minimum = float(jnp.min(per_level))
-        accepted = minimum >= policy["tau_smc"]
-        history.append({
-            "index": index + 1,
-            "t_start": t_start,
-            "t_end": t_end,
-            "smc_ess": np.asarray(per_level).tolist(),
-            "minimum_smc_ess": minimum,
-            "decision": "accepted" if accepted else "shrink",
-            "validation_sample_count": int(samples.shape[0]),
-        })
-        emit(
-            f"[stage {stage:03d} | t: {t_start:.6f} -> {t_end:.6f}] "
-            f"selection min SMC ESS={minimum:.4f} "
-            f"({'accept' if accepted else 'shrink'})"
-        )
-        if accepted:
-            return t_end, history, True
-        next_t = t_start + policy["shrink_factor"] * (t_end - t_start)
-        if not t_start < next_t < t_end:
-            return t_end, history, False
-        t_end = next_t
-    return t_end, history, False
 
 
 def _stage_monitor(monitor, stage, attempt):
@@ -228,11 +176,12 @@ def _train_attempt(
     *,
     pool_size,
     batch_size,
-    train_steps,
+    steps_total,
     lr,
     ladder,
     mc_dt,
-    mc_steps,
+    mc_steps_1,
+    mc_steps_2,
     mc_adjust,
     chunks,
     monitor,
@@ -241,8 +190,9 @@ def _train_attempt(
     u_clip,
     g_clip,
     coeff_lambda,
+    coeff_theta,
     coeff_alpha,
-    coeff_beta,
+    coeff_qt,
     melt,
     opt_dt,
     opt_steps,
@@ -257,28 +207,30 @@ def _train_attempt(
     )
     if objective == "reverse_kl":
         return train_reverse_KL_F(
-            samples, source, target, flow, batch_size, train_steps, lr,
-            mc_dt, mc_steps, mc_adjust, monitor, seed, checkpoint, **common,
+            samples, source, target, flow, batch_size, steps_total, lr,
+            mc_dt, mc_steps_1, mc_adjust, monitor, seed, checkpoint, **common,
         )
     if objective == "forward_kl":
         return train_forward_KL_G(
-            samples, source, target, flow, batch_size, train_steps, lr,
-            ladder, mc_dt, mc_steps, mc_adjust, monitor, seed, checkpoint,
+            samples, source, target, flow, batch_size, steps_total, lr,
+            ladder, mc_dt, mc_steps_1, mc_adjust, monitor, seed, checkpoint,
             u_clip, g_clip, **common,
         )
     if objective == "forward_klx":
         return train_forward_KLX_G(
-            samples, source, target, flow, batch_size, train_steps, lr,
-            ladder, mc_dt, mc_steps, coeff_lambda, mc_adjust, monitor, seed,
+            samples, source, target, flow, batch_size, steps_total, lr,
+            ladder, mc_dt, mc_steps_1, coeff_lambda, mc_adjust, monitor, seed,
             checkpoint, u_clip, g_clip, **common,
         )
     if objective == "forward_klxx":
         return train_forward_KLXX_G(
-            samples, source, target, flow, pool_size, batch_size, train_steps,
-            lr, ladder, melt, opt_dt, opt_steps, mc_dt, mc_steps,
-            coeff_lambda, coeff_alpha, coeff_beta, mc_adjust, monitor, seed,
-            checkpoint, u_clip, g_clip, chunks=chunks, **common,
+            samples, source, target, flow, pool_size, batch_size, steps_total,
+            lr, ladder, melt, opt_dt, opt_steps, mc_dt, mc_steps_1, mc_steps_2,
+            coeff_lambda, coeff_theta, coeff_alpha, coeff_qt, mc_adjust,
+            monitor, seed, checkpoint, u_clip, g_clip, chunks=chunks, **common,
         )
+
+
 def _stage_record(
     *,
     t_start,
@@ -292,7 +244,6 @@ def _stage_record(
     trained_ess_history,
     identity_ess_history,
     status_history,
-    selection_history,
     elapsed_seconds,
 ):
     """Build one accepted in-memory stage record."""
@@ -313,7 +264,6 @@ def _stage_record(
         "valid_trained_ess_hist": jnp.asarray(trained_ess_history),
         "valid_identity_ess_hist": jnp.asarray(identity_ess_history),
         "attempt_status_hist": tuple(status_history),
-        "selection_history": tuple(selection_history),
         "elapsed_seconds": float(elapsed_seconds),
         "selected_flow_path": None,
         "continuation_flow_path": None,
@@ -329,7 +279,6 @@ def _identity_stage_record(
     t_history,
     identity_ess_history,
     status_history,
-    selection_history,
     elapsed_seconds,
 ):
     """Build one accepted identity-only stage record."""
@@ -343,7 +292,6 @@ def _identity_stage_record(
         "t_hist": jnp.asarray(t_history),
         "valid_identity_ess_hist": jnp.asarray(identity_ess_history),
         "attempt_status_hist": tuple(status_history),
-        "selection_history": tuple(selection_history),
         "elapsed_seconds": float(elapsed_seconds),
         "validation_samples_path": None,
     }
@@ -354,9 +302,8 @@ def iterate_identity(
     source,
     target,
     *,
-    ladder,
     mc_dt,
-    mc_steps,
+    mc_steps_2,
     mc_adjust,
     monitor,
     chunks,
@@ -388,24 +335,6 @@ def iterate_identity(
             )
         if 1.0 - t_end < policy["t_tol"]:
             t_end = 1.0
-        t_end, selection_history, selected_endpoint = _select_adaptive_endpoint(
-            base_key=base_key,
-            stage=stage,
-            samples=samples,
-            source=source,
-            target=target,
-            t_start=t_start,
-            t_end=t_end,
-            policy=policy,
-            ladder=ladder,
-            mc_dt=mc_dt,
-            mc_steps=mc_steps,
-            mc_adjust=mc_adjust,
-            chunks=chunks,
-            emit=emit,
-        )
-        if not selected_endpoint:
-            return
 
         stage_started = time.perf_counter()
         t_history = []
@@ -423,7 +352,7 @@ def iterate_identity(
                 samples, source_bridge, target_bridge, chunks
             )
             identity_ess = float(compute_ESS_log(log_weights))
-            accepted_attempt = identity_ess >= policy["tau_ess"]
+            accepted_attempt = identity_ess >= policy["tau_valid"]
             status = "accepted" if accepted_attempt else "rejected"
             t_history.append(t_end)
             identity_history.append(identity_ess)
@@ -445,25 +374,21 @@ def iterate_identity(
             return
         advance_key = _operation_key(base_key, 301, stage)
         key_resample, key_mc = jax.random.split(advance_key)
-        samples = resample(
+        samples = _advance_stage_samples(
             key_resample,
-            samples,
-            linear_weights_from_log(log_weights),
-            N=samples.shape[0],
-        )
-        samples = langevin(
             key_mc,
             samples,
+            log_weights,
             target_bridge,
-            dt=mc_dt,
-            steps=mc_steps,
-            adjust=mc_adjust,
-            chunks=chunks,
+            mc_dt,
+            mc_steps_2,
+            mc_adjust,
+            chunks,
         )
         samples = jax.block_until_ready(samples)
         if not bool(jnp.all(jnp.isfinite(samples))):
             raise FloatingPointError(
-                "post-stage samples contain nonfinite coordinates"
+                "post-stage samples contain infinite or undefined coordinates"
             )
         record = _identity_stage_record(
             t_start=t_start,
@@ -472,7 +397,6 @@ def iterate_identity(
             t_history=t_history,
             identity_ess_history=identity_history,
             status_history=status_history,
-            selection_history=selection_history,
             elapsed_seconds=time.perf_counter() - stage_started,
         )
         emit(
@@ -493,11 +417,12 @@ def iterate_boltzmann(
     objective,
     pool_size,
     batch_size,
-    train_steps,
+    steps_total,
     lr,
     ladder,
     mc_dt,
-    mc_steps,
+    mc_steps_1,
+    mc_steps_2,
     initialize_from_identity,
     mc_adjust,
     monitor,
@@ -509,8 +434,9 @@ def iterate_boltzmann(
     u_clip=float("inf"),
     g_clip=float("inf"),
     coeff_lambda=1.0,
+    coeff_theta=1.0,
     coeff_alpha=0.5,
-    coeff_beta=0.5,
+    coeff_qt=0.0,
     melt=0.0,
     opt_dt=1.0,
     opt_steps=1,
@@ -551,40 +477,12 @@ def iterate_boltzmann(
                 )
             if 1.0 - t_end < policy["t_tol"]:
                 t_end = 1.0
-            t_end, selection_history, selected_endpoint = (
-                _select_adaptive_endpoint(
-                    base_key=base_key,
-                    stage=stage,
-                    samples=samples,
-                    source=source,
-                    target=target,
-                    t_start=t_start,
-                    t_end=t_end,
-                    policy=policy,
-                    ladder=ladder,
-                    mc_dt=mc_dt,
-                    mc_steps=mc_steps,
-                    mc_adjust=mc_adjust,
-                    chunks=chunks,
-                    emit=emit,
-                )
-            )
-            if not selected_endpoint:
-                return
             max_attempts = policy["max_retry"]
         else:
             remaining = [endpoint for endpoint in schedule if endpoint > t_start]
             if not remaining:
                 return
             t_end = remaining[0]
-            selection_history = ({
-                "index": 0,
-                "t_start": t_start,
-                "t_end": t_end,
-                "status": "skipped",
-                "reason": "fixed_schedule",
-                "validation_sample_count": int(samples.shape[0]),
-            },)
             max_attempts = 1
 
         stage_started = time.perf_counter()
@@ -622,11 +520,12 @@ def iterate_boltzmann(
                 optimizer_initial,
                 pool_size=pool_size,
                 batch_size=batch_size,
-                train_steps=train_steps,
+                steps_total=steps_total,
                 lr=lr,
                 ladder=ladder,
                 mc_dt=mc_dt,
-                mc_steps=mc_steps,
+                mc_steps_1=mc_steps_1,
+                mc_steps_2=mc_steps_2,
                 mc_adjust=mc_adjust,
                 chunks=chunks,
                 monitor=_stage_monitor(monitor, stage, attempt),
@@ -635,8 +534,9 @@ def iterate_boltzmann(
                 u_clip=u_clip,
                 g_clip=g_clip,
                 coeff_lambda=coeff_lambda,
+                coeff_theta=coeff_theta,
                 coeff_alpha=coeff_alpha,
-                coeff_beta=coeff_beta,
+                coeff_qt=coeff_qt,
                 melt=melt,
                 opt_dt=opt_dt,
                 opt_steps=opt_steps,
@@ -646,7 +546,7 @@ def iterate_boltzmann(
             candidate, batch_ess = jax.block_until_ready(
                 (candidate, batch_ess)
             )
-            trained_log_weights = _chunked_log_weights(
+            trained_pushforward, trained_log_weights = _push_and_weights(
                 samples,
                 source_bridge,
                 target_bridge,
@@ -665,13 +565,16 @@ def iterate_boltzmann(
                 selected = "trained"
                 selected_ess = trained_ess
                 selected_log_weights = trained_log_weights
+                selected_pushforward = trained_pushforward
             else:
                 selected_flow = identity_flow
                 continuation_flow = training_identity
                 selected = "identity"
                 selected_ess = identity_ess
                 selected_log_weights = identity_log_weights
-            accepted_attempt = not adaptive or selected_ess >= policy["tau_ess"]
+                selected_pushforward = samples
+            del trained_pushforward
+            accepted_attempt = not adaptive or selected_ess >= policy["tau_valid"]
             status = "accepted" if accepted_attempt else "rejected"
             t_history.append(t_end)
             batch_histories.append(batch_ess)
@@ -700,20 +603,19 @@ def iterate_boltzmann(
         samples = _advance_stage_samples(
             key_resample,
             key_mc,
-            samples,
+            selected_pushforward,
             selected_log_weights,
-            selected_flow,
-            direction,
             target_bridge,
             mc_dt,
-            mc_steps,
+            mc_steps_2,
             mc_adjust,
             chunks,
         )
+        del selected_pushforward
         samples = jax.block_until_ready(samples)
         if not bool(jnp.all(jnp.isfinite(samples))):
             raise FloatingPointError(
-                "post-stage samples contain nonfinite coordinates"
+                "post-stage samples contain infinite or undefined coordinates"
             )
         record = _stage_record(
             t_start=t_start,
@@ -727,7 +629,6 @@ def iterate_boltzmann(
             trained_ess_history=trained_history,
             identity_ess_history=identity_history,
             status_history=status_history,
-            selection_history=selection_history,
             elapsed_seconds=time.perf_counter() - stage_started,
         )
         emit(
@@ -755,9 +656,8 @@ def boltzmann_identity(
     x_valid,
     source,
     target,
-    ladder,
     mc_dt,
-    mc_steps,
+    mc_steps_2,
     *,
     mc_adjust=True,
     monitor=None,
@@ -772,9 +672,8 @@ def boltzmann_identity(
         current,
         source,
         target,
-        ladder=ladder,
         mc_dt=mc_dt,
-        mc_steps=mc_steps,
+        mc_steps_2=mc_steps_2,
         mc_adjust=mc_adjust,
         monitor=monitor,
         bg_param=bg_param,
@@ -791,11 +690,11 @@ def boltzmann_reverse_KL_F(
     target,
     flow,
     batch_size,
-    train_steps,
+    steps_total,
     lr,
-    ladder,
     mc_dt,
-    mc_steps,
+    mc_steps_1,
+    mc_steps_2,
     *,
     initialize_from_identity=True,
     mc_adjust=True,
@@ -808,8 +707,8 @@ def boltzmann_reverse_KL_F(
     """Run adaptive-staging reverse-KL Boltzmann stages."""
     return run_boltzmann(
         x_valid, source, target, flow, objective="reverse_kl", pool_size=0,
-        batch_size=batch_size, train_steps=train_steps, lr=lr, ladder=ladder,
-        mc_dt=mc_dt, mc_steps=mc_steps,
+        batch_size=batch_size, steps_total=steps_total, lr=lr, ladder=1,
+        mc_dt=mc_dt, mc_steps_1=mc_steps_1, mc_steps_2=mc_steps_2,
         initialize_from_identity=initialize_from_identity,
         mc_adjust=mc_adjust, monitor=monitor, bg_param=bg_param,
         chunks=chunks, checkpoint=checkpoint, seed=seed,
@@ -822,11 +721,12 @@ def boltzmann_forward_KL_G(
     target,
     flow,
     batch_size,
-    train_steps,
+    steps_total,
     lr,
     ladder,
     mc_dt,
-    mc_steps,
+    mc_steps_1,
+    mc_steps_2,
     *,
     initialize_from_identity=True,
     mc_adjust=True,
@@ -841,8 +741,8 @@ def boltzmann_forward_KL_G(
     """Run adaptive-staging forward KL Boltzmann stages."""
     return run_boltzmann(
         x_valid, source, target, flow, objective="forward_kl", pool_size=0,
-        batch_size=batch_size, train_steps=train_steps, lr=lr, ladder=ladder,
-        mc_dt=mc_dt, mc_steps=mc_steps,
+        batch_size=batch_size, steps_total=steps_total, lr=lr, ladder=ladder,
+        mc_dt=mc_dt, mc_steps_1=mc_steps_1, mc_steps_2=mc_steps_2,
         initialize_from_identity=initialize_from_identity,
         mc_adjust=mc_adjust, monitor=monitor, bg_param=bg_param,
         chunks=chunks, checkpoint=checkpoint, u_clip=u_clip, g_clip=g_clip,
@@ -856,11 +756,12 @@ def boltzmann_forward_KLX_G(
     target,
     flow,
     batch_size,
-    train_steps,
+    steps_total,
     lr,
     ladder,
     mc_dt,
-    mc_steps,
+    mc_steps_1,
+    mc_steps_2,
     *,
     initialize_from_identity=True,
     coeff_lambda=1.0,
@@ -876,8 +777,8 @@ def boltzmann_forward_KLX_G(
     """Run adaptive-staging forward KLX Boltzmann stages."""
     return run_boltzmann(
         x_valid, source, target, flow, objective="forward_klx", pool_size=0,
-        batch_size=batch_size, train_steps=train_steps, lr=lr, ladder=ladder,
-        mc_dt=mc_dt, mc_steps=mc_steps,
+        batch_size=batch_size, steps_total=steps_total, lr=lr, ladder=ladder,
+        mc_dt=mc_dt, mc_steps_1=mc_steps_1, mc_steps_2=mc_steps_2,
         initialize_from_identity=initialize_from_identity,
         coeff_lambda=coeff_lambda, mc_adjust=mc_adjust, monitor=monitor,
         bg_param=bg_param, chunks=chunks, checkpoint=checkpoint,
@@ -892,19 +793,21 @@ def boltzmann_forward_KLXX_G(
     flow,
     pool_size,
     batch_size,
-    train_steps,
+    steps_total,
     lr,
     ladder,
     melt,
     opt_dt,
     opt_steps,
     mc_dt,
-    mc_steps,
+    mc_steps_1,
+    mc_steps_2,
     *,
     initialize_from_identity=True,
     coeff_lambda=1.0,
+    coeff_theta=1.0,
     coeff_alpha=0.5,
-    coeff_beta=0.5,
+    coeff_qt=0.0,
     mc_adjust=True,
     monitor=None,
     bg_param=None,
@@ -917,12 +820,13 @@ def boltzmann_forward_KLXX_G(
     """Run adaptive-staging KLXX stages with full or separately sampled QT pools."""
     return run_boltzmann(
         x_valid, source, target, flow, objective="forward_klxx",
-        pool_size=pool_size, batch_size=batch_size, train_steps=train_steps,
+        pool_size=pool_size, batch_size=batch_size, steps_total=steps_total,
         lr=lr, ladder=ladder, melt=melt, opt_dt=opt_dt,
-        opt_steps=opt_steps, mc_dt=mc_dt, mc_steps=mc_steps,
+        opt_steps=opt_steps, mc_dt=mc_dt, mc_steps_1=mc_steps_1, mc_steps_2=mc_steps_2,
         initialize_from_identity=initialize_from_identity,
-        coeff_lambda=coeff_lambda, coeff_alpha=coeff_alpha,
-        coeff_beta=coeff_beta, mc_adjust=mc_adjust, monitor=monitor,
+        coeff_lambda=coeff_lambda, coeff_theta=coeff_theta,
+        coeff_alpha=coeff_alpha, coeff_qt=coeff_qt, mc_adjust=mc_adjust,
+        monitor=monitor,
         bg_param=bg_param, chunks=chunks, checkpoint=checkpoint,
         u_clip=u_clip, g_clip=g_clip, seed=seed,
     )
@@ -934,10 +838,11 @@ def boltzmann_reverse_KL_F_fixed(
     target,
     flow,
     batch_size,
-    train_steps,
+    steps_total,
     lr,
     mc_dt,
-    mc_steps,
+    mc_steps_1,
+    mc_steps_2,
     t_list,
     *,
     initialize_from_identity=True,
@@ -950,8 +855,8 @@ def boltzmann_reverse_KL_F_fixed(
     """Run fixed-schedule reverse-KL Boltzmann stages."""
     return run_boltzmann(
         x_valid, source, target, flow, objective="reverse_kl", pool_size=0,
-        batch_size=batch_size, train_steps=train_steps, lr=lr, ladder=1,
-        mc_dt=mc_dt, mc_steps=mc_steps,
+        batch_size=batch_size, steps_total=steps_total, lr=lr, ladder=1,
+        mc_dt=mc_dt, mc_steps_1=mc_steps_1, mc_steps_2=mc_steps_2,
         initialize_from_identity=initialize_from_identity,
         mc_adjust=mc_adjust, monitor=monitor, t_list=t_list, chunks=chunks,
         checkpoint=checkpoint, seed=seed,
@@ -964,11 +869,12 @@ def boltzmann_forward_KL_G_fixed(
     target,
     flow,
     batch_size,
-    train_steps,
+    steps_total,
     lr,
     ladder,
     mc_dt,
-    mc_steps,
+    mc_steps_1,
+    mc_steps_2,
     t_list,
     *,
     initialize_from_identity=True,
@@ -983,8 +889,8 @@ def boltzmann_forward_KL_G_fixed(
     """Run fixed-schedule forward KL Boltzmann stages."""
     return run_boltzmann(
         x_valid, source, target, flow, objective="forward_kl", pool_size=0,
-        batch_size=batch_size, train_steps=train_steps, lr=lr, ladder=ladder,
-        mc_dt=mc_dt, mc_steps=mc_steps,
+        batch_size=batch_size, steps_total=steps_total, lr=lr, ladder=ladder,
+        mc_dt=mc_dt, mc_steps_1=mc_steps_1, mc_steps_2=mc_steps_2,
         initialize_from_identity=initialize_from_identity,
         mc_adjust=mc_adjust, monitor=monitor, t_list=t_list, chunks=chunks,
         checkpoint=checkpoint, u_clip=u_clip, g_clip=g_clip, seed=seed,
@@ -997,11 +903,12 @@ def boltzmann_forward_KLX_G_fixed(
     target,
     flow,
     batch_size,
-    train_steps,
+    steps_total,
     lr,
     ladder,
     mc_dt,
-    mc_steps,
+    mc_steps_1,
+    mc_steps_2,
     t_list,
     *,
     initialize_from_identity=True,
@@ -1017,8 +924,8 @@ def boltzmann_forward_KLX_G_fixed(
     """Run fixed-schedule forward KLX Boltzmann stages."""
     return run_boltzmann(
         x_valid, source, target, flow, objective="forward_klx", pool_size=0,
-        batch_size=batch_size, train_steps=train_steps, lr=lr, ladder=ladder,
-        mc_dt=mc_dt, mc_steps=mc_steps,
+        batch_size=batch_size, steps_total=steps_total, lr=lr, ladder=ladder,
+        mc_dt=mc_dt, mc_steps_1=mc_steps_1, mc_steps_2=mc_steps_2,
         initialize_from_identity=initialize_from_identity,
         coeff_lambda=coeff_lambda, mc_adjust=mc_adjust, monitor=monitor,
         t_list=t_list, chunks=chunks, checkpoint=checkpoint,
@@ -1033,20 +940,22 @@ def boltzmann_forward_KLXX_G_fixed(
     flow,
     pool_size,
     batch_size,
-    train_steps,
+    steps_total,
     lr,
     ladder,
     melt,
     opt_dt,
     opt_steps,
     mc_dt,
-    mc_steps,
+    mc_steps_1,
+    mc_steps_2,
     t_list,
     *,
     initialize_from_identity=True,
     coeff_lambda=1.0,
+    coeff_theta=1.0,
     coeff_alpha=0.5,
-    coeff_beta=0.5,
+    coeff_qt=0.0,
     mc_adjust=True,
     monitor=None,
     chunks=1,
@@ -1058,12 +967,13 @@ def boltzmann_forward_KLXX_G_fixed(
     """Run fixed-schedule KLXX stages with configurable QT pool sizing."""
     return run_boltzmann(
         x_valid, source, target, flow, objective="forward_klxx",
-        pool_size=pool_size, batch_size=batch_size, train_steps=train_steps,
+        pool_size=pool_size, batch_size=batch_size, steps_total=steps_total,
         lr=lr, ladder=ladder, melt=melt, opt_dt=opt_dt,
-        opt_steps=opt_steps, mc_dt=mc_dt, mc_steps=mc_steps,
+        opt_steps=opt_steps, mc_dt=mc_dt, mc_steps_1=mc_steps_1, mc_steps_2=mc_steps_2,
         initialize_from_identity=initialize_from_identity,
-        coeff_lambda=coeff_lambda, coeff_alpha=coeff_alpha,
-        coeff_beta=coeff_beta, mc_adjust=mc_adjust, monitor=monitor,
+        coeff_lambda=coeff_lambda, coeff_theta=coeff_theta,
+        coeff_alpha=coeff_alpha, coeff_qt=coeff_qt, mc_adjust=mc_adjust,
+        monitor=monitor,
         t_list=t_list, chunks=chunks, checkpoint=checkpoint,
         u_clip=u_clip, g_clip=g_clip, seed=seed,
     )

@@ -88,7 +88,7 @@ source x  <--G--  target y
 - A `_G` objective also applies the flow in its native direction during
   training, but that native direction is target to source. Generate target
   samples from source particles with `y = flow.inv(x)`.
-- `importance_weights*` and `annealed_importance_sampling` take
+- `importance_weights*` and `sequential_monte_carlo` take
   `type="F"` or `type="G"` because they support either convention.
 
 ### Flow constructors
@@ -319,24 +319,42 @@ Define the log-density-ratio coordinate
 z(y) = source(G(y)) - target(y) - log|det J_G(y)|.
 ```
 
-With a random batch permutation `perm`, the function returns
+The function returns
 
 ```text
-z + coeff_lambda * abs(z - z[perm]).
+z + coeff_lambda * pairwise_variation(z).
 ```
 
 The second term penalizes spread of the density ratio, which plain forward KL
 does not directly control.
 
+### `pairwise_variation`
+
+```python
+pairwise_variation(z)
+```
+
+Per-sample contributions whose mean is the exact mean of `|z_i - z_j|` over
+all pairs `i != j` of the batch (the Gini mean difference). With `r_i` the
+position of `z_i` in the ascending order of the batch,
+
+```text
+pairwise_variation(z)_i = 2 (2 r_i - N - 1) / (N - 1) * z_i,
+```
+
+so one sort replaces any random pairing; the mean is unbiased for
+`E|z - z'|` under the law the batch was drawn from, and its gradient in
+`z_i` is the batch sign correlation `(1/(N-1)) sum_{j != i} sgn(z_i - z_j)`.
+
 ### `forward_X_G`
 
 ```python
-forward_X_G(y, source, target, flow, key, trace_key=None)
+forward_X_G(y, source, target, flow, trace_key=None)
 ```
 
-This returns only `abs(z - z[perm])`. The sample population `y` can come from
-the target or another weight measure. KLXX uses this idea with a mixture of a
-quench and temper coverage measure and the detached flow proposal.
+This returns only `pairwise_variation(z)`. The sample population `y` can come
+from the target or another weight measure. KLXX uses this idea with a mixture
+of a quench and temper coverage measure and the detached flow proposal.
 
 ## Metrics and resampling
 
@@ -465,49 +483,37 @@ hamiltonian_monte_carlo(
 routine repeats trajectories and returns the final samples. `hmc` is its
 stable alias.
 
-## Annealing routines
+## Sequential Monte Carlo
 
-### Potential-space SMC
+### Flow-proposal SMC
 
 ```python
 sequential_monte_carlo(
-    key, samples, source, target,
-    ladder=1, mc_dt=1e-3, mc_steps=100,
-    adjust=True, taming=0, chunks=1,
-)
-```
-
-The result is `(samples, per_level_ess)`, with ESS shape `(ladder,)`. Each level
-uses the bridge
-
-```text
-U_k = (1 - k/M) U_source + (k/M) U_target
-```
-
-and executes reweight, resample, then Langevin at that same intermediate
-potential. `smc` is the stable alias.
-
-### Flow-proposal AIS surrogate
-
-```python
-annealed_importance_sampling(
     key, samples, source, target, flow, type,
     ladder=1, mc_dt=1e-3, mc_steps=100,
     adjust=True, taming=0, chunks=1,
-    trace_key=None, return_initial_log_weights=False,
+    trace_key=None,
 )
 ```
 
 This routine starts from source particles, pushes them through the trained
-flow, applies fractional proposal-to-target weights, resamples, and
-rejuvenates. Unlike classical SMC, rejuvenation targets the final target at
-every level. It is therefore a deliberately biased surrogate rather than
-exact AIS/SMC. It avoids gradients of a flow-proposal density or intermediate
-geometric-path density, but target Langevin still evaluates `target.grad`.
+flow, and at each of the `ladder` levels applies fractional
+proposal-to-target weights, resamples, and rejuvenates. Levels `1` to
+`ladder - 1` rejuvenate with one Metropolis-adjusted HMC trajectory each: a
+random momentum, `mc_steps` leapfrog steps of size `mc_dt`, one
+accept/reject decision, so that the resampled particles move before the
+next reweighting; the last level rejuvenates with `mc_steps` Langevin steps
+of size `mc_dt` (MALA by default). Rejuvenation targets the final
+target at every level, so the routine is a biased surrogate rather than an
+exact SMC sampler on the geometric path. It avoids gradients of a
+flow-proposal density or intermediate geometric-path density, but both
+kernels still evaluate `target.grad`.
 
-By default it returns samples. With `return_initial_log_weights=True`, it
-returns `(samples, initial_log_weights)`. Direct trainers use this initial
-proposal diagnostic for batch ESS. `ais` is the stable alias.
+The result is `(samples, proposal, proposal_log_weights)`: the target
+samples, the pushforward particles the levels started from, and the full
+proposal-to-target log weights on that pushforward. Direct trainers use the
+proposal log weights for the batch ESS diagnostic, and KLXX uses the
+proposal itself as its detached `bar_nu` batch. `smc` is the stable alias.
 
 ## Batched optimization
 
@@ -559,6 +565,7 @@ quench_and_temper(
     opt_dt=1.0, opt_steps=100,
     mc_dt=1e-3, mc_steps=100,
     mc_adjust=True, chunks=1,
+    *, source=None, coeff_qt=0.0,
 )
 ```
 
@@ -566,14 +573,22 @@ The construction executes:
 
 ```text
 input population
+  -> (coeff_qt > 0) resample by exp(coeff_qt * (source - target)),
+     then Langevin under (1 - coeff_qt) source + coeff_qt target
   -> Gaussian melt
   -> per-particle L-BFGS quench to target basins
   -> target Langevin temper
   -> wide-coverage population hat_mu
 ```
 
-`chunks` is forwarded to both the quench and temper. `qt` is the stable alias.
-KLXX uses this wide-coverage population for its additional X regularization.
+`coeff_qt` in `[0, 1]` is the exponent of a partial importance resampling
+that precedes the melt and requires `source`; it is skipped at the default
+`0`. With `coeff_qt = 0` every input particle is melted, which is the most
+aggressive mode search; a positive `coeff_qt` moves the basin weights of the
+pool towards the target's, so that a basin the source over-represents no
+longer dominates `hat_mu`. `chunks` is forwarded to the weights, the quench,
+and both Langevin runs. `qt` is the stable alias. KLXX uses this
+wide-coverage population for its additional X regularization.
 
 ## Chunking semantics
 
@@ -630,15 +645,11 @@ reimplementing their optimizer scans.
 
 The closest low-level checks are:
 
-- [flow and Jacobian tests](../smoke/test_flow.py)
-- [public API and backend report](../smoke/test_public_api.py)
-- [periodic seam tests](../smoke/test_circular.py)
 - [potential tests](../smoke/test_potential.py)
 - [potential-algebra tests](../smoke/test_linear_combination.py)
 - [loss formula tests](../smoke/test_loss.py)
 - [metrics tests](../smoke/test_metrics.py)
 - [rejuvenation tests](../smoke/test_rejuvenation.py)
-- [annealing tests](../smoke/test_annealing.py)
 - [optimization tests](../smoke/test_optimization.py)
 - [flat utility API tests](../smoke/test_utils_api.py)
 

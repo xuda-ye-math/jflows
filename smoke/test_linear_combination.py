@@ -9,8 +9,8 @@ renders the normalized densities exp(-U_c) as a sequence of heatmaps
 mixture transition is visible as a smooth concentration of mass.
 
 This is the standard linear potential interpolation used by staged Boltzmann
-generators: SMC / AIS traverse exactly such an interpolation, with the
-coefficient c retuned per inner level (no recompile — the coefficients are an
+generators: the stage schedule traverses exactly such an interpolation, with
+the coefficient c retuned per stage (no recompile — the coefficients are an
 array leaf).
 
 Checks per interpolation point:

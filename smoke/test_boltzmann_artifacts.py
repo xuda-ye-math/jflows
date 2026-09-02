@@ -19,13 +19,13 @@ from jflows.boltzmann.load import load
 from jflows.boltzmann.load import run as continue_run
 
 
-VALID_SZIE = 32
-BATCH_SZIE = 8
+VALID_SIZE = 32
+BATCH_SIZE = 8
 
 
 def main():
     potential = Nlog_Gaussian([0.0, 0.0], [1.0, 1.0])
-    samples = potential.samples(jax.random.key(1), VALID_SZIE)
+    samples = potential.samples(jax.random.key(1), VALID_SIZE)
     flow = NSF(
         jax.random.key(2), [-4.0, -4.0], [4.0, 4.0],
         bins=4, transforms=1, hidden_features=(8,),
@@ -40,12 +40,13 @@ def main():
             continuation,
             objective="forward_kl",
             pool_size=0,
-            batch_size=BATCH_SZIE,
-            train_steps=1,
+            batch_size=BATCH_SIZE,
+            steps_total=1,
             lr=0.0,
             ladder=1,
             mc_dt=1e-3,
-            mc_steps=0,
+            mc_steps_1=1,
+            mc_steps_2=1,
             initialize_from_identity=True,
             mc_adjust=True,
             monitor=None,

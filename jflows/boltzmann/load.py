@@ -83,7 +83,6 @@ def load(run_dir, template=None):
                 "valid_sample_count": int(saved["valid_sample_count"]),
                 "selected": saved["selected"],
                 "attempt_status_hist": tuple(saved["attempt_status_hist"]),
-                "selection_history": tuple(saved["selection_history"]),
                 "elapsed_seconds": float(saved["elapsed_seconds"]),
                 "validation_samples_path": saved["validation_samples_path"],
             }
@@ -156,7 +155,6 @@ def load_training_history(run_dir, stage: int) -> dict:
     with np.load(root / saved["history_path"], allow_pickle=False) as data:
         result = {key: data[key].copy() for key in data.files}
     result["attempt_status_hist"] = tuple(saved["attempt_status_hist"])
-    result["selection_history"] = tuple(saved["selection_history"])
     return result
 
 
