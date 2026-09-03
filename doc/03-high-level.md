@@ -304,10 +304,9 @@ draw exact `pi_b` batches directly, so every Adam step:
 
 1. samples source-side particles from the current validation population;
 2. applies flow-proposal SMC through the current G flow;
-3. reweights, resamples, and rejuvenates (`mc_steps_1` MALA steps at the
-   level's own distribution of the geometric path on the intermediate
-   levels, `mc_steps_2` steps at `pi_b` on the last) to manufacture an
-   approximate `pi_b` batch `y`; and
+3. reweights, resamples, and rejuvenates at `pi_b` on every level
+   (`mc_steps_1` MALA steps on the intermediate levels, `mc_steps_2` on the
+   last) to manufacture an approximate `pi_b` batch `y`; and
 4. minimizes
 
 ```text
@@ -316,11 +315,11 @@ L_forward(G) = mean[U_a(G(y)) - log|det J_G(y)|].
 
 The omitted `-U_b(y)` term is constant with respect to the flow parameters for
 the fixed manufactured batch. `ladder` controls the number of SMC levels used
-inside every optimizer step. The SMC routine rejuvenates every level with
-MALA at the level's own distribution of the geometric path between the
-flow proposal and `pi_b`, so every level is exact; on the intermediate
-levels the Langevin drift is differentiated through the flow, and the last
-level runs under `U_b` alone.
+inside every optimizer step. For the forward KL family the SMC routine
+rejuvenates every level with MALA at `U_b`: the intermediate levels are a
+target surrogate rather than exact levels of the geometric path, and no
+level differentiates the flow. Only the FAB generators use the exact levels
+of `sequential_monte_carlo_fab`.
 
 This objective is normally chosen when mass coverage is more important than a
 pure reverse-KL baseline. It costs more per optimizer step because target-batch

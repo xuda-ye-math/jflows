@@ -126,8 +126,8 @@ jflows/
 - Primitive kernels use `dt` and `steps`; the utility sampler
   `quench_and_temper` uses `mc_dt`, `mc_steps`, `opt_dt`, and `opt_steps`;
   `sequential_monte_carlo`, the trainers, and the generators split the
-  Langevin budget into `mc_steps_1` (the intermediate SMC levels only,
-  through the flow) and `mc_steps_2` (every other rejuvenation); trainers
+  Langevin budget into `mc_steps_1` (the intermediate SMC levels only) and
+  `mc_steps_2` (every other rejuvenation); trainers
   and generators also use `steps_total`, `batch_size`, and `pool_size`.
 - `chunks` is the number of row partitions, not the number of rows in one
   partition. It is the only generic memory-partition keyword.

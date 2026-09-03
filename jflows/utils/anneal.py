@@ -3,12 +3,16 @@
 `sequential_monte_carlo` (alias `smc`) manufactures target samples from
 source samples through a trained flow: the source particles are pushed
 through the flow, and every level then reweights them towards the target,
-resamples, and rejuvenates at the level's own distribution: level k of M
-rejuvenates with Langevin steps of size `mc_dt` (MALA by default) at
-mu_k = nu^(1 - k/M) pi^(k/M), whose potential contains the pushforward
-density of the flow (`mc_steps_1` steps), and the last level at the target
-pi (`mc_steps_2` steps).
-Every level is therefore exact. Built on the other utils modules:
+resamples, and rejuvenates at the target pi on every level with Langevin
+steps of size `mc_dt` (MALA by default), `mc_steps_1` steps on the
+intermediate levels and `mc_steps_2` on the last: the intermediate levels
+are a target surrogate (their kernel is invariant for pi rather than for
+the level's own distribution), and no level differentiates the flow. This
+is the SMC of the forward KL trainers. `sequential_monte_carlo_fab` (alias
+`smc_fab`) is the exact two-phase SMC of FAB: level k of M rejuvenates at
+its own distribution mu_k = nu^(1 - k/M) pi^(k/M), whose potential contains
+the pushforward density of the flow, and then on to pi^2 / nu along
+rho_k = pi (pi / nu)^(k/M). Built on the other utils modules:
 importance reweighting + `resample_index` (metrics) alternating with the
 Langevin kernel (rejuvenation), whose `taming` stabilizer is exposed here
 as well.
@@ -50,8 +54,8 @@ __all__ = [
 
 # ──────────────────────────────────────────────────────────────────────
 # SMC — flow proposal, geometric path to the target, resampling per level,
-# MALA rejuvenation at the level's own distribution mu_k on every level
-# (mu_M = pi on the last)
+# MALA rejuvenation at the target pi on every level (the forward KL target
+# surrogate); the exact levels live in `sequential_monte_carlo_fab`
 # ──────────────────────────────────────────────────────────────────────
 
 def sequential_monte_carlo(
@@ -104,24 +108,20 @@ def sequential_monte_carlo(
                 log w_full <- -target(y) + source(x) + log|det J_F(x)|
             log w <- (1/M) * log w_full
             y     <- resample(y, self-normalised w)
-            y     <- langevin(y, U_k, ...)      # k < M: MALA in mu_k
-            y     <- langevin(y, target, ...)   # k = M: MALA in pi
+            y     <- langevin(y, target, ...)   # k < M: mc_steps_1 MALA in pi
+            y     <- langevin(y, target, ...)   # k = M: mc_steps_2 MALA in pi
 
-    Every level is exact: level k rejuvenates at its own distribution
-        mu_k = nu^(1 - k/M) pi^(k/M),
-        U_k(y) = -log mu_k(y) = target(y) + (1 - k/M) * log w_full(y),
-    with log w_full = log(pi / nu) the same full proposal-to-target log
-    weight the level reweights by, and nu = F_# pi_0 the pushforward
-    density through the flow. `U_k` therefore contains the flow, and its
-    gradient in the Langevin drift is taken through the flow (the
-    pushforward density and its Jacobian); this is what an intermediate
-    level costs. The start energy of the Langevin run is `target(y) + (1 -
-    k/M) log w_full(y)` from the quantities the reweighting already
-    evaluated, carried through the resampling. The intermediate levels use
-    `mc_steps_1` Langevin steps of size `mc_dt` (MALA by default); the last
-    level (mu_M = pi) runs `mc_steps_2` steps under `target` alone.
-    Both kernels are invariant for `pi`; neither removes the
-    intermediate-path approximation.
+    Every level rejuvenates at the target pi: the intermediate levels are a
+    target surrogate whose kernel is invariant for pi rather than for the
+    level's own distribution mu_k = nu^(1 - k/M) pi^(k/M), so the routine
+    is not an exact sampler on the geometric path, but no level evaluates
+    or differentiates the pushforward density. This is the SMC of the
+    forward KL trainers; the exact levels, whose potential contains the
+    flow, are those of `sequential_monte_carlo_fab`. The start energy of
+    each Langevin run is the `target(y)` the reweighting already evaluated,
+    carried through the resampling; the intermediate levels use
+    `mc_steps_1` Langevin steps of size `mc_dt` (MALA by default) and the
+    last level runs `mc_steps_2` steps.
 
     Input:
         key:       PRNG key (level k uses fold_in(key, k), split into the
@@ -137,12 +137,11 @@ def sequential_monte_carlo(
                                      from the flow proposal to the target.
         mc_dt:     float             Langevin step size on every level
         mc_steps_1: int              Langevin steps on the intermediate levels
-                                     1 .. M-1 (potential through the flow)
+                                     1 .. M-1
         mc_steps_2: int              Langevin steps on the last level M (at
                                      the target alone)
         adjust:    bool              if True, MALA rejuvenation invariant for
-                                     the level's mu_k; if False, ULA (see
-                                     `langevin`)
+                                     pi; if False, ULA (see `langevin`)
         taming:    float             if > 0, tamed Langevin drift on every
                                      level (see `langevin`)
         chunks:    int               split along dim 0 into this many execution
@@ -213,21 +212,15 @@ def sequential_monte_carlo(
             u = jnp.concatenate(energy_parts, axis=0)
         w = linear_weights_from_log(full_log_weight / M)
         # (2) resample onto high-weight particles, then rejuvenate with
-        #     MALA at the level's own distribution: mu_k on the
-        #     intermediate levels (U_k = target + (1 - k/M) log w_full,
-        #     through the flow), pi on the last. The start energy of the
-        #     Langevin run comes from the quantities already evaluated.
+        #     MALA at pi: mc_steps_1 steps on the intermediate levels,
+        #     mc_steps_2 on the last. The start energy of the Langevin run
+        #     is the target energy the reweighting already evaluated.
         key_r, key_l = jax.random.split(jax.random.fold_in(key, k))
         idx = resample_index(key_r, y, w)
         if k < M:
-            s_k = 1.0 - k / M
-            level_potential = _path_potential(
-                source, target, _pushforward_log_density(flow_k, type), s_k
-            )
             y = langevin(
-                key_l, y[idx], level_potential, dt=mc_dt, steps=mc_steps_1,
-                adjust=adjust, taming=taming, chunks=chunks,
-                energy=u[idx] + s_k * full_log_weight[idx],
+                key_l, y[idx], target, dt=mc_dt, steps=mc_steps_1, adjust=adjust,
+                taming=taming, chunks=chunks, energy=u[idx],
             )
         else:
             y = langevin(

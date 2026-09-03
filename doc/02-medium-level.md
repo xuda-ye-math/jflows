@@ -86,7 +86,7 @@ updates, and monitor callbacks.
 <tr><td><code>lr</code></td><td>Adam learning rate</td></tr>
 <tr><td><code>ladder</code></td><td>SMC levels used to manufacture one forward-training batch</td></tr>
 <tr><td><code>mc_dt</code></td><td>Langevin step size of every rejuvenation</td></tr>
-<tr><td><code>mc_steps_1</code></td><td>MALA steps on the intermediate SMC levels only, at the level's own distribution through the flow</td></tr>
+<tr><td><code>mc_steps_1</code></td><td>MALA steps on the intermediate SMC levels only (at the target for the forward KL trainers, at the level's own distribution through the flow for FAB)</td></tr>
 <tr><td><code>mc_steps_2</code></td><td>MALA steps of every other rejuvenation: the last SMC level at the target, the reverse KL source batch, the QT rows of the KLXX mixture batch, and the temper of the KLXX quench-and-temper pool (and its resampling when <code>coeff_qt &gt; 0</code>)</td></tr>
 <tr><td><code>mc_adjust</code></td><td><code>True</code> for MALA, <code>False</code> for ULA</td></tr>
 <tr><td><code>seed</code></td><td>deterministic trainer key namespace</td></tr>
@@ -192,10 +192,12 @@ train_forward_KL_G(
 ```
 
 At every step, the trainer draws a source batch and manufactures approximate
-target samples with `sequential_monte_carlo` through the current G flow
-(`mc_steps_1` MALA steps at the level's own distribution of the geometric
-path on the intermediate levels, `mc_steps_2` steps at the target on the
-last).
+target samples with `sequential_monte_carlo` through the current G flow:
+every level rejuvenates at the target, `mc_steps_1` MALA steps on the
+intermediate levels and `mc_steps_2` on the last, so the intermediate
+levels are a target surrogate and no level differentiates the flow. KLX,
+KLL1, and KLXX use the same batch construction; only FAB uses the exact
+levels of `sequential_monte_carlo_fab`.
 It then minimizes `forward_KL_G` on that fresh population. The target batch is
 not frozen across steps.
 

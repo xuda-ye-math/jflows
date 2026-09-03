@@ -5,8 +5,8 @@ Every public trainer runs two Adam steps on a 2D Gaussian pair with a
 batch of 16 rows, and the KLXX adaptive-staging generator completes one
 two-stage schedule, so that the signatures, the compiled scans, the batch
 ESS histories, the ``mc_steps_1`` / ``mc_steps_2`` split, ``coeff_qt``,
-the MALA run at the intermediate distribution of an SMC level (forward KL
-at ``ladder=2``), and the policy keys are exercised once. Numbers are not
+an intermediate SMC level (forward KL at ``ladder=2``, MALA at the target),
+and the policy keys are exercised once. Numbers are not
 benchmark results.
 """
 

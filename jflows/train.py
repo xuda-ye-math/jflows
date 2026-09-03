@@ -2,13 +2,18 @@
 
 Every trainer runs ``steps_total`` Adam steps in one compiled scan and
 regenerates its batch inside every step. Two Langevin budgets: ``mc_steps_1``
-is used only on the intermediate SMC levels, whose MALA runs at the level's
-own distribution of the geometric path and differentiates the pushforward
-density through the flow; ``mc_steps_2`` is used for every other
-rejuvenation, at a plain potential: the last SMC level at the target, the
-reverse KL source batch, the quench-and-temper rows of the KLXX mixture
-batch, and the temper of the whole quench-and-temper pool built once before
-the scan. Every rejuvenation uses the step size ``mc_dt``.
+is used only on the intermediate SMC levels; ``mc_steps_2`` is used for
+every other rejuvenation: the last SMC level at the target, the reverse KL
+source batch, the quench-and-temper rows of the KLXX mixture batch, and the
+temper of the whole quench-and-temper pool built once before the scan. Every
+rejuvenation uses the step size ``mc_dt``. The forward KL trainers (forward
+KL, KLX, KLL1, KLXX) manufacture their target batch with
+``sequential_monte_carlo``, whose every level rejuvenates at the target
+(the target surrogate: inexact intermediate levels, no gradient through the
+flow); only the FAB trainers use the exact SMC
+(``sequential_monte_carlo_fab``), whose intermediate levels rejuvenate at
+their own distribution of the path and differentiate the pushforward
+density through the flow, which is what makes them expensive.
 
 The X functional of KLX and KLXX is the exact batch Gini mean difference of
 the log-ratio, evaluated by one sort (``_variation``); there is no random

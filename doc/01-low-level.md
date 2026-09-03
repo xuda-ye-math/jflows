@@ -517,22 +517,15 @@ sequential_monte_carlo(
 
 This routine starts from source particles, pushes them through the trained
 flow, and at each of the `ladder` levels applies fractional
-proposal-to-target weights, resamples, and rejuvenates at the level's own
-distribution. Level `k` of `M = ladder` is
-
-```text
-mu_k = nu^(1 - k/M) pi^(k/M),
-U_k(y) = -log mu_k(y) = target(y) + (1 - k/M) log w(y),
-```
-
-with `log w = log(pi / nu)` the full proposal-to-target log weight the level
-reweights by and `nu` the pushforward density through the flow. Every level
-rejuvenates with Langevin steps of size `mc_dt` (MALA by default) at `mu_k`,
-so every level is exact on the geometric path. On the intermediate levels
-`1 .. M-1` the run is `mc_steps_1` steps, `U_k` contains the flow, and the
-Langevin drift is its gradient through the flow (the pushforward density and
-its Jacobian); the last level, `mu_M = pi`, runs `mc_steps_2` steps under
-`target` alone.
+proposal-to-target weights, resamples, and rejuvenates at the target with
+Langevin steps of size `mc_dt` (MALA by default): `mc_steps_1` steps on the
+intermediate levels `1 .. M-1` and `mc_steps_2` steps on the last level
+`M = ladder`. Every level rejuvenates at the target, so the intermediate
+levels are a target surrogate, invariant for `pi` rather than for the
+level's own distribution `mu_k = nu^(1 - k/M) pi^(k/M)`, and no level
+evaluates or differentiates the pushforward density. This is the SMC of the
+forward KL trainers; the exact levels, whose potential contains the flow,
+are those of `sequential_monte_carlo_fab` below.
 
 The result is `(samples, proposal, proposal_log_weights)`: the target
 samples, the pushforward particles the levels started from, and the full
