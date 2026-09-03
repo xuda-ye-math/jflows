@@ -1,7 +1,7 @@
 """Multi-well (8-mode) reverse-KL benchmark: CNF vs OTFlow across dimension.
 
 Both continuous flows are trained by the SAME objective — plain reverse KL
-through `train_reverse_KL_F` (no rejuvenation, `MC_STEPS_1 = 0`) — against the
+through `train_reverse_KL_F` (no rejuvenation, `MC_STEPS_2 = 0`) — against the
 same target, so the comparison isolates the one variable that differs:
 CNF's free-form MLP velocity with an O(d) augmented-Jacobian trace vs
 OTFlow's potential-gradient velocity with a closed-form trace. Each cell
@@ -56,8 +56,8 @@ BATCH_SIZE: int = 512     # source samples per Adam step
 STEPS_TOTAL: int = 1000      # Adam steps per cell (one compiled call)
 LR: float = 2e-3       # Adam learning rate
 MONITOR_EVERY: int = 100  # print loss + proposal ESS every MONITOR_EVERY steps
-MC_DT: float = 1e-3  # Langevin step size (unused: MC_STEPS_1 = 0)
-MC_STEPS_1: int = 0    # 0 -> no Langevin rejuvenation (plain reverse KL)
+MC_DT: float = 1e-3  # Langevin step size (unused: MC_STEPS_2 = 0)
+MC_STEPS_2: int = 0    # MALA steps of the reverse KL source batch; 0 -> no Langevin rejuvenation (plain reverse KL)
 CHECKPOINT: bool = True  # rematerialize the CNF exact-trace forward pass in the backward
 CHUNKS: int = 4         # split the full-set ESS evaluation to bound peak memory
 
@@ -138,7 +138,7 @@ def main() -> None:
             flow, _ = train_reverse_KL_F(
                 x_valid, u0, u1, flow,
                 batch_size=BATCH_SIZE, steps_total=STEPS_TOTAL, lr=LR,
-                mc_dt=MC_DT, mc_steps_1=MC_STEPS_1, checkpoint=CHECKPOINT,
+                mc_dt=MC_DT, mc_steps_2=MC_STEPS_2, checkpoint=CHECKPOINT,
                 monitor=Monitor(MONITOR_EVERY, f"[d={d:>2} {name:<6}] ", log),
             )
             flow = jax.block_until_ready(flow)   # real wall time: wait for the device

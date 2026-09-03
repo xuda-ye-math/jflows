@@ -4,9 +4,10 @@
 source samples through a trained flow: the source particles are pushed
 through the flow, and every level then reweights them towards the target,
 resamples, and rejuvenates at the level's own distribution: level k of M
-rejuvenates with `mc_steps` Langevin steps of size `mc_dt` (MALA by
-default) at mu_k = nu^(1 - k/M) pi^(k/M), whose potential contains the
-pushforward density of the flow, and the last level at the target pi.
+rejuvenates with Langevin steps of size `mc_dt` (MALA by default) at
+mu_k = nu^(1 - k/M) pi^(k/M), whose potential contains the pushforward
+density of the flow (`mc_steps_1` steps), and the last level at the target
+pi (`mc_steps_2` steps).
 Every level is therefore exact. Built on the other utils modules:
 importance reweighting + `resample_index` (metrics) alternating with the
 Langevin kernel (rejuvenation), whose `taming` stabilizer is exposed here
@@ -62,7 +63,8 @@ def sequential_monte_carlo(
     type: str,
     ladder: int = 1,
     mc_dt: float = 1e-3,
-    mc_steps: int = 100,
+    mc_steps_1: int = 100,
+    mc_steps_2: int = 100,
     adjust: bool = True,
     taming: float = 0,
     chunks: int = 1,
@@ -115,9 +117,9 @@ def sequential_monte_carlo(
     pushforward density and its Jacobian); this is what an intermediate
     level costs. The start energy of the Langevin run is `target(y) + (1 -
     k/M) log w_full(y)` from the quantities the reweighting already
-    evaluated, carried through the resampling. Every level uses `mc_steps`
-    Langevin steps of size `mc_dt` (MALA by default); the last level (mu_M
-    = pi) runs under `target` alone.
+    evaluated, carried through the resampling. The intermediate levels use
+    `mc_steps_1` Langevin steps of size `mc_dt` (MALA by default); the last
+    level (mu_M = pi) runs `mc_steps_2` steps under `target` alone.
     Both kernels are invariant for `pi`; neither removes the
     intermediate-path approximation.
 
@@ -134,7 +136,10 @@ def sequential_monte_carlo(
                                      a single reweight + resample + Langevin hop
                                      from the flow proposal to the target.
         mc_dt:     float             Langevin step size on every level
-        mc_steps:  int               Langevin steps on every level
+        mc_steps_1: int              Langevin steps on the intermediate levels
+                                     1 .. M-1 (potential through the flow)
+        mc_steps_2: int              Langevin steps on the last level M (at
+                                     the target alone)
         adjust:    bool              if True, MALA rejuvenation invariant for
                                      the level's mu_k; if False, ULA (see
                                      `langevin`)
@@ -220,13 +225,13 @@ def sequential_monte_carlo(
                 source, target, _pushforward_log_density(flow_k, type), s_k
             )
             y = langevin(
-                key_l, y[idx], level_potential, dt=mc_dt, steps=mc_steps,
+                key_l, y[idx], level_potential, dt=mc_dt, steps=mc_steps_1,
                 adjust=adjust, taming=taming, chunks=chunks,
                 energy=u[idx] + s_k * full_log_weight[idx],
             )
         else:
             y = langevin(
-                key_l, y[idx], target, dt=mc_dt, steps=mc_steps, adjust=adjust,
+                key_l, y[idx], target, dt=mc_dt, steps=mc_steps_2, adjust=adjust,
                 taming=taming, chunks=chunks,
             )
     return y, proposal, proposal_log_weights
@@ -270,7 +275,8 @@ def sequential_monte_carlo_fab(
     type: str,
     ladder: int = 1,
     mc_dt: float = 1e-3,
-    mc_steps: int = 100,
+    mc_steps_1: int = 100,
+    mc_steps_2: int = 100,
     adjust: bool = True,
     taming: float = 0,
     chunks: int = 1,
@@ -290,12 +296,14 @@ def sequential_monte_carlo_fab(
     whose incremental weight is again the 1/M-th of the same proposal-to-
     target weight log w = log(pi / nu), refreshed at the moved particles
     through the flow. Every phase-2 level resamples and rejuvenates with
-    `mc_steps` Langevin steps of size `mc_dt` (MALA by default) at its own
-    distribution rho_k,
+    Langevin steps of size `mc_dt` (MALA by default) at its own distribution
+    rho_k,
         U_k(y) = -log rho_k(y) = target(y) - (k/M) * log w(y),
     whose gradient is taken through the flow (the pushforward density and its
-    Jacobian), as on the intermediate levels of phase 1. There is no replay
-    buffer: this is plain SMC from the source to `pi^2 / nu`.
+    Jacobian), as on the intermediate levels of phase 1: `mc_steps_1` steps
+    on the intermediate levels 1 .. M-1 and `mc_steps_2` on the last level
+    (rho_M = pi^2 / nu, the end of the path). There is no replay buffer:
+    this is plain SMC from the source to `pi^2 / nu`.
 
     Input: as `sequential_monte_carlo`; `ladder` is the number of levels of
     each phase.
@@ -356,13 +364,13 @@ def sequential_monte_carlo_fab(
                 source, target, _pushforward_log_density(flow_k, type), s_k
             )
             y = langevin(
-                key_l, y[idx], level_potential, dt=mc_dt, steps=mc_steps,
+                key_l, y[idx], level_potential, dt=mc_dt, steps=mc_steps_1,
                 adjust=adjust, taming=taming, chunks=chunks,
                 energy=u[idx] + s_k * full_log_weight[idx],
             )
         else:
             y = langevin(
-                key_l, y[idx], target, dt=mc_dt, steps=mc_steps, adjust=adjust,
+                key_l, y[idx], target, dt=mc_dt, steps=mc_steps_2, adjust=adjust,
                 taming=taming, chunks=chunks,
             )
 
@@ -387,7 +395,8 @@ def sequential_monte_carlo_fab(
         key_r, key_h = jax.random.split(jax.random.fold_in(key_2, k))
         idx = resample_index(key_r, y, w)
         y = langevin(
-            key_h, y[idx], level_potential, dt=mc_dt, steps=mc_steps,
+            key_h, y[idx], level_potential, dt=mc_dt,
+            steps=mc_steps_1 if k < M else mc_steps_2,
             adjust=adjust, taming=taming, chunks=chunks,
             energy=u[idx] + s_k * full_log_weight[idx],
         )

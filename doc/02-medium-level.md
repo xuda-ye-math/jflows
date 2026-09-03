@@ -85,8 +85,9 @@ updates, and monitor callbacks.
 <tr><td><code>steps_total</code></td><td>number of Adam updates</td></tr>
 <tr><td><code>lr</code></td><td>Adam learning rate</td></tr>
 <tr><td><code>ladder</code></td><td>SMC levels used to manufacture one forward-training batch</td></tr>
-<tr><td><code>mc_dt</code>, <code>mc_steps_1</code></td><td>step size and steps on batch-sized sets: the reverse KL source batch (Langevin), each intermediate SMC level (one HMC trajectory of <code>mc_steps_1</code> leapfrog steps of size <code>mc_dt</code>), the last SMC level and the QT rows of the KLXX mixture batch (Langevin)</td></tr>
-<tr><td><code>mc_steps_2</code></td><td>Langevin steps on population-sized sets: the temper of the KLXX quench-and-temper pool (and its resampling when <code>coeff_qt &gt; 0</code>)</td></tr>
+<tr><td><code>mc_dt</code></td><td>Langevin step size of every rejuvenation</td></tr>
+<tr><td><code>mc_steps_1</code></td><td>MALA steps on the intermediate SMC levels only, at the level's own distribution through the flow</td></tr>
+<tr><td><code>mc_steps_2</code></td><td>MALA steps of every other rejuvenation: the last SMC level at the target, the reverse KL source batch, the QT rows of the KLXX mixture batch, and the temper of the KLXX quench-and-temper pool (and its resampling when <code>coeff_qt &gt; 0</code>)</td></tr>
 <tr><td><code>mc_adjust</code></td><td><code>True</code> for MALA, <code>False</code> for ULA</td></tr>
 <tr><td><code>seed</code></td><td>deterministic trainer key namespace</td></tr>
 <tr><td><code>checkpoint</code></td><td>rematerialize the loss calculation during reverse-mode differentiation</td></tr>
@@ -135,7 +136,7 @@ monitor = Monitor(every=20, prefix="[forward KL] ")
 train_reverse_KL_F(
     x_valid, source, target, flow,
     batch_size, steps_total, lr,
-    mc_dt, mc_steps_1,
+    mc_dt, mc_steps_2,
     mc_adjust=True,
     monitor=None,
     seed=0,
@@ -150,7 +151,7 @@ train_reverse_KL_F(
 At every optimizer step:
 
 1. draw `batch_size` rows without replacement from `x_valid`;
-2. freshen the batch by Langevin at `source`;
+2. freshen the batch by `mc_steps_2` Langevin steps at `source`;
 3. evaluate `reverse_KL_F(x, target, flow)`;
 4. update the F-native flow with Adam; and
 5. report the batch proposal ESS.
@@ -165,7 +166,7 @@ flow, batch_ess = train_reverse_KL_F(
     steps_total=200,
     lr=1e-3,
     mc_dt=1e-3,
-    mc_steps_1=50,
+    mc_steps_2=50,
     monitor=Monitor(20, "[reverse] "),
 )
 ```
@@ -176,7 +177,7 @@ flow, batch_ess = train_reverse_KL_F(
 train_forward_KL_G(
     x_valid, source, target, flow,
     batch_size, steps_total, lr,
-    ladder, mc_dt, mc_steps_1,
+    ladder, mc_dt, mc_steps_1, mc_steps_2,
     mc_adjust=True,
     monitor=None,
     seed=0,
@@ -193,7 +194,8 @@ train_forward_KL_G(
 At every step, the trainer draws a source batch and manufactures approximate
 target samples with `sequential_monte_carlo` through the current G flow
 (`mc_steps_1` MALA steps at the level's own distribution of the geometric
-path on every level, the target on the last).
+path on the intermediate levels, `mc_steps_2` steps at the target on the
+last).
 It then minimizes `forward_KL_G` on that fresh population. The target batch is
 not frozen across steps.
 
@@ -209,6 +211,7 @@ flow, batch_ess = train_forward_KL_G(
     ladder=1,
     mc_dt=1e-3,
     mc_steps_1=50,
+    mc_steps_2=50,
     initialize_from_identity=True,
     u_clip=100.0,
     g_clip=100.0,
@@ -221,7 +224,7 @@ flow, batch_ess = train_forward_KL_G(
 train_forward_KLX_G(
     x_valid, source, target, flow,
     batch_size, steps_total, lr,
-    ladder, mc_dt, mc_steps_1,
+    ladder, mc_dt, mc_steps_1, mc_steps_2,
     coeff_lambda=1.0,
     mc_adjust=True,
     monitor=None,
@@ -255,6 +258,7 @@ flow, batch_ess = train_forward_KLX_G(
     ladder=1,
     mc_dt=1e-3,
     mc_steps_1=50,
+    mc_steps_2=50,
     coeff_lambda=1.0,
 )
 ```
@@ -302,7 +306,7 @@ During each training step:
 1. manufacture an SMC target batch `y` through the current flow, whose
    pushforward proposal is kept as the detached `y_bar`;
 2. draw `y_hat` from the fixed QT pool and rejuvenate it at the target for
-   `mc_steps_1` steps;
+   `mc_steps_2` steps;
 3. mix `y_hat` and `y_bar` with probabilities `coeff_alpha` and
    `1 - coeff_alpha`; and
 4. optimize the target KLX term plus `coeff_theta` times the mixture X term.
@@ -338,7 +342,7 @@ flow, batch_ess = train_forward_KLXX_G(
 train_forward_KLL1_G(
     x_valid, source, target, flow,
     batch_size, steps_total, lr,
-    ladder, mc_dt, mc_steps_1,
+    ladder, mc_dt, mc_steps_1, mc_steps_2,
     coeff_lambda=1.0,
     mc_adjust=True,
     monitor=None,
@@ -369,7 +373,7 @@ removes the dispersion term. The output flow is G-native.
 train_FAB_G(
     x_valid, source, target, flow,
     batch_size, steps_total, lr,
-    ladder, mc_dt, mc_steps_1,
+    ladder, mc_dt, mc_steps_1, mc_steps_2,
     mc_adjust=True,
     monitor=None,
     seed=0,
@@ -387,7 +391,8 @@ FAB has the signature of forward KL. At every step it manufactures a batch
 from `pi^2 / nu` with `sequential_monte_carlo_fab` through the current G
 flow (`ladder` levels to the target, then `ladder` further levels on to
 `pi^2 / nu`, `mc_steps_1` MALA steps at the level's own distribution on
-every level) and minimizes the mean log-ratio `z` over that batch. Its
+the intermediate levels of each phase, `mc_steps_2` on the last) and
+minimizes the mean log-ratio `z` over that batch. Its
 parameter gradient
 is that of `-mean(log nu(y))` over `pi^2 / nu` samples, the alpha = 2
 divergence surrogate of FAB; there is no replay buffer. The reported batch
@@ -403,6 +408,7 @@ flow, batch_ess = train_FAB_G(
     ladder=1,
     mc_dt=1e-3,
     mc_steps_1=50,
+    mc_steps_2=50,
 )
 ```
 

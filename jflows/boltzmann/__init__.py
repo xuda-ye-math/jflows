@@ -217,19 +217,19 @@ def _train_attempt(
     if objective == "reverse_kl":
         return train_reverse_KL_F(
             samples, source, target, flow, batch_size, steps_total, lr,
-            mc_dt, mc_steps_1, mc_adjust, monitor, seed, checkpoint, **common,
+            mc_dt, mc_steps_2, mc_adjust, monitor, seed, checkpoint, **common,
         )
     if objective == "forward_kl":
         return train_forward_KL_G(
             samples, source, target, flow, batch_size, steps_total, lr,
-            ladder, mc_dt, mc_steps_1, mc_adjust, monitor, seed, checkpoint,
-            u_clip, g_clip, **common,
+            ladder, mc_dt, mc_steps_1, mc_steps_2, mc_adjust, monitor, seed,
+            checkpoint, u_clip, g_clip, **common,
         )
     if objective == "forward_klx":
         return train_forward_KLX_G(
             samples, source, target, flow, batch_size, steps_total, lr,
-            ladder, mc_dt, mc_steps_1, coeff_lambda, mc_adjust, monitor, seed,
-            checkpoint, u_clip, g_clip, **common,
+            ladder, mc_dt, mc_steps_1, mc_steps_2, coeff_lambda, mc_adjust,
+            monitor, seed, checkpoint, u_clip, g_clip, **common,
         )
     if objective == "forward_klxx":
         return train_forward_KLXX_G(
@@ -241,14 +241,14 @@ def _train_attempt(
     if objective == "forward_kll1":
         return train_forward_KLL1_G(
             samples, source, target, flow, batch_size, steps_total, lr,
-            ladder, mc_dt, mc_steps_1, coeff_lambda, mc_adjust, monitor, seed,
-            checkpoint, u_clip, g_clip, **common,
+            ladder, mc_dt, mc_steps_1, mc_steps_2, coeff_lambda, mc_adjust,
+            monitor, seed, checkpoint, u_clip, g_clip, **common,
         )
     if objective == "fab":
         return train_FAB_G(
             samples, source, target, flow, batch_size, steps_total, lr,
-            ladder, mc_dt, mc_steps_1, mc_adjust, monitor, seed, checkpoint,
-            u_clip, g_clip, **common,
+            ladder, mc_dt, mc_steps_1, mc_steps_2, mc_adjust, monitor, seed,
+            checkpoint, u_clip, g_clip, **common,
         )
     if objective == "fabx":
         return train_FABX_G(
@@ -721,7 +721,6 @@ def boltzmann_reverse_KL_F(
     steps_total,
     lr,
     mc_dt,
-    mc_steps_1,
     mc_steps_2,
     *,
     initialize_from_identity=True,
@@ -732,11 +731,11 @@ def boltzmann_reverse_KL_F(
     checkpoint=False,
     seed=0,
 ):
-    """Run adaptive-staging reverse-KL Boltzmann stages."""
+    """Run adaptive-staging reverse-KL Boltzmann stages (no SMC, so no ``mc_steps_1``)."""
     return run_boltzmann(
         x_valid, source, target, flow, objective="reverse_kl", pool_size=0,
         batch_size=batch_size, steps_total=steps_total, lr=lr, ladder=1,
-        mc_dt=mc_dt, mc_steps_1=mc_steps_1, mc_steps_2=mc_steps_2,
+        mc_dt=mc_dt, mc_steps_1=0, mc_steps_2=mc_steps_2,
         initialize_from_identity=initialize_from_identity,
         mc_adjust=mc_adjust, monitor=monitor, bg_param=bg_param,
         chunks=chunks, checkpoint=checkpoint, seed=seed,
@@ -983,7 +982,6 @@ def boltzmann_reverse_KL_F_fixed(
     steps_total,
     lr,
     mc_dt,
-    mc_steps_1,
     mc_steps_2,
     t_list,
     *,
@@ -994,11 +992,11 @@ def boltzmann_reverse_KL_F_fixed(
     checkpoint=False,
     seed=0,
 ):
-    """Run fixed-schedule reverse-KL Boltzmann stages."""
+    """Run fixed-schedule reverse-KL Boltzmann stages (no SMC, so no ``mc_steps_1``)."""
     return run_boltzmann(
         x_valid, source, target, flow, objective="reverse_kl", pool_size=0,
         batch_size=batch_size, steps_total=steps_total, lr=lr, ladder=1,
-        mc_dt=mc_dt, mc_steps_1=mc_steps_1, mc_steps_2=mc_steps_2,
+        mc_dt=mc_dt, mc_steps_1=0, mc_steps_2=mc_steps_2,
         initialize_from_identity=initialize_from_identity,
         mc_adjust=mc_adjust, monitor=monitor, t_list=t_list, chunks=chunks,
         checkpoint=checkpoint, seed=seed,

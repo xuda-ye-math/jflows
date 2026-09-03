@@ -67,8 +67,8 @@ MONITOR_EVERY: int = 20  # print loss + proposal ESS every MONITOR_EVERY steps
 # Langevin rejuvenation (training batches + the post-resample refresh)
 LADDER: int = 1        # SMC levels of the forward KL data manufacturing
 MC_DT: float = 1e-3  # Langevin step size
-MC_STEPS_1: int = 100  # Langevin steps per training batch / SMC level
-MC_STEPS_2: int = 100  # Langevin steps of the full-set refresh after resampling
+MC_STEPS_1: int = 100  # MALA steps on the intermediate SMC levels only (through the flow)
+MC_STEPS_2: int = 100  # MALA steps of every other rejuvenation: the last SMC level at the target, the reverse KL source batch, the full-set refresh after resampling
 
 # figure
 PLOT_SIZE: int = 10000    # subsample for a less crowded 3D scatter
@@ -125,13 +125,14 @@ def main() -> None:
         if name == "reverse KL":
             flow, hist = train_reverse_KL_F(x_valid, u0, u1, new_flow(jax.random.key(0)),
                                             batch_size=BATCH_SIZE, steps_total=STEPS_TOTAL, lr=LR,
-                                          mc_dt=MC_DT, mc_steps_1=MC_STEPS_1,
+                                          mc_dt=MC_DT, mc_steps_2=MC_STEPS_2,
                                           monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log))
             tp, y = "F", flow(x_valid)                # pushforward F(x)
         else:
             flow, hist = train_forward_KL_G(x_valid, u0, u1, new_flow(jax.random.key(1)),
                                             batch_size=BATCH_SIZE, steps_total=STEPS_TOTAL, lr=LR,
                                           ladder=LADDER, mc_dt=MC_DT, mc_steps_1=MC_STEPS_1,
+                                          mc_steps_2=MC_STEPS_2,
                                           monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log))
             tp, y = "G", flow.inv(x_valid)            # G's inverse pushes source forward
         log(f"[{name}] {STEPS_TOTAL} steps done   proposal ESS "

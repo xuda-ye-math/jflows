@@ -2,12 +2,13 @@
 
 Every trainer runs ``steps_total`` Adam steps in one compiled scan and
 regenerates its batch inside every step. Two Langevin budgets: ``mc_steps_1``
-rejuvenates batch-sized sets (the reverse KL source batch, every level of the
-SMC, and the quench-and-temper rows of the KLXX mixture batch);
-``mc_steps_2`` is the temper of the whole quench-and-temper pool,
-which is built once before the scan. Inside the SMC every level rejuvenates
-with ``mc_steps_1`` MALA steps of size ``mc_dt`` at its own distribution of
-the geometric path (the target on the last level).
+is used only on the intermediate SMC levels, whose MALA runs at the level's
+own distribution of the geometric path and differentiates the pushforward
+density through the flow; ``mc_steps_2`` is used for every other
+rejuvenation, at a plain potential: the last SMC level at the target, the
+reverse KL source batch, the quench-and-temper rows of the KLXX mixture
+batch, and the temper of the whole quench-and-temper pool built once before
+the scan. Every rejuvenation uses the step size ``mc_dt``.
 
 The X functional of KLX and KLXX is the exact batch Gini mean difference of
 the log-ratio, evaluated by one sort (``_variation``); there is no random
@@ -234,7 +235,7 @@ def train_reverse_KL_F(
     steps_total,
     lr,
     mc_dt,
-    mc_steps_1,
+    mc_steps_2,
     mc_adjust=True,
     monitor=None,
     seed=0,
@@ -265,7 +266,7 @@ def train_reverse_KL_F(
             jax.random.choice(key_index, count, (batch_size,), replace=False)
         ]
         x = langevin(
-            key_mc, x, source, dt=mc_dt, steps=mc_steps_1, adjust=mc_adjust
+            key_mc, x, source, dt=mc_dt, steps=mc_steps_2, adjust=mc_adjust
         )
 
         def loss_fn(values):
@@ -305,6 +306,7 @@ def train_forward_KL_G(
     ladder,
     mc_dt,
     mc_steps_1,
+    mc_steps_2,
     mc_adjust=True,
     monitor=None,
     seed=0,
@@ -346,7 +348,8 @@ def train_forward_KL_G(
             "G",
             ladder=ladder,
             mc_dt=mc_dt,
-            mc_steps=mc_steps_1,
+            mc_steps_1=mc_steps_1,
+            mc_steps_2=mc_steps_2,
             adjust=mc_adjust,
             trace_key=smc_trace_key,
         )
@@ -390,6 +393,7 @@ def train_FAB_G(
     ladder,
     mc_dt,
     mc_steps_1,
+    mc_steps_2,
     mc_adjust=True,
     monitor=None,
     seed=0,
@@ -405,7 +409,8 @@ def train_FAB_G(
 
     Every step draws a source batch, runs ``sequential_monte_carlo_fab`` through
     the current flow (phase 1 to the target, phase 2 on to ``pi^2 / nu``, each
-    of ``ladder`` levels with ``mc_steps_1`` steps per level), and minimizes the
+    of ``ladder`` levels, ``mc_steps_1`` MALA steps on the intermediate levels
+    and ``mc_steps_2`` on the last of each phase), and minimizes the
     mean log-ratio ``z = source(G(y)) - target(y) - log|det J_G(y)|`` over the
     ``pi^2 / nu`` batch, the gradient of the alpha = 2 divergence. No replay
     buffer. The reported batch ESS is the proposal ESS of phase 1.
@@ -439,7 +444,8 @@ def train_FAB_G(
             "G",
             ladder=ladder,
             mc_dt=mc_dt,
-            mc_steps=mc_steps_1,
+            mc_steps_1=mc_steps_1,
+            mc_steps_2=mc_steps_2,
             adjust=mc_adjust,
             trace_key=smc_trace_key,
         )
@@ -484,6 +490,7 @@ def train_forward_KLX_G(
     ladder,
     mc_dt,
     mc_steps_1,
+    mc_steps_2,
     coeff_lambda=1.0,
     mc_adjust=True,
     monitor=None,
@@ -526,7 +533,8 @@ def train_forward_KLX_G(
             "G",
             ladder=ladder,
             mc_dt=mc_dt,
-            mc_steps=mc_steps_1,
+            mc_steps_1=mc_steps_1,
+            mc_steps_2=mc_steps_2,
             adjust=mc_adjust,
             trace_key=smc_trace_key,
         )
@@ -571,6 +579,7 @@ def train_forward_KLL1_G(
     ladder,
     mc_dt,
     mc_steps_1,
+    mc_steps_2,
     coeff_lambda=1.0,
     mc_adjust=True,
     monitor=None,
@@ -618,7 +627,8 @@ def train_forward_KLL1_G(
             "G",
             ladder=ladder,
             mc_dt=mc_dt,
-            mc_steps=mc_steps_1,
+            mc_steps_1=mc_steps_1,
+            mc_steps_2=mc_steps_2,
             adjust=mc_adjust,
             trace_key=smc_trace_key,
         )
@@ -761,7 +771,8 @@ def train_forward_KLXX_G(
             "G",
             ladder=ladder,
             mc_dt=mc_dt,
-            mc_steps=mc_steps_1,
+            mc_steps_1=mc_steps_1,
+            mc_steps_2=mc_steps_2,
             adjust=mc_adjust,
             trace_key=smc_trace_key,
         )
@@ -773,7 +784,7 @@ def train_forward_KLXX_G(
             y_hat,
             target,
             dt=mc_dt,
-            steps=mc_steps_1,
+            steps=mc_steps_2,
             adjust=mc_adjust,
         )
         y_mixture = resample(
@@ -943,7 +954,8 @@ def train_FABX_G(
             "G",
             ladder=ladder,
             mc_dt=mc_dt,
-            mc_steps=mc_steps_1,
+            mc_steps_1=mc_steps_1,
+            mc_steps_2=mc_steps_2,
             adjust=mc_adjust,
             trace_key=smc_trace_key,
         )
@@ -955,7 +967,7 @@ def train_FABX_G(
             y_hat,
             target,
             dt=mc_dt,
-            steps=mc_steps_1,
+            steps=mc_steps_2,
             adjust=mc_adjust,
         )
         y_mixture = resample(

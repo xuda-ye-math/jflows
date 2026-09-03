@@ -56,11 +56,11 @@ def main():
 
     y_pi, proposal, log_w = sequential_monte_carlo(
         jax.random.key(2), x, source, target, flow, "G", ladder=4,
-        mc_dt=0.1, mc_steps=10,
+        mc_dt=0.1, mc_steps_1=10, mc_steps_2=10,
     )
     y_fab, proposal_fab, log_w_fab = sequential_monte_carlo_fab(
         jax.random.key(2), x, source, target, flow, "G", ladder=4,
-        mc_dt=0.1, mc_steps=10,
+        mc_dt=0.1, mc_steps_1=10, mc_steps_2=10,
     )
     check("shapes", y_fab.shape == x.shape and proposal_fab.shape == x.shape
           and log_w_fab.shape == (N,))
@@ -77,7 +77,7 @@ def main():
 
     y_f, _, _ = sequential_monte_carlo_fab(
         jax.random.key(2), x, source, target, flow, "F", ladder=2,
-        mc_dt=0.1, mc_steps=5, chunks=2,
+        mc_dt=0.1, mc_steps_1=5, mc_steps_2=5, chunks=2,
     )
     check("F direction and chunks finite", y_f.shape == x.shape and jnp.all(jnp.isfinite(y_f)))
     check("F direction reaches the pi^2/nu variance",
@@ -99,7 +99,7 @@ def main():
     x_2d = source_2d.samples(jax.random.key(2), 40000)
     lines = []
     trained, history = train_FAB_G(
-        x_2d, source_2d, target_2d, flow_2d, 2000, 200, 1e-3, 1, 1e-3, 100,
+        x_2d, source_2d, target_2d, flow_2d, 2000, 200, 1e-3, 1, 1e-3, 100, 100,
         monitor=Monitor(20, "[fab] ", lines.append),
     )
     losses = [float(re.search(r"loss = ([+-][0-9.]+e[+-][0-9]+)", line).group(1)) for line in lines]

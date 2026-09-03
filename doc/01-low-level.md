@@ -509,7 +509,7 @@ carrying that energy from one to the next, and returns the final samples.
 ```python
 sequential_monte_carlo(
     key, samples, source, target, flow, type,
-    ladder=1, mc_dt=1e-3, mc_steps=100,
+    ladder=1, mc_dt=1e-3, mc_steps_1=100, mc_steps_2=100,
     adjust=True, taming=0, chunks=1,
     trace_key=None,
 )
@@ -527,11 +527,12 @@ U_k(y) = -log mu_k(y) = target(y) + (1 - k/M) log w(y),
 
 with `log w = log(pi / nu)` the full proposal-to-target log weight the level
 reweights by and `nu` the pushforward density through the flow. Every level
-rejuvenates with `mc_steps` Langevin steps of size `mc_dt` (MALA by default)
-at `mu_k`, so every level is exact on the geometric path. On the
-intermediate levels `U_k` contains the flow and the Langevin drift is its
-gradient through the flow (the pushforward density and its Jacobian); the
-last level, `mu_M = pi`, runs under `target` alone.
+rejuvenates with Langevin steps of size `mc_dt` (MALA by default) at `mu_k`,
+so every level is exact on the geometric path. On the intermediate levels
+`1 .. M-1` the run is `mc_steps_1` steps, `U_k` contains the flow, and the
+Langevin drift is its gradient through the flow (the pushforward density and
+its Jacobian); the last level, `mu_M = pi`, runs `mc_steps_2` steps under
+`target` alone.
 
 The result is `(samples, proposal, proposal_log_weights)`: the target
 samples, the pushforward particles the levels started from, and the full
@@ -548,7 +549,7 @@ at one level.
 ```python
 sequential_monte_carlo_fab(
     key, samples, source, target, flow, type,
-    ladder=1, mc_dt=1e-3, mc_steps=100,
+    ladder=1, mc_dt=1e-3, mc_steps_1=100, mc_steps_2=100,
     adjust=True, taming=0, chunks=1,
     trace_key=None,
 )
@@ -560,8 +561,9 @@ repeats the levels of `sequential_monte_carlo` from the pushforward
 Phase 2 continues with `ladder` further levels from `pi` to `pi^2 / nu`
 along the geometric path `rho_k = pi (pi / nu)^{k / ladder}`: each level
 refreshes `log(pi / nu)` through the flow, reweights by `1 / ladder` of it,
-resamples, and rejuvenates with `mc_steps` Langevin steps of size `mc_dt`
-(MALA by default) at its own `rho_k`, whose potential
+resamples, and rejuvenates with Langevin steps of size `mc_dt` (MALA by
+default; `mc_steps_1` steps on the intermediate levels, `mc_steps_2` on the
+last) at its own `rho_k`, whose potential
 `target - (k / ladder) log w` runs through the flow as on the intermediate
 levels of phase 1. Every level of both phases is exact on its path. The
 result is `(samples, proposal, proposal_log_weights)`

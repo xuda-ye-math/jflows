@@ -47,7 +47,7 @@ def main():
             "dt", "leapfrog_steps", "trajectories", "chunks",
         ),
         sequential_monte_carlo: (
-            "ladder", "mc_dt", "mc_steps", "chunks",
+            "ladder", "mc_dt", "mc_steps_1", "mc_steps_2", "chunks",
         ),
         lbfgs: ("alpha", "steps", "chunks"),
         adamw: ("lr", "steps", "chunks"),
@@ -86,11 +86,11 @@ def main():
     )
     y_smc, y_proposal, log_w_smc = smc(
         key, x, source, target, flow, "G", ladder=2,
-        mc_dt=0.05, mc_steps=4, chunks=2,
+        mc_dt=0.05, mc_steps_1=4, mc_steps_2=4, chunks=2,
     )
     y_smc_one, _, _ = smc(
         key, x, source, target, flow, "G", ladder=1,
-        mc_dt=0.05, mc_steps=4, chunks=2,
+        mc_dt=0.05, mc_steps_1=4, mc_steps_2=4, chunks=2,
     )
     y_lbfgs = lbfgs(x, target, alpha=0.1, steps=2, chunks=2)
     y_adamw = adamw(x, target, lr=0.01, steps=2, chunks=2)

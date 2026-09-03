@@ -180,6 +180,7 @@ flow, batch_ess = train_forward_KLX_G(
     ladder=1,
     mc_dt=1e-3,
     mc_steps_1=50,
+    mc_steps_2=50,
     coeff_lambda=1.0,
 )
 

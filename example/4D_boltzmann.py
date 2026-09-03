@@ -81,8 +81,8 @@ MONITOR_EVERY: int = 20  # print loss + proposal ESS every MONITOR_EVERY steps
 # Langevin rejuvenation (training batches + the per-stage particle refresh)
 LADDER: int = 1        # SMC levels of the forward KL target batch
 MC_DT: float = 1e-3  # Langevin rejuvenation step size
-MC_STEPS_1: int = 100  # Langevin steps per training batch / SMC level (MALA default: rejects Coulomb-wall proposals)
-MC_STEPS_2: int = 100  # Langevin steps of the per-stage particle refresh after resampling
+MC_STEPS_1: int = 100  # MALA steps on the intermediate SMC levels only (through the flow; MALA default: rejects Coulomb-wall proposals)
+MC_STEPS_2: int = 100  # MALA steps of every other rejuvenation: the last SMC level at the target, the reverse KL source batch, the per-stage particle refresh after resampling
 
 # adaptive stage schedule (bg_param of both generators)
 BG_PARAM = {
@@ -152,7 +152,7 @@ def main() -> None:
             y, stages = boltzmann_reverse_KL_F(
                 x_valid, u0, u1, new_flow(key_f),
                 batch_size=BATCH_SIZE, steps_total=STEPS_TOTAL, lr=LR,
-                mc_dt=MC_DT, mc_steps_1=MC_STEPS_1, mc_steps_2=MC_STEPS_2,
+                mc_dt=MC_DT, mc_steps_2=MC_STEPS_2,
                 monitor=Monitor(MONITOR_EVERY, f"[{name}] ", log), bg_param=BG_PARAM,
             )
         else:

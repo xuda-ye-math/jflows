@@ -178,10 +178,10 @@ map between `pi_a` and `pi_b`.
 <tr><th>Generator</th><th>Native flow</th><th>Optimizer population</th><th>Differentiated objective</th><th>Distinct controls</th></tr>
 </thead>
 <tbody>
-<tr><td><code>boltzmann_reverse_KL_F</code></td><td><code>F: pi_a -&gt; pi_b</code></td><td>current <code>pi_a</code> particles, source-freshened by Langevin</td><td>reverse KL</td><td>no objective regularizer and no <code>ladder</code></td></tr>
+<tr><td><code>boltzmann_reverse_KL_F</code></td><td><code>F: pi_a -&gt; pi_b</code></td><td>current <code>pi_a</code> particles, source-freshened by Langevin</td><td>reverse KL</td><td>no objective regularizer, no <code>ladder</code>, and no <code>mc_steps_1</code></td></tr>
 <tr><td><code>boltzmann_forward_KL_G</code></td><td><code>G: pi_b -&gt; pi_a</code></td><td>approximate <code>pi_b</code> batches manufactured by flow-proposal SMC</td><td>forward KL</td><td><code>ladder</code>, <code>u_clip</code>, <code>g_clip</code></td></tr>
 <tr><td><code>boltzmann_forward_KLX_G</code></td><td><code>G: pi_b -&gt; pi_a</code></td><td>the same SMC-manufactured target batches</td><td>forward KL plus target-measure X variation</td><td><code>coeff_lambda</code> plus the forward KL controls</td></tr>
-<tr><td><code>boltzmann_forward_KLXX_G</code></td><td><code>G: pi_b -&gt; pi_a</code></td><td>SMC target batches plus a QT/proposal mixture</td><td>KLX plus a second mixture-measure X variation</td><td><code>pool_size</code>, <code>melt</code>, <code>opt_dt</code>, <code>opt_steps</code>, <code>mc_steps_2</code>, <code>coeff_theta</code>, <code>coeff_alpha</code>, <code>coeff_qt</code>, <code>chunks</code></td></tr>
+<tr><td><code>boltzmann_forward_KLXX_G</code></td><td><code>G: pi_b -&gt; pi_a</code></td><td>SMC target batches plus a QT/proposal mixture</td><td>KLX plus a second mixture-measure X variation</td><td><code>pool_size</code>, <code>melt</code>, <code>opt_dt</code>, <code>opt_steps</code>, <code>coeff_theta</code>, <code>coeff_alpha</code>, <code>coeff_qt</code>, <code>chunks</code></td></tr>
 <tr><td><code>boltzmann_forward_KLL1_G</code></td><td><code>G: pi_b -&gt; pi_a</code></td><td>the same SMC-manufactured target batches</td><td>forward KL plus the LDR-L1 log-dispersion</td><td><code>coeff_lambda</code> plus the forward KL controls</td></tr>
 <tr><td><code>boltzmann_FAB_G</code></td><td><code>G: pi_b -&gt; pi_a</code></td><td><code>pi_b^2 / nu</code> batches manufactured by the two-phase SMC</td><td>FAB mean log-ratio (alpha = 2 surrogate)</td><td>the forward KL controls</td></tr>
 <tr><td><code>boltzmann_FABX_G</code></td><td><code>G: pi_b -&gt; pi_a</code></td><td><code>pi_b^2 / nu</code> batches plus a QT/proposal mixture</td><td>FAB plus the mixture-measure X variation</td><td>the KLXX controls without <code>coeff_lambda</code></td></tr>
@@ -250,7 +250,7 @@ and rejuvenation occur only after the trained-or-identity map is selected.
 boltzmann_reverse_KL_F(
     x_valid, source, target, flow,
     batch_size, steps_total, lr,
-    mc_dt, mc_steps_1, mc_steps_2,
+    mc_dt, mc_steps_2,
     *,
     initialize_from_identity=True,
     mc_adjust=True,
@@ -269,7 +269,7 @@ L_reverse(F) = mean[U_b(F(x)) - log|det J_F(x)|].
 ```
 
 Each optimizer step samples rows from the current validation population and
-freshens them with `mc_steps_1` Langevin steps targeting `U_a`. It never needs manufactured
+freshens them with `mc_steps_2` Langevin steps targeting `U_a`. It never needs manufactured
 target samples and differentiates the flow only in its native forward
 direction. The selected stage flow maps `pi_a` toward `pi_b`, so stage
 advancement applies `flow(x)`.
@@ -305,8 +305,9 @@ draw exact `pi_b` batches directly, so every Adam step:
 1. samples source-side particles from the current validation population;
 2. applies flow-proposal SMC through the current G flow;
 3. reweights, resamples, and rejuvenates (`mc_steps_1` MALA steps at the
-   level's own distribution of the geometric path on every level, `pi_b` on
-   the last) to manufacture an approximate `pi_b` batch `y`; and
+   level's own distribution of the geometric path on the intermediate
+   levels, `mc_steps_2` steps at `pi_b` on the last) to manufacture an
+   approximate `pi_b` batch `y`; and
 4. minimizes
 
 ```text
@@ -420,7 +421,7 @@ current stage population
 At each optimizer step it then forms two populations:
 
 - `y_hat`: samples from the QT pool, freshly Langevin-rejuvenated at `U_b`
-  for `mc_steps_1` steps;
+  for `mc_steps_2` steps;
 - `y_bar`: the current detached G proposal, the pushforward of the
   current-stage source batch that the SMC started from.
 
@@ -454,9 +455,9 @@ KLXX is the most computationally and memory intensive option:
 - `pool_size>0` draws a separate pool with replacement from that population;
 - `melt`, `opt_dt`, and `opt_steps` control the melt/quench construction,
   and `coeff_qt` the partial importance resampling that precedes it;
-- `mc_dt` with `mc_steps_1` controls the forward-batch manufacture and the
-  `y_hat` freshening, and `mc_dt` with `mc_steps_2` the QT pool and the
-  stage advance; and
+- `mc_dt` with `mc_steps_1` controls the intermediate SMC levels of the
+  forward-batch manufacture, and `mc_dt` with `mc_steps_2` its last level,
+  the `y_hat` freshening, the QT pool, and the stage advance; and
 - `chunks` partitions QT and the outer operations over the complete validation set.
 
 Use KLXX when explicit wide-coverage and proposal-leakage diagnostics justify
@@ -520,7 +521,8 @@ FAB has the forward KL signature. Inside each stage attempt the trainer
 manufactures batches from `pi_b^2 / nu` with `sequential_monte_carlo_fab`
 (`ladder` levels to `pi_b`, then `ladder` further levels on to
 `pi_b^2 / nu`, `mc_steps_1` MALA steps at the level's own distribution on
-every level) and minimizes the mean log-ratio over them, the alpha = 2
+the intermediate levels of each phase, `mc_steps_2` on the last) and
+minimizes the mean log-ratio over them, the alpha = 2
 divergence
 surrogate of FAB without a replay buffer. Stage selection, the validation
 ESS gate, and the stage advance are those of the other generators.
@@ -701,7 +703,7 @@ from jflows.boltzmann import (
 boltzmann_reverse_KL_F_fixed(
     x_valid, source, target, flow,
     batch_size, steps_total, lr,
-    mc_dt, mc_steps_1, mc_steps_2, t_list,
+    mc_dt, mc_steps_2, t_list,
     *, initialize_from_identity=True,
     mc_adjust=True, monitor=None, chunks=1,
     checkpoint=False, seed=0,

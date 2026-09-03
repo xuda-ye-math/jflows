@@ -74,7 +74,8 @@ MONITOR_EVERY: int = 10  # print loss + proposal ESS every MONITOR_EVERY steps
 # Langevin rejuvenation (reverse KL batches + the single-level SMC)
 LADDER: int = 1        # one reweight + resample + rejuvenation hop
 MC_DT: float = 1e-3  # Langevin rejuvenation step size
-MC_STEPS_1: int = 100  # Langevin rejuvenation steps per batch / SMC level
+MC_STEPS_1: int = 100  # MALA steps on the intermediate SMC levels only (through the flow)
+MC_STEPS_2: int = 100  # MALA steps of every other rejuvenation: the last SMC level at the target, the reverse KL source batch
 
 
 # source: Gaussian U0
@@ -112,7 +113,7 @@ def main() -> None:
     log("[reverse KL] training (packed single stage) ...")
     flow_F, hist_F = train_reverse_KL_F(x_valid, u0, u1, new_flow(jax.random.key(0)),
                                         batch_size=BATCH_SIZE, steps_total=STEPS_TOTAL, lr=LR,
-                                      mc_dt=MC_DT, mc_steps_1=MC_STEPS_1,
+                                      mc_dt=MC_DT, mc_steps_2=MC_STEPS_2,
                                       monitor=Monitor(MONITOR_EVERY, "[reverse KL] ", log))
     log(f"[reverse KL] {STEPS_TOTAL} steps done   proposal ESS "
         f"{float(hist_F[0]):.3f} -> {float(hist_F[STEPS_TOTAL // 2]):.3f} -> {float(hist_F[-1]):.3f}")
@@ -121,6 +122,7 @@ def main() -> None:
     flow_G, hist_G = train_forward_KL_G(x_valid, u0, u1, new_flow(jax.random.key(1)),
                                         batch_size=BATCH_SIZE, steps_total=STEPS_TOTAL, lr=LR,
                                       ladder=LADDER, mc_dt=MC_DT, mc_steps_1=MC_STEPS_1,
+                                      mc_steps_2=MC_STEPS_2,
                                       monitor=Monitor(MONITOR_EVERY, "[forward KL] ", log))
     log(f"[forward KL] {STEPS_TOTAL} steps done   proposal ESS "
         f"{float(hist_G[0]):.3f} -> {float(hist_G[STEPS_TOTAL // 2]):.3f} -> {float(hist_G[-1]):.3f}")

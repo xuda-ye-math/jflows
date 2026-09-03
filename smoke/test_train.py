@@ -62,23 +62,23 @@ def main():
     runs = {
         "reverse KL": train_reverse_KL_F(
             x_valid, source, target, flow, BATCH_SIZE, STEPS_TOTAL, 1e-3,
-            1e-3, MC_STEPS_1, monitor=monitor,
+            1e-3, MC_STEPS_2, monitor=monitor,
         ),
         "forward KL": train_forward_KL_G(
             x_valid, source, target, flow, BATCH_SIZE, STEPS_TOTAL, 1e-3,
-            2, 1e-3, MC_STEPS_1, u_clip=50.0,
+            2, 1e-3, MC_STEPS_1, MC_STEPS_2, u_clip=50.0,
         ),
         "FAB": train_FAB_G(
             x_valid, source, target, flow, BATCH_SIZE, STEPS_TOTAL, 1e-3,
-            2, 1e-2, MC_STEPS_1, u_clip=50.0,
+            2, 1e-2, MC_STEPS_1, MC_STEPS_2, u_clip=50.0,
         ),
         "KLL1": train_forward_KLL1_G(
             x_valid, source, target, flow, BATCH_SIZE, STEPS_TOTAL, 1e-3,
-            1, 1e-3, MC_STEPS_1, coeff_lambda=0.5, u_clip=50.0,
+            1, 1e-3, MC_STEPS_1, MC_STEPS_2, coeff_lambda=0.5, u_clip=50.0,
         ),
         "KLX": train_forward_KLX_G(
             x_valid, source, target, flow, BATCH_SIZE, STEPS_TOTAL, 1e-3,
-            1, 1e-3, MC_STEPS_1, coeff_lambda=0.5,
+            1, 1e-3, MC_STEPS_1, MC_STEPS_2, coeff_lambda=0.5,
         ),
         "KLXX": train_forward_KLXX_G(
             x_valid, source, target, flow, 0, BATCH_SIZE, STEPS_TOTAL, 1e-3,

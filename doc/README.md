@@ -123,12 +123,12 @@ jflows/
 - `F` means source to target. `G = F^{-1}` means target to source. For an
   F-native flow, generate with `flow(x)`; for a G-native flow, generate from
   source samples with `flow.inv(x)`.
-- Primitive kernels use `dt` and `steps`; the utility samplers
-  `sequential_monte_carlo` and `quench_and_temper` use `mc_dt`, `mc_steps`,
-  `opt_dt`, and `opt_steps`; trainers and generators split the Langevin
-  budget into `mc_steps_1` (batch-sized sets) and `mc_steps_2`
-  (population-sized sets) and use `steps_total`, `batch_size`, and
-  `pool_size`.
+- Primitive kernels use `dt` and `steps`; the utility sampler
+  `quench_and_temper` uses `mc_dt`, `mc_steps`, `opt_dt`, and `opt_steps`;
+  `sequential_monte_carlo`, the trainers, and the generators split the
+  Langevin budget into `mc_steps_1` (the intermediate SMC levels only,
+  through the flow) and `mc_steps_2` (every other rejuvenation); trainers
+  and generators also use `steps_total`, `batch_size`, and `pool_size`.
 - `chunks` is the number of row partitions, not the number of rows in one
   partition. It is the only generic memory-partition keyword.
 - MALA is the default Langevin mode. Positive taming is for ULA and therefore
