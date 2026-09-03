@@ -55,7 +55,7 @@ HERE = Path(__file__).resolve().parent
 LOG = HERE / "2D_single.log"
 
 # boundary of the domain
-SIGMA = 2.0            # standard deviation of the isotropic Gaussian source mu_0
+SIGMA = 2.0            # standard deviation of the isotropic Gaussian source pi_0
 PLT_LIM = 5.0          # half-width of the plot window; axes span [-PLT_LIM, +PLT_LIM]
 NSF_LIM = 5.0          # half-width of the NSF spline domain; the flow acts on [-NSF_LIM, +NSF_LIM]^2
 

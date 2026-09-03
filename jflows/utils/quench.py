@@ -1,6 +1,6 @@
 """Quench and temper for jflows — the wide-coverage mode-discovery measure.
 
-Builds hat_mu, the wide-coverage measure of the X-regularized training
+Builds hat_pi, the wide-coverage measure of the X-regularized training
 loss (a mixture weight of `forward_X_G`), in three moves on a batch:
 melt scatters the particles across the landscape with Gaussian noise,
 quench drives every particle to a mode center of the target by batched
@@ -67,10 +67,10 @@ def quench_and_temper(
         x <- langevin(x, target)            # temper: spread particles
                                             #         around each mode
 
-    The output approximates the wide-coverage measure hat_mu: every mode
+    The output approximates the wide-coverage measure hat_pi: every mode
     whose basin the melted cloud touches receives particles, weighted by
     basin volume rather than by mode energy. Pass the result (or a
-    resampled subset) as the hat_mu half of the mixture batch of
+    resampled subset) as the hat_pi half of the mixture batch of
     `forward_X_G`.
 
     Input:
@@ -103,7 +103,7 @@ def quench_and_temper(
                                   tempered potential
                                   (1 - coeff_qt) * source + coeff_qt * target
     Output:
-        samples: Array [N, d]   the tempered particles ~ hat_mu
+        samples: Array [N, d]   the tempered particles ~ hat_pi
     """
     key_melt, key_mc = jax.random.split(key)
     x = samples

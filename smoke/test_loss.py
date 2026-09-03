@@ -39,9 +39,10 @@ import numpy as np  # noqa: E402
 
 from jflows.flow import NSF  # noqa: E402
 from jflows.loss import (  # noqa: E402
-    forward_KL_G, forward_KLX_G, forward_X_G, pairwise_variation, reverse_KL_F,
+    forward_KL_G, forward_KLL1_G, forward_KLX_G, forward_X_G, pairwise_variation, reverse_KL_F,
 )
 from jflows.potential import Nlog_Gaussian  # noqa: E402
+from jflows.train import _dispersion  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG = os.path.join(HERE, "test_loss.log")
@@ -131,6 +132,14 @@ def main() -> None:
     check_true("variation >= 0", bool(xf.mean() >= 0), f"mean {float(xf.mean()):.2e}")
     check("variation is shift invariant", pairwise_variation(z + 3.0).mean(),
           pairwise_variation(z).mean(), tol=1e-10)
+    kll1 = forward_KLL1_G(y, src, target, nsf, coeff_lambda=lam)
+    check("forward_KLL1_G == z + lam * |z - mean z|", kll1, z + lam * jnp.abs(z - z.mean()), tol=0)
+    keep = jnp.arange(N) % 3 != 0
+    kept = z_np[np.asarray(keep)]
+    check("_dispersion(z, keep) == brute-force mean |z - mean z| on the kept rows",
+          _dispersion(z, keep), jnp.asarray(np.mean(np.abs(kept - kept.mean()))), tol=1e-10)
+    check("coeff_lambda = 0 reduces forward_KLL1_G to z",
+          forward_KLL1_G(y, src, target, nsf, coeff_lambda=0.0), z, tol=0)
     check("z == forward_KL_G - target(y)",
           z, forward_KL_G(y, src, nsf) - target(y), tol=1e-12)
 

@@ -87,6 +87,9 @@ from jflows.train import (
     train_forward_KL_G,
     train_forward_KLX_G,
     train_forward_KLXX_G,
+    train_forward_KLL1_G,
+    train_FAB_G,
+    train_FABX_G,
 )
 ```
 
@@ -105,6 +108,9 @@ from jflows.boltzmann import (
     boltzmann_forward_KL_G,
     boltzmann_forward_KLX_G,
     boltzmann_forward_KLXX_G,
+    boltzmann_forward_KLL1_G,
+    boltzmann_FAB_G,
+    boltzmann_FABX_G,
 )
 ```
 
@@ -112,11 +118,15 @@ from jflows.boltzmann import (
   gating, resampling, and rejuvenation with no flow or optimizer;
 - reverse KL is the simplest source-sampled F baseline;
 - forward KL manufactures target-side batches and trains G;
-- KLX adds target-measure log-weight variation control; and
+- KLX adds target-measure log-weight variation control;
 - KLXX adds a quench and temper/proposal mixture for wider mode and leakage
-  regularization.
+  regularization;
+- KLL1 is forward KL with the centered L1 log-dispersion of LDR-L1;
+- FAB trains G on samples from `pi^2 / nu` manufactured by a two-phase SMC
+  (the alpha = 2 divergence surrogate, no replay buffer); and
+- FABX adds the KLXX mixture variation to FAB.
 
-The four trained generators compare their candidate with identity. The
+The trained generators compare their candidate with identity. The
 standalone `boltzmann_identity` function instead advances every accepted
 stage by exact identity reweighting, so it requires no flow, batch size,
 training steps, or learning rate. Complete-stage persistence is exposed

@@ -24,7 +24,7 @@ particle population also passes through weighting, resampling, and Langevin
 after every selected map.
 
 ```text
-mu_0
+pi_0
   --stage 1 flow / reweight / resample / Langevin--> particles at t1
   --stage 2 flow / reweight / resample / Langevin--> particles at t2
   ...
@@ -46,10 +46,13 @@ from jflows.boltzmann import (
     boltzmann_forward_KL_G,
     boltzmann_forward_KLX_G,
     boltzmann_forward_KLXX_G,
+    boltzmann_forward_KLL1_G,
+    boltzmann_FAB_G,
+    boltzmann_FABX_G,
 )
 ```
 
-`boltzmann_identity` is the flow-free reference controller. The other four
+`boltzmann_identity` is the flow-free reference controller. The other
 functions share one adaptive-staging controller. They differ in the
 medium-level trainer dispatched inside each stage: the direction in which the
 flow is parameterized, how the optimizer obtains its training samples, and
@@ -161,12 +164,12 @@ For one proposed stage, write
 
 ```text
 U_a = U_t_start,    U_b = U_t_end,
-mu_a proportional to exp(-U_a),
-mu_b proportional to exp(-U_b).
+pi_a proportional to exp(-U_a),
+pi_b proportional to exp(-U_b).
 ```
 
-The current validation population approximates `mu_a`. The stage must learn a
-map between `mu_a` and `mu_b`.
+The current validation population approximates `pi_a`. The stage must learn a
+map between `pi_a` and `pi_b`.
 
 <div align="center">
 
@@ -175,10 +178,13 @@ map between `mu_a` and `mu_b`.
 <tr><th>Generator</th><th>Native flow</th><th>Optimizer population</th><th>Differentiated objective</th><th>Distinct controls</th></tr>
 </thead>
 <tbody>
-<tr><td><code>boltzmann_reverse_KL_F</code></td><td><code>F: mu_a -&gt; mu_b</code></td><td>current <code>mu_a</code> particles, source-freshened by Langevin</td><td>reverse KL</td><td>no objective regularizer and no <code>ladder</code></td></tr>
-<tr><td><code>boltzmann_forward_KL_G</code></td><td><code>G: mu_b -&gt; mu_a</code></td><td>approximate <code>mu_b</code> batches manufactured by flow-proposal SMC</td><td>forward KL</td><td><code>ladder</code>, <code>u_clip</code>, <code>g_clip</code></td></tr>
-<tr><td><code>boltzmann_forward_KLX_G</code></td><td><code>G: mu_b -&gt; mu_a</code></td><td>the same SMC-manufactured target batches</td><td>forward KL plus target-measure X variation</td><td><code>coeff_lambda</code> plus the forward KL controls</td></tr>
-<tr><td><code>boltzmann_forward_KLXX_G</code></td><td><code>G: mu_b -&gt; mu_a</code></td><td>SMC target batches plus a QT/proposal mixture</td><td>KLX plus a second mixture-measure X variation</td><td><code>pool_size</code>, <code>melt</code>, <code>opt_dt</code>, <code>opt_steps</code>, <code>mc_steps_2</code>, <code>coeff_theta</code>, <code>coeff_alpha</code>, <code>coeff_qt</code>, <code>chunks</code></td></tr>
+<tr><td><code>boltzmann_reverse_KL_F</code></td><td><code>F: pi_a -&gt; pi_b</code></td><td>current <code>pi_a</code> particles, source-freshened by Langevin</td><td>reverse KL</td><td>no objective regularizer and no <code>ladder</code></td></tr>
+<tr><td><code>boltzmann_forward_KL_G</code></td><td><code>G: pi_b -&gt; pi_a</code></td><td>approximate <code>pi_b</code> batches manufactured by flow-proposal SMC</td><td>forward KL</td><td><code>ladder</code>, <code>u_clip</code>, <code>g_clip</code></td></tr>
+<tr><td><code>boltzmann_forward_KLX_G</code></td><td><code>G: pi_b -&gt; pi_a</code></td><td>the same SMC-manufactured target batches</td><td>forward KL plus target-measure X variation</td><td><code>coeff_lambda</code> plus the forward KL controls</td></tr>
+<tr><td><code>boltzmann_forward_KLXX_G</code></td><td><code>G: pi_b -&gt; pi_a</code></td><td>SMC target batches plus a QT/proposal mixture</td><td>KLX plus a second mixture-measure X variation</td><td><code>pool_size</code>, <code>melt</code>, <code>opt_dt</code>, <code>opt_steps</code>, <code>mc_steps_2</code>, <code>coeff_theta</code>, <code>coeff_alpha</code>, <code>coeff_qt</code>, <code>chunks</code></td></tr>
+<tr><td><code>boltzmann_forward_KLL1_G</code></td><td><code>G: pi_b -&gt; pi_a</code></td><td>the same SMC-manufactured target batches</td><td>forward KL plus the LDR-L1 log-dispersion</td><td><code>coeff_lambda</code> plus the forward KL controls</td></tr>
+<tr><td><code>boltzmann_FAB_G</code></td><td><code>G: pi_b -&gt; pi_a</code></td><td><code>pi_b^2 / nu</code> batches manufactured by the two-phase SMC</td><td>FAB mean log-ratio (alpha = 2 surrogate)</td><td>the forward KL controls</td></tr>
+<tr><td><code>boltzmann_FABX_G</code></td><td><code>G: pi_b -&gt; pi_a</code></td><td><code>pi_b^2 / nu</code> batches plus a QT/proposal mixture</td><td>FAB plus the mixture-measure X variation</td><td>the KLXX controls without <code>coeff_lambda</code></td></tr>
 </tbody>
 </table>
 
@@ -256,7 +262,7 @@ boltzmann_reverse_KL_F(
 )
 ```
 
-For current-stage particles `x ~ mu_a`, the reverse trainer minimizes
+For current-stage particles `x ~ pi_a`, the reverse trainer minimizes
 
 ```text
 L_reverse(F) = mean[U_b(F(x)) - log|det J_F(x)|].
@@ -265,7 +271,7 @@ L_reverse(F) = mean[U_b(F(x)) - log|det J_F(x)|].
 Each optimizer step samples rows from the current validation population and
 freshens them with `mc_steps_1` Langevin steps targeting `U_a`. It never needs manufactured
 target samples and differentiates the flow only in its native forward
-direction. The selected stage flow maps `mu_a` toward `mu_b`, so stage
+direction. The selected stage flow maps `pi_a` toward `pi_b`, so stage
 advancement applies `flow(x)`.
 
 Reverse KL is the least elaborate of the four stage objectives and is a useful
@@ -293,14 +299,14 @@ boltzmann_forward_KL_G(
 )
 ```
 
-The forward trainer represents the inverse map `G: mu_b -> mu_a`. It cannot
-draw exact `mu_b` batches directly, so every Adam step:
+The forward trainer represents the inverse map `G: pi_b -> pi_a`. It cannot
+draw exact `pi_b` batches directly, so every Adam step:
 
 1. samples source-side particles from the current validation population;
 2. applies flow-proposal SMC through the current G flow;
-3. reweights, resamples, and target-rejuvenates (one HMC trajectory of
-   `mc_steps_1` leapfrog steps on each intermediate level, `mc_steps_1` MALA
-   steps on the last) to manufacture an approximate `mu_b` batch `y`; and
+3. reweights, resamples, and rejuvenates (`mc_steps_1` MALA steps at the
+   level's own distribution of the geometric path on every level, `pi_b` on
+   the last) to manufacture an approximate `pi_b` batch `y`; and
 4. minimizes
 
 ```text
@@ -309,10 +315,11 @@ L_forward(G) = mean[U_a(G(y)) - log|det J_G(y)|].
 
 The omitted `-U_b(y)` term is constant with respect to the flow parameters for
 the fixed manufactured batch. `ladder` controls the number of SMC levels used
-inside every optimizer step. The SMC routine rejuvenates at `U_b` at each
-level, so it is the package's biased flow-proposal surrogate rather than an
-exact SMC sampler on the geometric path. It avoids differentiating a
-flow-proposal density, but target rejuvenation still evaluates `U_b.grad`.
+inside every optimizer step. The SMC routine rejuvenates every level with
+MALA at the level's own distribution of the geometric path between the
+flow proposal and `pi_b`, so every level is exact; on the intermediate
+levels the Langevin drift is differentiated through the flow, and the last
+level runs under `U_b` alone.
 
 This objective is normally chosen when mass coverage is more important than a
 pure reverse-KL baseline. It costs more per optimizer step because target-batch
@@ -343,7 +350,7 @@ boltzmann_forward_KLX_G(
 )
 ```
 
-KLX uses the same SMC-manufactured `mu_b` batches and the same G direction as
+KLX uses the same SMC-manufactured `pi_b` batches and the same G direction as
 forward KL. It defines the stage log-density-ratio coordinate
 
 ```text
@@ -398,7 +405,7 @@ boltzmann_forward_KLXX_G(
 KLXX retains the KLX target-batch objective and adds a second X functional on
 a broader, deliberately constructed measure. At the beginning of every stage
 attempt, before the compiled Adam scan, it builds a fixed quench and temper
-pool `hat_mu` for `U_b`:
+pool `hat_pi` for `U_b`:
 
 ```text
 current stage population
@@ -407,7 +414,7 @@ current stage population
   -> Gaussian melt
   -> L-BFGS quench into target basins
   -> Langevin temper at U_b (mc_steps_2 steps)
-  -> hat_mu pool
+  -> hat_pi pool
 ```
 
 At each optimizer step it then forms two populations:
@@ -415,12 +422,12 @@ At each optimizer step it then forms two populations:
 - `y_hat`: samples from the QT pool, freshly Langevin-rejuvenated at `U_b`
   for `mc_steps_1` steps;
 - `y_bar`: the current detached G proposal, the pushforward of the
-  current-stage source batch that the SMC target surrogate started from.
+  current-stage source batch that the SMC started from.
 
 It mixes them with probabilities `coeff_alpha` and `1 - coeff_alpha`:
 
 ```text
-omega = coeff_alpha * hat_mu + (1 - coeff_alpha) * bar_nu.
+omega = coeff_alpha * hat_pi + (1 - coeff_alpha) * bar_nu.
 ```
 
 The complete loss is
@@ -454,13 +461,98 @@ KLXX is the most computationally and memory intensive option:
 
 Use KLXX when explicit wide-coverage and proposal-leakage diagnostics justify
 that added cost. Its richer objective still passes through the same
-trained-versus-identity validation and stage ESS gate as the other three
+trained-versus-identity validation and stage ESS gate as the other
 generators.
 
 The KLXX pool semantics are identical to the medium-level trainer:
 `pool_size=0` quenches the complete current validation population; a positive
 value draws a separate pool. `chunks` reaches the QT call and the full-set
 stage operations.
+
+### KLL1
+
+```python
+boltzmann_forward_KLL1_G(
+    x_valid, source, target, flow,
+    batch_size, steps_total, lr,
+    ladder, mc_dt, mc_steps_1, mc_steps_2,
+    *,
+    initialize_from_identity=True,
+    coeff_lambda=1.0,
+    mc_adjust=True,
+    monitor=None,
+    bg_param=None,
+    chunks=1,
+    checkpoint=False,
+    u_clip=inf,
+    g_clip=inf,
+    seed=0,
+)
+```
+
+KLL1 has the KLX signature and the same SMC-manufactured `pi_b` batches, and
+minimizes forward KL plus `coeff_lambda` times the centered L1
+log-dispersion of LDR-L1, `mean[|z(y) - mean z|]`, with the batch mean
+differentiated through. It exists for comparison with LDR-L1 under the same
+staging controller.
+
+### FAB
+
+```python
+boltzmann_FAB_G(
+    x_valid, source, target, flow,
+    batch_size, steps_total, lr,
+    ladder, mc_dt, mc_steps_1, mc_steps_2,
+    *,
+    initialize_from_identity=True,
+    mc_adjust=True,
+    monitor=None,
+    bg_param=None,
+    chunks=1,
+    checkpoint=False,
+    u_clip=inf,
+    g_clip=inf,
+    seed=0,
+)
+```
+
+FAB has the forward KL signature. Inside each stage attempt the trainer
+manufactures batches from `pi_b^2 / nu` with `sequential_monte_carlo_fab`
+(`ladder` levels to `pi_b`, then `ladder` further levels on to
+`pi_b^2 / nu`, `mc_steps_1` MALA steps at the level's own distribution on
+every level) and minimizes the mean log-ratio over them, the alpha = 2
+divergence
+surrogate of FAB without a replay buffer. Stage selection, the validation
+ESS gate, and the stage advance are those of the other generators.
+
+### FABX
+
+```python
+boltzmann_FABX_G(
+    x_valid, source, target, flow,
+    pool_size, batch_size, steps_total,
+    lr, ladder, melt, opt_dt, opt_steps,
+    mc_dt, mc_steps_1, mc_steps_2,
+    *,
+    initialize_from_identity=True,
+    coeff_theta=1.0,
+    coeff_alpha=0.5,
+    coeff_qt=0.0,
+    mc_adjust=True,
+    monitor=None,
+    bg_param=None,
+    chunks=1,
+    checkpoint=False,
+    u_clip=inf,
+    g_clip=inf,
+    seed=0,
+)
+```
+
+FABX is KLXX with the FAB loss in place of the KLX target term: the same
+quench and temper pool and the same `y_hat` / `y_bar` mixture, and the
+objective is the FAB mean log-ratio plus `coeff_theta` times the mixture
+X variation. There is no target-measure X term and no `coeff_lambda`.
 
 All generators return:
 
@@ -491,6 +583,9 @@ returns the accepted prefix rather than claiming completion.
 <tr><td>forward mass-covering objective</td><td><code>boltzmann_forward_KL_G</code></td><td>manufactures target batches and trains the native G direction</td></tr>
 <tr><td>explicit target-measure weight-uniformity penalty</td><td><code>boltzmann_forward_KLX_G</code></td><td>adds variation control for the stage log-density ratio</td></tr>
 <tr><td>mode discovery plus proposal-leakage regularization</td><td><code>boltzmann_forward_KLXX_G</code></td><td>adds QT coverage and detached-proposal mixture samples</td></tr>
+<tr><td>LDR-L1 comparison</td><td><code>boltzmann_forward_KLL1_G</code></td><td>the KLX signature with the centered L1 log-dispersion in place of the X variation</td></tr>
+<tr><td>FAB comparison</td><td><code>boltzmann_FAB_G</code></td><td>the forward KL signature with <code>pi_b^2 / nu</code> batches from the two-phase SMC</td></tr>
+<tr><td>FAB with mixture coverage</td><td><code>boltzmann_FABX_G</code></td><td>the KLXX signature without <code>coeff_lambda</code></td></tr>
 </tbody>
 </table>
 

@@ -14,6 +14,9 @@ from jflows.train import (
     train_forward_KL_G,
     train_forward_KLX_G,
     train_forward_KLXX_G,
+    train_forward_KLL1_G,
+    train_FAB_G,
+    train_FABX_G,
 )
 from jflows.artifacts import (
     save_flow, load_flow,
@@ -189,8 +192,8 @@ train_forward_KL_G(
 
 At every step, the trainer draws a source batch and manufactures approximate
 target samples with `sequential_monte_carlo` through the current G flow
-(one HMC trajectory of `mc_steps_1` leapfrog steps on each intermediate
-level, `mc_steps_1` MALA steps on the last).
+(`mc_steps_1` MALA steps at the level's own distribution of the geometric
+path on every level, the target on the last).
 It then minimizes `forward_KL_G` on that fresh population. The target batch is
 not frozen across steps.
 
@@ -283,7 +286,7 @@ train_forward_KLXX_G(
 ```
 
 KLXX augments KLX with a second X functional evaluated on a coverage-oriented
-mixture. Before the optimizer scan it constructs `hat_mu` with
+mixture. Before the optimizer scan it constructs `hat_pi` with
 `quench_and_temper`:
 
 - `pool_size=0`: quench the complete `x_valid` population;
@@ -328,6 +331,117 @@ flow, batch_ess = train_forward_KLXX_G(
     chunks=16,
 )
 ```
+
+## KLL1 trainer
+
+```python
+train_forward_KLL1_G(
+    x_valid, source, target, flow,
+    batch_size, steps_total, lr,
+    ladder, mc_dt, mc_steps_1,
+    coeff_lambda=1.0,
+    mc_adjust=True,
+    monitor=None,
+    seed=0,
+    checkpoint=False,
+    u_clip=inf,
+    g_clip=inf,
+    *,
+    initialize_from_identity=False,
+    t_start=0.0,
+    t_end=1.0,
+)
+```
+
+KLL1 has the signature and the fresh SMC target-batch path of KLX, and
+replaces the pairwise X penalty by the centered L1 log-dispersion of LDR-L1:
+
+```text
+mean(z) + coeff_lambda * mean(abs(z - mean(z))).
+```
+
+The batch mean is the center and is differentiated through. `coeff_lambda=0`
+removes the dispersion term. The output flow is G-native.
+
+## FAB trainer
+
+```python
+train_FAB_G(
+    x_valid, source, target, flow,
+    batch_size, steps_total, lr,
+    ladder, mc_dt, mc_steps_1,
+    mc_adjust=True,
+    monitor=None,
+    seed=0,
+    checkpoint=False,
+    u_clip=inf,
+    g_clip=inf,
+    *,
+    initialize_from_identity=False,
+    t_start=0.0,
+    t_end=1.0,
+)
+```
+
+FAB has the signature of forward KL. At every step it manufactures a batch
+from `pi^2 / nu` with `sequential_monte_carlo_fab` through the current G
+flow (`ladder` levels to the target, then `ladder` further levels on to
+`pi^2 / nu`, `mc_steps_1` MALA steps at the level's own distribution on
+every level) and minimizes the mean log-ratio `z` over that batch. Its
+parameter gradient
+is that of `-mean(log nu(y))` over `pi^2 / nu` samples, the alpha = 2
+divergence surrogate of FAB; there is no replay buffer. The reported batch
+ESS is that of the phase-1 proposal, as for the direct trainers. The output
+flow is G-native.
+
+```python
+flow, batch_ess = train_FAB_G(
+    x_valid, source, target, flow,
+    batch_size=500,
+    steps_total=200,
+    lr=1e-3,
+    ladder=1,
+    mc_dt=1e-3,
+    mc_steps_1=50,
+)
+```
+
+## FABX trainer
+
+```python
+train_FABX_G(
+    x_valid, source, target, flow,
+    pool_size, batch_size, steps_total,
+    lr, ladder, melt, opt_dt, opt_steps,
+    mc_dt, mc_steps_1, mc_steps_2,
+    coeff_theta=1.0,
+    coeff_alpha=0.5,
+    coeff_qt=0.0,
+    mc_adjust=True,
+    monitor=None,
+    seed=0,
+    checkpoint=False,
+    u_clip=inf,
+    g_clip=inf,
+    *,
+    chunks=1,
+    initialize_from_identity=False,
+    t_start=0.0,
+    t_end=1.0,
+)
+```
+
+FABX is KLXX with the FAB loss in place of the KLX target term: the same
+quench and temper pool, the same mixture of `y_hat` and the detached
+phase-1 proposal `y_bar` with probabilities `coeff_alpha` and
+`1 - coeff_alpha`, and the objective
+
+```text
+mean(z over the pi^2 / nu batch) + coeff_theta * mean_{i != j}(abs(z_i - z_j) over the mixture).
+```
+
+There is no target-measure X term and no `coeff_lambda`. The output flow is
+G-native.
 
 ## Initialization and comparison fairness
 
@@ -436,6 +550,9 @@ Boltzmann persistence modules for complete-stage storage.
 <tr><td>mass-covering target fit from manufactured target batches</td><td><code>train_forward_KL_G</code></td></tr>
 <tr><td>stabilize the target density-ratio shape</td><td><code>train_forward_KLX_G</code></td></tr>
 <tr><td>add explicit wide-coverage and leakage-sensitive X regularization</td><td><code>train_forward_KLXX_G</code></td></tr>
+<tr><td>forward KL with the LDR-L1 log-dispersion penalty</td><td><code>train_forward_KLL1_G</code></td></tr>
+<tr><td>alpha = 2 divergence surrogate on <code>pi^2 / nu</code> samples</td><td><code>train_FAB_G</code></td></tr>
+<tr><td>FAB with the KLXX mixture variation</td><td><code>train_FABX_G</code></td></tr>
 </tbody>
 </table>
 

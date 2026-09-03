@@ -78,6 +78,16 @@ class Potential(eqx.Module):
         single = lambda xi: self(xi[None])[0]  # [d] -> scalar
         return jax.vmap(jax.grad(single))(x)
 
+    def value_and_grad(self, x: Array) -> tuple[Array, Array]:
+        """
+        Input:
+            x: Array [N, d]
+        Output:
+            (U(x), grad U(x)): Array [N], Array [N, d]   in one pass
+        """
+        single = lambda xi: self(xi[None])[0]  # [d] -> scalar
+        return jax.vmap(jax.value_and_grad(single))(x)
+
     # ── vector-space algebra: c * U, U + V, U - V, -U, U / c, sum([...]) ──
     # Every expression funnels into `linear_combination`, which keeps the
     # term list flat and merges repeated instances (see its docstring).
@@ -443,8 +453,8 @@ class Nlog_Gaussian_Mixture(Potential):
     """
     Negative log of a diagonal Gaussian mixture density with K
     components. The unnormalized density is
-        mu(x) propto sum_k w_k * N(x | mean_k, diag(variance_k)),
-    and the potential U(x) = -log mu(x) (up to an additive constant).
+        pi(x) propto sum_k w_k * N(x | mean_k, diag(variance_k)),
+    and the potential U(x) = -log pi(x) (up to an additive constant).
     
     Memory: each energy/gradient evaluation materializes an
     [N, K, d] difference tensor (chunk the batch externally at large K).

@@ -33,16 +33,22 @@ from ..utils.rejuvenation import langevin
 from ..train import (
     Monitor,
     _training_identity,
+    train_FAB_G,
+    train_FABX_G,
     train_forward_KL_G,
+    train_forward_KLL1_G,
     train_forward_KLX_G,
     train_forward_KLXX_G,
     train_reverse_KL_F,
 )
 
 __all__ = [
+    "boltzmann_FAB_G",
+    "boltzmann_FABX_G",
     "boltzmann_identity",
     "boltzmann_forward_KL_G",
     "boltzmann_forward_KL_G_fixed",
+    "boltzmann_forward_KLL1_G",
     "boltzmann_forward_KLX_G",
     "boltzmann_forward_KLX_G_fixed",
     "boltzmann_forward_KLXX_G",
@@ -56,6 +62,9 @@ _OBJECTIVES = {
     "forward_kl": ("G", 102),
     "forward_klx": ("G", 103),
     "forward_klxx": ("G", 104),
+    "fab": ("G", 105),
+    "fabx": ("G", 106),
+    "forward_kll1": ("G", 107),
 }
 _POLICY = {
     "t_safe": 0.2,
@@ -228,6 +237,25 @@ def _train_attempt(
             lr, ladder, melt, opt_dt, opt_steps, mc_dt, mc_steps_1, mc_steps_2,
             coeff_lambda, coeff_theta, coeff_alpha, coeff_qt, mc_adjust,
             monitor, seed, checkpoint, u_clip, g_clip, chunks=chunks, **common,
+        )
+    if objective == "forward_kll1":
+        return train_forward_KLL1_G(
+            samples, source, target, flow, batch_size, steps_total, lr,
+            ladder, mc_dt, mc_steps_1, coeff_lambda, mc_adjust, monitor, seed,
+            checkpoint, u_clip, g_clip, **common,
+        )
+    if objective == "fab":
+        return train_FAB_G(
+            samples, source, target, flow, batch_size, steps_total, lr,
+            ladder, mc_dt, mc_steps_1, mc_adjust, monitor, seed, checkpoint,
+            u_clip, g_clip, **common,
+        )
+    if objective == "fabx":
+        return train_FABX_G(
+            samples, source, target, flow, pool_size, batch_size, steps_total,
+            lr, ladder, melt, opt_dt, opt_steps, mc_dt, mc_steps_1, mc_steps_2,
+            coeff_theta, coeff_alpha, coeff_qt, mc_adjust, monitor, seed,
+            checkpoint, u_clip, g_clip, chunks=chunks, **common,
         )
 
 
@@ -829,6 +857,120 @@ def boltzmann_forward_KLXX_G(
         monitor=monitor,
         bg_param=bg_param, chunks=chunks, checkpoint=checkpoint,
         u_clip=u_clip, g_clip=g_clip, seed=seed,
+    )
+
+
+def boltzmann_forward_KLL1_G(
+    x_valid,
+    source,
+    target,
+    flow,
+    batch_size,
+    steps_total,
+    lr,
+    ladder,
+    mc_dt,
+    mc_steps_1,
+    mc_steps_2,
+    *,
+    initialize_from_identity=True,
+    coeff_lambda=1.0,
+    mc_adjust=True,
+    monitor=None,
+    bg_param=None,
+    chunks=1,
+    checkpoint=False,
+    u_clip=float("inf"),
+    g_clip=float("inf"),
+    seed=0,
+):
+    """Run adaptive-staging LDR-L1 Boltzmann stages (``train_forward_KLL1_G``)."""
+    return run_boltzmann(
+        x_valid, source, target, flow, objective="forward_kll1", pool_size=0,
+        batch_size=batch_size, steps_total=steps_total, lr=lr, ladder=ladder,
+        mc_dt=mc_dt, mc_steps_1=mc_steps_1, mc_steps_2=mc_steps_2,
+        initialize_from_identity=initialize_from_identity,
+        coeff_lambda=coeff_lambda, mc_adjust=mc_adjust, monitor=monitor,
+        bg_param=bg_param, chunks=chunks, checkpoint=checkpoint,
+        u_clip=u_clip, g_clip=g_clip, seed=seed,
+    )
+
+
+def boltzmann_FAB_G(
+    x_valid,
+    source,
+    target,
+    flow,
+    batch_size,
+    steps_total,
+    lr,
+    ladder,
+    mc_dt,
+    mc_steps_1,
+    mc_steps_2,
+    *,
+    initialize_from_identity=True,
+    mc_adjust=True,
+    monitor=None,
+    bg_param=None,
+    chunks=1,
+    checkpoint=False,
+    u_clip=float("inf"),
+    g_clip=float("inf"),
+    seed=0,
+):
+    """Run adaptive-staging Boltzmann stages trained with the FAB loss (``train_FAB_G``)."""
+    return run_boltzmann(
+        x_valid, source, target, flow, objective="fab", pool_size=0,
+        batch_size=batch_size, steps_total=steps_total, lr=lr, ladder=ladder,
+        mc_dt=mc_dt, mc_steps_1=mc_steps_1, mc_steps_2=mc_steps_2,
+        initialize_from_identity=initialize_from_identity,
+        mc_adjust=mc_adjust, monitor=monitor, bg_param=bg_param,
+        chunks=chunks, checkpoint=checkpoint, u_clip=u_clip, g_clip=g_clip,
+        seed=seed,
+    )
+
+
+def boltzmann_FABX_G(
+    x_valid,
+    source,
+    target,
+    flow,
+    pool_size,
+    batch_size,
+    steps_total,
+    lr,
+    ladder,
+    melt,
+    opt_dt,
+    opt_steps,
+    mc_dt,
+    mc_steps_1,
+    mc_steps_2,
+    *,
+    initialize_from_identity=True,
+    coeff_theta=1.0,
+    coeff_alpha=0.5,
+    coeff_qt=0.0,
+    mc_adjust=True,
+    monitor=None,
+    bg_param=None,
+    chunks=1,
+    checkpoint=False,
+    u_clip=float("inf"),
+    g_clip=float("inf"),
+    seed=0,
+):
+    """Run adaptive-staging Boltzmann stages trained with the FAB loss plus the mixture variation (``train_FABX_G``)."""
+    return run_boltzmann(
+        x_valid, source, target, flow, objective="fabx",
+        pool_size=pool_size, batch_size=batch_size, steps_total=steps_total,
+        lr=lr, ladder=ladder, melt=melt, opt_dt=opt_dt,
+        opt_steps=opt_steps, mc_dt=mc_dt, mc_steps_1=mc_steps_1,
+        mc_steps_2=mc_steps_2, initialize_from_identity=initialize_from_identity,
+        coeff_theta=coeff_theta, coeff_alpha=coeff_alpha, coeff_qt=coeff_qt,
+        mc_adjust=mc_adjust, monitor=monitor, bg_param=bg_param, chunks=chunks,
+        checkpoint=checkpoint, u_clip=u_clip, g_clip=g_clip, seed=seed,
     )
 
 

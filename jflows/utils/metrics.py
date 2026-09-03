@@ -10,7 +10,7 @@ type: 'F' if the flow maps source -> target, 'G' if target -> source):
     resample               — multinomial resampling with replacement (key-first)
 
 The canonical pipeline: importance_weights_log produces the per-sample
-log-ratio log(mu/nu); compute_ESS_log summarizes it into the (0, 1]
+log-ratio log(pi/nu); compute_ESS_log summarizes it into the (0, 1]
 diagnostic; resample bootstraps the particle set from the linear weights.
 """
 
@@ -72,8 +72,8 @@ def importance_weights_log(
 ) -> Array:
     """
     Self-normalized importance-sampling log-weights for the proposal
-    `nu = F_# mu_0` against the target `mu_1`, where
-        mu_0(x) ~ exp(-source(x)),   mu_1(y) ~ exp(-target(y)).
+    `nu = F_# pi_0` against the target `pi`, where
+        pi_0(x) ~ exp(-source(x)),   pi(y) ~ exp(-target(y)).
     The flow acts either as the forward map F (type='F',
     source -> target) or as the inverse map G = F^{-1} (type='G',
     target -> source).
@@ -81,9 +81,9 @@ def importance_weights_log(
     For x drawn from the source, y = F(x), the proposal density is
         log nu(y) = -source(x) - log|det J_F(x)|.
     The unnormalized log-importance-weight is therefore
-        log w(y) = log mu_1(y) - log nu(y)
+        log w(y) = log pi(y) - log nu(y)
                  = -target(y) + source(x) + log|det J_F(x)|,
-    using `Potential` energies U = -log mu (up to additive constants
+    using `Potential` energies U = -log pi (up to additive constants
     that cancel after self-normalization). With type='G' the same
     quantity is computed through G, using y = G^{-1}(x) and
     log|det J_{G^-1}(x)| = log|det J_F(x)|.
@@ -128,7 +128,7 @@ def importance_weights(
 ) -> Array:
     """
     Linear-space self-normalized importance weights for the proposal
-    `nu = F_# mu_0` against the target `mu_1`. Thin convenience wrapper
+    `nu = F_# pi_0` against the target `pi`. Thin convenience wrapper
     around `importance_weights_log`: subtract the max log-weight for
     numerical stability, then exponentiate.
 
@@ -274,23 +274,28 @@ def coverage(y: Array, x: Array, k: int = 5, chunks: int = 1) -> Array:
 # resample — multinomial resampling with replacement
 # ──────────────────────────────────────────────────────────────────────
 
-def resample(key: Array, samples: Array, weights: Array, N: int | None = None) -> Array:
+def resample_index(
+    key: Array, samples: Array, weights: Array, N: int | None = None
+) -> Array:
     """
-    Multinomial resampling from weighted distribution with replacement,
-    drawn by inverse-CDF search: cumulative sum of the weights, N
-    uniform draws, `searchsorted`. Memory is O(M + N) — safe at large
-    particle counts (a categorical draw would materialize an [N, M]
-    Gumbel matrix, which explodes at N = M ~ 1e5).
+    Indices of a multinomial resampling from weighted distribution with
+    replacement, drawn by inverse-CDF search: cumulative sum of the
+    weights, N uniform draws, `searchsorted`. Memory is O(M + N) — safe
+    at large particle counts (a categorical draw would materialize an
+    [N, M] Gumbel matrix, which explodes at N = M ~ 1e5). `resample` is
+    `samples[resample_index(...)]`; the indices themselves let a caller
+    carry per-particle quantities already evaluated (an energy, a
+    log-weight) through the resampling instead of recomputing them.
     Input:
         key:     PRNG key
-        samples: Array [M, d]
+        samples: Array [M, d]  used only to exclude non-finite particles
         weights: Array [M]   non-negative, not required to be normalized.
                  Positive infinities share all mass. A zero-total or invalid
                  vector falls back to uniform resampling rather than silently
                  selecting the final particle.
-        N: number of independent samples to return; defaults to samples.shape[0]
+        N: number of indices to return; defaults to samples.shape[0]
     Output:
-        resampled: Array [N, d]
+        idx: int Array [N]   row indices into `samples`
     """
     weights = jnp.asarray(weights)
     M = samples.shape[0]
@@ -330,5 +335,19 @@ def resample(key: Array, samples: Array, weights: Array, N: int | None = None) -
     cdf = jnp.cumsum(safe)
     u = jax.random.uniform(key, (N,), dtype=cdf.dtype) * cdf[-1]
     idx = jnp.searchsorted(cdf, u, side="right")
-    idx = jnp.minimum(idx, weights.shape[0] - 1)  # u can round up to cdf[-1]
-    return samples[idx]
+    return jnp.minimum(idx, weights.shape[0] - 1)  # u can round up to cdf[-1]
+
+
+def resample(key: Array, samples: Array, weights: Array, N: int | None = None) -> Array:
+    """
+    Multinomial resampling from weighted distribution with replacement:
+    `samples[resample_index(key, samples, weights, N)]`.
+    Input:
+        key:     PRNG key
+        samples: Array [M, d]
+        weights: Array [M]   see `resample_index`
+        N: number of independent samples to return; defaults to samples.shape[0]
+    Output:
+        resampled: Array [N, d]
+    """
+    return samples[resample_index(key, samples, weights, N)]

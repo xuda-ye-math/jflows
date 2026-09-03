@@ -51,6 +51,8 @@ def langevin_step(
     dt: float = 1e-3,
     adjust: bool = True,
     taming: float = 0,
+    energy: Array | None = None,
+    force: Array | None = None,
 ) -> tuple[Array, dict]:
     """
     One Langevin update (the loop body of `langevin`).
@@ -82,17 +84,24 @@ def langevin_step(
         dt:        float          Euler-Maruyama step size
         adjust:    bool           if True, MALA (unbiased); if False, ULA
         taming:    float          if > 0, tamed drift (ULA only)
+        energy:    Array [N]      U(x) if already evaluated (MALA only)
+        force:     Array [N, d]   grad U(x) if already evaluated
     Output:
         x:   Array [N, d]   updated particles
-        aux: dict           {'accept': bool [N], 'log_alpha': [N]} when
-                            adjust=True, else {}
+        aux: dict           {'accept': bool [N], 'log_alpha': [N],
+                             'energy': [N], 'force': [N, d]} when
+                            adjust=True, with 'energy' / 'force' the value
+                            and gradient of U at the returned particles;
+                            {} for ULA
     """
     if adjust and taming > 0:
         raise ValueError("langevin_step(): adjust=True and taming>0 are mutually exclusive.")
     key_noise, key_mh = jax.random.split(key)
     noise_scale = (2.0 * dt) ** 0.5
 
-    fx = potential.grad(x)
+    if adjust and (energy is None or force is None):
+        energy, force = potential.value_and_grad(x)
+    fx = potential.grad(x) if force is None else force
     drift = fx / (1 + taming * jnp.linalg.norm(fx, axis=-1, keepdims=True)) if taming > 0 else fx
     y = x - dt * drift + noise_scale * jax.random.normal(key_noise, x.shape, dtype=x.dtype)
     if not adjust:
@@ -100,13 +109,15 @@ def langevin_step(
 
     # log q(z|w) = -||z - w + dt * grad U(w)||^2 / (4 * dt) + const
     log_q_yx = -((y - x + dt * fx) ** 2).sum(axis=-1) / (4.0 * dt)  # log q(y|x)
-    fy = potential.grad(y)
+    U_y, fy = potential.value_and_grad(y)
     log_q_xy = -((x - y + dt * fy) ** 2).sum(axis=-1) / (4.0 * dt)  # log q(x|y)
-    log_alpha = potential(x) - potential(y) + log_q_xy - log_q_yx  # [N]
+    log_alpha = energy - U_y + log_q_xy - log_q_yx  # [N]
     log_alpha = jnp.where(jnp.isfinite(log_alpha), log_alpha, -jnp.inf)
     accept = jnp.log(jax.random.uniform(key_mh, log_alpha.shape, dtype=x.dtype)) < log_alpha
     x_new = jnp.where(accept[:, None], y, x)
-    return x_new, {"accept": accept, "log_alpha": log_alpha}
+    U_new = jnp.where(accept, U_y, energy)
+    f_new = jnp.where(accept[:, None], fy, fx)
+    return x_new, {"accept": accept, "log_alpha": log_alpha, "energy": U_new, "force": f_new}
 
 
 def langevin(
@@ -118,6 +129,7 @@ def langevin(
     adjust: bool = True,
     taming: float = 0,
     chunks: int = 1,
+    energy: Array | None = None,
 ) -> Array:
     """
     Langevin dynamics targeting exp(-U(x)) — `steps` calls of
@@ -147,20 +159,46 @@ def langevin(
                                   noise); if an enclosing routine is jitted,
                                   XLA may co-schedule buffers, so this is not
                                   a strict peak-memory guarantee.
+        energy:    Array [N]      U(samples) if already evaluated (MALA
+                                  only); None evaluates it
     Output:
         samples: Array [N, d]   particles after `steps` Langevin updates
+
+    With adjust=True the energy and gradient of the current particle are
+    carried from one step to the next, so each MALA step evaluates U and
+    grad U once, at the proposal.
     """
     if adjust and taming > 0:
         raise ValueError("langevin(): adjust=True and taming>0 are mutually exclusive.")
+    energies = (
+        [None] * chunks if energy is None
+        else jnp.array_split(energy, chunks, axis=0)
+    )
     out = []
-    for i, x in enumerate(jnp.array_split(samples, chunks, axis=0)):
+    for i, (x, U) in enumerate(zip(jnp.array_split(samples, chunks, axis=0), energies)):
         keys = jax.random.split(jax.random.fold_in(key, i), steps)
 
-        def body(x, k):
-            x_new, _ = langevin_step(k, x, potential, dt=dt, adjust=adjust, taming=taming)
-            return x_new, None
+        if adjust:
+            if U is None:
+                U, f = potential.value_and_grad(x)
+            else:
+                f = potential.grad(x)
 
-        x, _ = lax.scan(body, x, keys)
+            def body(carry, k):
+                x, U, f = carry
+                x_new, aux = langevin_step(
+                    k, x, potential, dt=dt, adjust=True, energy=U, force=f
+                )
+                return (x_new, aux["energy"], aux["force"]), None
+
+            (x, _, _), _ = lax.scan(body, (x, U, f), keys)
+        else:
+
+            def body(x, k):
+                x_new, _ = langevin_step(k, x, potential, dt=dt, adjust=False, taming=taming)
+                return x_new, None
+
+            x, _ = lax.scan(body, x, keys)
         out.append(x)
     return jnp.concatenate(out, axis=0)
 
@@ -301,6 +339,7 @@ def hmc_step(
     potential: Potential,
     dt: float = 1e-2,
     leapfrog_steps: int = 10,
+    energy: Array | None = None,
 ) -> tuple[Array, dict]:
     """
     One full HMC trajectory (the loop body of `hamiltonian_monte_carlo`;
@@ -321,14 +360,17 @@ def hmc_step(
         potential: Potential      target potential U
         dt:             float     leapfrog step size
         leapfrog_steps: int       leapfrog steps per trajectory
+        energy:    Array [N]      U(x) if already evaluated; None evaluates it
     Output:
         x:   Array [N, d]   updated particles
-        aux: dict           {'accept': bool [N], 'log_alpha': [N]}
+        aux: dict           {'accept': bool [N], 'log_alpha': [N],
+                             'energy': [N]}  with 'energy' = U at the
+                            returned particles
     """
     key_p, key_mh = jax.random.split(key)
     x_start = x
     p_start = jax.random.normal(key_p, x.shape, dtype=x.dtype)
-    U_start = potential(x_start)
+    U_start = potential(x_start) if energy is None else energy
     K_start = 0.5 * (p_start**2).sum(axis=-1)  # [N]
 
     x_end, p_end = leapfrog(x_start, p_start, potential, dt, leapfrog_steps)
@@ -341,7 +383,8 @@ def hmc_step(
     log_alpha = jnp.where(jnp.isfinite(log_alpha), log_alpha, -jnp.inf)
     accept = jnp.log(jax.random.uniform(key_mh, log_alpha.shape, dtype=x.dtype)) < log_alpha
     x_new = jnp.where(accept[:, None], x_end, x_start)
-    return x_new, {"accept": accept, "log_alpha": log_alpha}
+    U_new = jnp.where(accept, U_end, U_start)
+    return x_new, {"accept": accept, "log_alpha": log_alpha, "energy": U_new}
 
 
 def hamiltonian_monte_carlo(
@@ -352,11 +395,15 @@ def hamiltonian_monte_carlo(
     leapfrog_steps: int = 10,
     trajectories: int = 10,
     chunks: int = 1,
+    energy: Array | None = None,
 ) -> Array:
     """
     Hamiltonian Monte Carlo targeting exp(-U(x)) — `trajectories` calls of
     `hmc_step` under a lax.scan (each a full momentum refresh + `leapfrog_steps`
-    leapfrog steps + one MH decision).
+    leapfrog steps + one MH decision). The energy of the current particles
+    is carried from one trajectory to the next, so U is evaluated once per
+    trajectory (at the proposed endpoint) plus once at the start unless
+    `energy` supplies it.
 
     Compared to MALA (`langevin(adjust=True)`), HMC pays `leapfrog_steps + 1`
     gradient calls per MH decision instead of 2, but the trajectory
@@ -382,20 +429,29 @@ def hamiltonian_monte_carlo(
         trajectories: int         number of momentum refreshes / MH
                                   trajectories.
         chunks:    int            split `samples` along dim 0 (see `langevin`)
+        energy:    Array [N]      U(samples) if already evaluated; None
+                                  evaluates it
     Output:
         samples: Array [N, d]   particles after `trajectories` HMC trajectories
     """
+    energies = (
+        [None] * chunks if energy is None
+        else jnp.array_split(energy, chunks, axis=0)
+    )
     out = []
-    for i, x in enumerate(jnp.array_split(samples, chunks, axis=0)):
+    for i, (x, U) in enumerate(zip(jnp.array_split(samples, chunks, axis=0), energies)):
         keys = jax.random.split(jax.random.fold_in(key, i), trajectories)
+        if U is None:
+            U = potential(x)
 
-        def body(x, k):
-            x_new, _ = hmc_step(
-                k, x, potential, dt=dt, leapfrog_steps=leapfrog_steps
+        def body(carry, k):
+            x, U = carry
+            x_new, aux = hmc_step(
+                k, x, potential, dt=dt, leapfrog_steps=leapfrog_steps, energy=U
             )
-            return x_new, None
+            return (x_new, aux["energy"]), None
 
-        x, _ = lax.scan(body, x, keys)
+        (x, _), _ = lax.scan(body, (x, U), keys)
         out.append(x)
     return jnp.concatenate(out, axis=0)
 

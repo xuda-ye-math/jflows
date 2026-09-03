@@ -19,7 +19,9 @@ from jflows.utils import (
     lbfgs,
     quench_and_temper,
     sequential_monte_carlo,
+    sequential_monte_carlo_fab,
     smc,
+    smc_fab,
 )
 
 
@@ -63,6 +65,10 @@ def main():
         check(f"{function.__name__} has no variadic keyword shim", "kwargs" not in names)
 
     check("smc is the sequential-Monte-Carlo alias", smc is sequential_monte_carlo)
+    check("smc_fab is the FAB alias", smc_fab is sequential_monte_carlo_fab)
+    check("smc_fab shares the SMC signature",
+          list(inspect.signature(sequential_monte_carlo_fab).parameters)
+          == list(inspect.signature(sequential_monte_carlo).parameters))
 
     try:
         langevin(key, x, target, step=0.01)
@@ -124,7 +130,7 @@ def main():
     check("identity-flow SMC proposal is the input",
           jnp.allclose(y_proposal, x, atol=1e-6))
     check("single-level SMC finite", jnp.all(jnp.isfinite(y_smc_one)))
-    check("HMC intermediate level moves the particles",
+    check("intermediate SMC level moves the particles",
           float(jnp.abs(y_smc - x).mean()) > float(jnp.abs(y_smc_one - x).mean()))
     check("coverage finite", jnp.isfinite(cov))
 

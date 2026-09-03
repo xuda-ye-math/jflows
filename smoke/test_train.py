@@ -5,8 +5,8 @@ Every public trainer runs two Adam steps on a 2D Gaussian pair with a
 batch of 16 rows, and the KLXX adaptive-staging generator completes one
 two-stage schedule, so that the signatures, the compiled scans, the batch
 ESS histories, the ``mc_steps_1`` / ``mc_steps_2`` split, ``coeff_qt``,
-the HMC trajectory of an intermediate SMC level (forward KL at
-``ladder=2``), and the policy keys are exercised once. Numbers are not
+the MALA run at the intermediate distribution of an SMC level (forward KL
+at ``ladder=2``), and the policy keys are exercised once. Numbers are not
 benchmark results.
 """
 
@@ -17,12 +17,20 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 import jax
 import jax.numpy as jnp
 
-from jflows.boltzmann import boltzmann_forward_KL_G_fixed, boltzmann_forward_KLXX_G
+from jflows.boltzmann import (
+    boltzmann_FAB_G,
+    boltzmann_FABX_G,
+    boltzmann_forward_KL_G_fixed,
+    boltzmann_forward_KLL1_G,
+    boltzmann_forward_KLXX_G,
+)
 from jflows.flow import NSF
 from jflows.potential import Nlog_Gaussian
 from jflows.train import (
     Monitor,
+    train_FAB_G,
     train_forward_KL_G,
+    train_forward_KLL1_G,
     train_forward_KLX_G,
     train_forward_KLXX_G,
     train_reverse_KL_F,
@@ -60,6 +68,14 @@ def main():
             x_valid, source, target, flow, BATCH_SIZE, STEPS_TOTAL, 1e-3,
             2, 1e-3, MC_STEPS_1, u_clip=50.0,
         ),
+        "FAB": train_FAB_G(
+            x_valid, source, target, flow, BATCH_SIZE, STEPS_TOTAL, 1e-3,
+            2, 1e-2, MC_STEPS_1, u_clip=50.0,
+        ),
+        "KLL1": train_forward_KLL1_G(
+            x_valid, source, target, flow, BATCH_SIZE, STEPS_TOTAL, 1e-3,
+            1, 1e-3, MC_STEPS_1, coeff_lambda=0.5, u_clip=50.0,
+        ),
         "KLX": train_forward_KLX_G(
             x_valid, source, target, flow, BATCH_SIZE, STEPS_TOTAL, 1e-3,
             1, 1e-3, MC_STEPS_1, coeff_lambda=0.5,
@@ -82,6 +98,23 @@ def main():
     )
     check("KLXX adaptive schedule reaches t = 1", stages[-1]["t"] == 1.0)
     check("stage record has no selection history", "selection_history" not in stages[0])
+    _, kll1_stages = boltzmann_forward_KLL1_G(
+        x_valid, source, target, flow, BATCH_SIZE, STEPS_TOTAL, 1e-3, 1, 1e-3,
+        MC_STEPS_1, MC_STEPS_2, coeff_lambda=0.5, bg_param={"t_safe": 0.5, "tau_valid": 0.0},
+        chunks=2,
+    )
+    check("KLL1 adaptive schedule reaches t = 1", kll1_stages[-1]["t"] == 1.0)
+    _, fab_stages = boltzmann_FAB_G(
+        x_valid, source, target, flow, BATCH_SIZE, STEPS_TOTAL, 1e-3, 1, 1e-2,
+        MC_STEPS_1, MC_STEPS_2, bg_param={"t_safe": 0.5, "tau_valid": 0.0}, chunks=2,
+    )
+    check("FAB adaptive schedule reaches t = 1", fab_stages[-1]["t"] == 1.0)
+    _, fabx_stages = boltzmann_FABX_G(
+        x_valid, source, target, flow, 0, BATCH_SIZE, STEPS_TOTAL, 1e-3, 1,
+        0.5, 1.0, 1, 1e-2, MC_STEPS_1, MC_STEPS_2, coeff_qt=0.3,
+        bg_param={"t_safe": 0.5, "tau_valid": 0.0}, chunks=2,
+    )
+    check("FABX adaptive schedule reaches t = 1", fabx_stages[-1]["t"] == 1.0)
     _, fixed = boltzmann_forward_KL_G_fixed(
         x_valid, source, target, flow, BATCH_SIZE, STEPS_TOTAL, 1e-3, 1, 1e-3,
         MC_STEPS_1, MC_STEPS_2, [0.5, 1.0],

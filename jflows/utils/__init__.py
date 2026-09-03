@@ -5,7 +5,7 @@ Split across five modules, re-exported here in the flat
 
     metrics      : importance_weights (+log; the type argument names the
                    transform type 'F'/'G'), compute_ESS, compute_ESS_log,
-                   coverage, resample
+                   coverage, resample, resample_index
     optimization : lbfgs (alias optimization), adamw + the low-level
                    LBFGS_State / lbfgs_init / lbfgs_step and
                    AdamW_State / adamw_init / adamw_step kernels
@@ -13,13 +13,16 @@ Split across five modules, re-exported here in the flat
                    hamiltonian_monte_carlo (alias hmc) + the low-level
                    *_step kernels and the leapfrog integrator
     anneal       : sequential_monte_carlo (alias smc; same 'F'/'G' type
-                   argument, flow proposal)
+                   argument, flow proposal), sequential_monte_carlo_fab
+                   (alias smc_fab; on to pi^2 / nu)
     quench       : quench_and_temper (alias qt)
 """
 
 from .anneal import (
     sequential_monte_carlo,
+    sequential_monte_carlo_fab,
     smc,
+    smc_fab,
 )
 from .metrics import (
     compute_ESS,
@@ -29,6 +32,7 @@ from .metrics import (
     importance_weights_log,
     linear_weights_from_log,
     resample,
+    resample_index,
 )
 from .optimization import (
     AdamW_State,
@@ -83,8 +87,11 @@ __all__ = [
     "quench_and_temper",
     "rejuvenation",
     "resample",
+    "resample_index",
     "sequential_monte_carlo",
+    "sequential_monte_carlo_fab",
     "smc",
+    "smc_fab",
     "stochastic_heun",
     "stochastic_heun_step",
 ]

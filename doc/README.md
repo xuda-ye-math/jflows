@@ -48,11 +48,12 @@ jflows
 │   │   ├── reverse_KL_F
 │   │   ├── forward_KL_G
 │   │   ├── forward_KLX_G
+│   │   ├── forward_KLL1_G
 │   │   └── forward_X_G
 │   └── utils
 │       ├── weights / ESS / coverage / resampling
 │       ├── Langevin / stochastic Heun / HMC
-│       ├── flow-proposal SMC
+│       ├── flow-proposal SMC, on to pi^2 / nu for FAB
 │       ├── L-BFGS / AdamW
 │       └── quench_and_temper
 ├── MEDIUM LEVEL
@@ -61,7 +62,10 @@ jflows
 │   │   ├── train_reverse_KL_F
 │   │   ├── train_forward_KL_G
 │   │   ├── train_forward_KLX_G
-│   │   └── train_forward_KLXX_G
+│   │   ├── train_forward_KLXX_G
+│   │   ├── train_forward_KLL1_G
+│   │   ├── train_FAB_G
+│   │   └── train_FABX_G
 │   └── artifacts
 │       ├── save_flow / load_flow
 │       ├── save_samples / load_samples
@@ -69,7 +73,7 @@ jflows
 └── HIGH LEVEL
     └── boltzmann
         ├── boltzmann_identity without flow training
-        ├── four adaptive-staging trained boltzmann_* generators
+        ├── seven adaptive-staging trained boltzmann_* generators
         ├── four fixed-schedule boltzmann_*_fixed generators
         ├── accepted-stage records and identity fallback
         ├── write: create / stage / finish

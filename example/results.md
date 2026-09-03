@@ -8,8 +8,8 @@ Single-stage flow training on a 2D three-mode target, comparing the reverse KL a
 
 ### Setup
 
-- **Source** $\mu_0 \propto e^{-U_0}$: isotropic Gaussian, $U_0(x) = \lVert x\rVert^2 / (2\sigma^2)$, $\sigma = 2$.
-- **Target** $\mu_1 \propto e^{-U_1}$: three-mode Gaussian mixture placed like the Julia three-dot sign — equal weights, means $(0, 2.4)$, $(-2.2, -1.4)$, $(2.2, -1.4)$, per-coordinate variance $0.3$. The modes are separated by $\sim 8$ standard deviations, so a mode-seeking objective can lose mass while a mass-covering one should not.
+- **Source** $\pi_0 \propto e^{-U_0}$: isotropic Gaussian, $U_0(x) = \lVert x\rVert^2 / (2\sigma^2)$, $\sigma = 2$.
+- **Target** $\pi \propto e^{-U_1}$: three-mode Gaussian mixture placed like the Julia three-dot sign — equal weights, means $(0, 2.4)$, $(-2.2, -1.4)$, $(2.2, -1.4)$, per-coordinate variance $0.3$. The modes are separated by $\sim 8$ standard deviations, so a mode-seeking objective can lose mass while a mass-covering one should not.
 - **Flow**: NSF on $[-5, 5]^2$, 16 bins, 4 autoregressive transforms, $(64, 64)$ conditioners, identity-initialised (`zeros()`).
 - **Training**: one packed call per method — `VALID_SIZE = 40000` fixed source set, `BATCH_SIZE = 2000` per Adam step, `STEPS_TOTAL = 200`, `LR = 1e-3`, Langevin rejuvenation `MC_DT = 1e-3`, `MC_STEPS_1 = 100`, single-level SMC (`LADDER = 1`).
 
@@ -42,8 +42,8 @@ Run by [`3D_periodic.py`](3D_periodic.py): its purpose is to show that the **NCS
 
 ### Setup
 
-- **Source** $\mu_0$: uniform on the periodic box $[-\pi, \pi]^3$.
-- **Target** $\mu_1 \propto e^{-U_1}$: the von Mises ridge mixture on the 3-torus,
+- **Source** $\pi_0$: uniform on the periodic box $[-\pi, \pi]^3$.
+- **Target** $\pi \propto e^{-U_1}$: the von Mises ridge mixture on the 3-torus,
   $U_1(x) = -\log[\, e^{\kappa\cos(x_1 - x_2)} + e^{\kappa\cos(x_2 - x_3)} + e^{\kappa\cos(x_3 - x_1)} \,]$, $\kappa = 4$ — three pairwise ridges that wrap around the torus.
 - **Flow**: NCSF on $[-\pi, \pi]^3$, 8 bins, 4 autoregressive transforms, $(128, 128)$ conditioners, identity-initialised.
 - **Training**: one packed call per objective — `VALID_SIZE = 40000` fixed source set, `BATCH_SIZE = 2000` per Adam step, `STEPS_TOTAL = 200`, `LR = 1e-3` — followed by the reweighting pipeline: importance weights → ESS → multinomial resampling → MALA rejuvenation at the target (`MC_DT = 1e-3`, `MC_STEPS_2 = 100`).
@@ -69,7 +69,7 @@ The 4D two-charge target, sampled by [`4D_boltzmann.py`](4D_boltzmann.py) with b
 
 ### Setup
 
-- **Source** $\mu_0$: standard Gaussian on $\mathbb R^4$.
+- **Source** $\pi_0$: standard Gaussian on $\mathbb R^4$.
 - **Target**: two particles $x = (x_1, x_2)$, $x_i \in \mathbb R^2$, on a soft annulus with regularized 3D Coulomb repulsion,
   $U_1(x) = a\,[(\lVert x_1\rVert^2 - r_0^2)^2 + (\lVert x_2\rVert^2 - r_0^2)^2] + q^2 / \sqrt{\lVert x_1 - x_2\rVert^2 + \varepsilon^2}$
   with $r_0 = 2$, $a = 1$, $q^2 = 4$, $\varepsilon = 10^{-3}$ (identical to the original).
@@ -107,8 +107,8 @@ CNF versus OTFlow on a fixed multi-modal target as the dimension grows, run by [
 
 ### Setup
 
-- **Source** $\mu_0$: standard Gaussian on $\mathbb R^d$.
-- **Target** $\mu_1 \propto e^{-U_1}$: a factorized multi-well potential whose mode count stays fixed while $d$ is swept,
+- **Source** $\pi_0$: standard Gaussian on $\mathbb R^d$.
+- **Target** $\pi \propto e^{-U_1}$: a factorized multi-well potential whose mode count stays fixed while $d$ is swept,
   $U_1(x) = \sum_{i < 3} \beta_{\mathrm w}\,((x_i / s)^2 - 1)^2 + \sum_{i \ge 3} \tfrac12 x_i^2$, with $s = 1.5$, $\beta_{\mathrm w} = 1.5$. The first three coordinates are symmetric double wells (minima at $\pm s$), giving $2^3 = 8$ modes; the remaining $d - 3$ coordinates are standard Gaussian and only raise the dimension. The barrier is deliberately shallow so mode-seeking reverse KL must cover all eight modes rather than collapse onto a subset.
 - **Flows**: `CNF` (FFJORD, free-form MLP velocity, exact $O(d)$ augmented-Jacobian trace) with `frequency = 4`; `OTFlow` (velocity $= -\nabla\Phi$ with a closed-form Hessian trace) with `hidden = 64`, `layer = 3`, `rank = min(10, d+1)`. Both integrate with the same fixed-step RK4 (`nt = 12`) and width-64 networks. CNF starts at the exact identity; OTFlow uses `near_identity()`, whose $10^{-6}$ PSD-factor seed is a numerical identity in float32 while keeping its full quadratic head trainable.
 - **Training**: one packed `train_reverse_KL_F` call per cell — plain reverse KL with no rejuvenation (`MC_STEPS_1 = 0`), `VALID_SIZE = 40000` fixed source pool, `BATCH_SIZE = 512` per Adam step, `STEPS_TOTAL = 1000`, `LR = 2e-3`, `checkpoint = True` (the CNF exact-trace path). The final ESS is the proposal importance-sampling ESS on a held-out $N = 20000$ source set.

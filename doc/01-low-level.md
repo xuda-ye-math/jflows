@@ -18,7 +18,7 @@ from jflows.potential import (
     Nlog_Uniform, Nlog_Gaussian, Nlog_Gaussian_Mixture,
 )
 from jflows.loss import (
-    reverse_KL_F, forward_KL_G, forward_KLX_G, forward_X_G,
+    reverse_KL_F, forward_KL_G, forward_KLX_G, forward_KLL1_G, forward_X_G,
 )
 from jflows import backend
 from jflows.utils import *
@@ -356,6 +356,18 @@ This returns only `pairwise_variation(z)`. The sample population `y` can come
 from the target or another weight measure. KLXX uses this idea with a mixture
 of a quench and temper coverage measure and the detached flow proposal.
 
+### `forward_KLL1_G`
+
+```python
+forward_KLL1_G(y, source, target, flow, coeff_lambda=1.0, trace_key=None)
+```
+
+Forward KL with the centered L1 log-dispersion of LDR-L1: the per-sample
+contributions are `z + coeff_lambda * |z - mean(z)|`, whose mean is the
+forward KL estimate plus `coeff_lambda` times the mean absolute deviation of
+`z` from its batch mean. The batch mean is the center and is differentiated
+through. `coeff_lambda=0` reduces it to `forward_KL_G`.
+
 ## Metrics and resampling
 
 ### Importance weights
@@ -417,10 +429,15 @@ mode-reach diagnostic, while ESS measures proposal-to-target weight balance.
 ### Resampling
 
 ```python
+resample_index(key, samples, weights, N=None)
 resample(key, samples, weights, N=None)
 ```
 
-This performs multinomial resampling with replacement using an inverse CDF.
+`resample_index` draws the row indices of a multinomial resampling with
+replacement using an inverse CDF, and `resample` returns
+`samples[resample_index(...)]`. The indices let a caller carry a quantity
+already evaluated per particle, such as an energy, through the resampling
+instead of recomputing it; the SMC routines use them this way.
 `N` defaults to the input population size. Weights need not sum to one.
 When at least one sample row is finite, nonfinite rows receive zero selection
 mass. Positive infinities on eligible rows share the mass; invalid or
@@ -472,16 +489,18 @@ per step.
 
 ```python
 leapfrog(x, p, potential, dt, steps)
-hmc_step(key, x, potential, dt=1e-2, leapfrog_steps=10)
+hmc_step(key, x, potential, dt=1e-2, leapfrog_steps=10, energy=None)
 hamiltonian_monte_carlo(
     key, samples, potential,
-    dt=1e-2, leapfrog_steps=10, trajectories=10, chunks=1,
+    dt=1e-2, leapfrog_steps=10, trajectories=10, chunks=1, energy=None,
 )
 ```
 
-`hmc_step` returns `(samples, aux)` with acceptance diagnostics. The complete
-routine repeats trajectories and returns the final samples. `hmc` is its
-stable alias.
+`hmc_step` returns `(samples, aux)` with acceptance diagnostics and the
+energy of the returned particles. The complete routine repeats trajectories,
+carrying that energy from one to the next, and returns the final samples.
+`energy` supplies U at the initial particles when it is already known.
+`hmc` is its stable alias.
 
 ## Sequential Monte Carlo
 
@@ -498,22 +517,57 @@ sequential_monte_carlo(
 
 This routine starts from source particles, pushes them through the trained
 flow, and at each of the `ladder` levels applies fractional
-proposal-to-target weights, resamples, and rejuvenates. Levels `1` to
-`ladder - 1` rejuvenate with one Metropolis-adjusted HMC trajectory each: a
-random momentum, `mc_steps` leapfrog steps of size `mc_dt`, one
-accept/reject decision, so that the resampled particles move before the
-next reweighting; the last level rejuvenates with `mc_steps` Langevin steps
-of size `mc_dt` (MALA by default). Rejuvenation targets the final
-target at every level, so the routine is a biased surrogate rather than an
-exact SMC sampler on the geometric path. It avoids gradients of a
-flow-proposal density or intermediate geometric-path density, but both
-kernels still evaluate `target.grad`.
+proposal-to-target weights, resamples, and rejuvenates at the level's own
+distribution. Level `k` of `M = ladder` is
+
+```text
+mu_k = nu^(1 - k/M) pi^(k/M),
+U_k(y) = -log mu_k(y) = target(y) + (1 - k/M) log w(y),
+```
+
+with `log w = log(pi / nu)` the full proposal-to-target log weight the level
+reweights by and `nu` the pushforward density through the flow. Every level
+rejuvenates with `mc_steps` Langevin steps of size `mc_dt` (MALA by default)
+at `mu_k`, so every level is exact on the geometric path. On the
+intermediate levels `U_k` contains the flow and the Langevin drift is its
+gradient through the flow (the pushforward density and its Jacobian); the
+last level, `mu_M = pi`, runs under `target` alone.
 
 The result is `(samples, proposal, proposal_log_weights)`: the target
 samples, the pushforward particles the levels started from, and the full
 proposal-to-target log weights on that pushforward. Direct trainers use the
 proposal log weights for the batch ESS diagnostic, and KLXX uses the
 proposal itself as its detached `bar_nu` batch. `smc` is the stable alias.
+The start energy of each level's Langevin run, `target(y) + (1 - k/M) log
+w(y)`, is formed from the quantities the reweighting already evaluated and
+carried through the resampling, so no particle's energy is evaluated twice
+at one level.
+
+### SMC on to `pi^2 / nu` for FAB
+
+```python
+sequential_monte_carlo_fab(
+    key, samples, source, target, flow, type,
+    ladder=1, mc_dt=1e-3, mc_steps=100,
+    adjust=True, taming=0, chunks=1,
+    trace_key=None,
+)
+```
+
+The same signature as `sequential_monte_carlo`, and two phases. Phase 1
+repeats the levels of `sequential_monte_carlo` from the pushforward
+`nu = F_# pi_0` to the target `pi` with the same keys, weights, and kernels.
+Phase 2 continues with `ladder` further levels from `pi` to `pi^2 / nu`
+along the geometric path `rho_k = pi (pi / nu)^{k / ladder}`: each level
+refreshes `log(pi / nu)` through the flow, reweights by `1 / ladder` of it,
+resamples, and rejuvenates with `mc_steps` Langevin steps of size `mc_dt`
+(MALA by default) at its own `rho_k`, whose potential
+`target - (k / ladder) log w` runs through the flow as on the intermediate
+levels of phase 1. Every level of both phases is exact on its path. The
+result is `(samples, proposal, proposal_log_weights)`
+with the phase-2 particles and phase 1's proposal and log weights, so the
+FAB trainers report the same proposal ESS as the direct trainers. `smc_fab`
+is the stable alias.
 
 ## Batched optimization
 
@@ -578,7 +632,7 @@ input population
   -> Gaussian melt
   -> per-particle L-BFGS quench to target basins
   -> target Langevin temper
-  -> wide-coverage population hat_mu
+  -> wide-coverage population hat_pi
 ```
 
 `coeff_qt` in `[0, 1]` is the exponent of a partial importance resampling
@@ -586,7 +640,7 @@ that precedes the melt and requires `source`; it is skipped at the default
 `0`. With `coeff_qt = 0` every input particle is melted, which is the most
 aggressive mode search; a positive `coeff_qt` moves the basin weights of the
 pool towards the target's, so that a basin the source over-represents no
-longer dominates `hat_mu`. `chunks` is forwarded to the weights, the quench,
+longer dominates `hat_pi`. `chunks` is forwarded to the weights, the quench,
 and both Langevin runs. `qt` is the stable alias. KLXX uses this
 wide-coverage population for its additional X regularization.
 

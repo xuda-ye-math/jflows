@@ -79,7 +79,7 @@ LR: float = 1e-4       # Adam learning rate
 MONITOR_EVERY: int = 20  # print loss + proposal ESS every MONITOR_EVERY steps
 
 # Langevin rejuvenation (training batches + the per-stage particle refresh)
-LADDER: int = 1        # SMC levels of the forward KL target surrogate
+LADDER: int = 1        # SMC levels of the forward KL target batch
 MC_DT: float = 1e-3  # Langevin rejuvenation step size
 MC_STEPS_1: int = 100  # Langevin steps per training batch / SMC level (MALA default: rejects Coulomb-wall proposals)
 MC_STEPS_2: int = 100  # Langevin steps of the per-stage particle refresh after resampling
