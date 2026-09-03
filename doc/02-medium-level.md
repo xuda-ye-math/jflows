@@ -299,9 +299,9 @@ mixture. Before the optimizer scan it constructs `hat_pi` with
 - `pool_size>0`: draw a separate resampled pool of that size from `x_valid`.
 
 The temper of the pool uses `mc_steps_2`, and `coeff_qt > 0` resamples the
-pool by the partial importance weights `exp(coeff_qt * (source - target))`
-and rejuvenates it (`mc_steps_2` steps) before the melt. There is no second
-chunk keyword: `chunks` is passed directly into QT.
+tempered pool by the energy weights `exp(-coeff_qt * target)` and
+rejuvenates it again (`mc_steps_2` steps). There is no second chunk
+keyword: `chunks` is passed directly into QT.
 
 During each training step:
 

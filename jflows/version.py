@@ -1,3 +1,3 @@
 """Single runtime version source for jflows."""
 
-__version__ = "6.0.0"
+__version__ = "0.6.0"

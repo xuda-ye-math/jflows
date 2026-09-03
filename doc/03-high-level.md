@@ -409,11 +409,11 @@ pool `hat_pi` for `U_b`:
 
 ```text
 current stage population
-  -> (coeff_qt > 0) resample by exp(coeff_qt * (U_a - U_b)),
-     then mc_steps_2 Langevin steps at (1 - coeff_qt) U_a + coeff_qt U_b
   -> Gaussian melt
   -> L-BFGS quench into target basins
   -> Langevin temper at U_b (mc_steps_2 steps)
+  -> (coeff_qt > 0) resample by exp(-coeff_qt * U_b),
+     then mc_steps_2 further Langevin steps at U_b
   -> hat_pi pool
 ```
 
@@ -453,7 +453,7 @@ KLXX is the most computationally and memory intensive option:
 - `pool_size=0` applies QT to the complete current validation population;
 - `pool_size>0` draws a separate pool with replacement from that population;
 - `melt`, `opt_dt`, and `opt_steps` control the melt/quench construction,
-  and `coeff_qt` the partial importance resampling that precedes it;
+  and `coeff_qt` the energy-weighted resampling and rejuvenation that end it;
 - `mc_dt` with `mc_steps_1` controls the intermediate SMC levels of the
   forward-batch manufacture, and `mc_dt` with `mc_steps_2` its last level,
   the `y_hat` freshening, the QT pool, and the stage advance; and

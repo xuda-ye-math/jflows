@@ -52,8 +52,7 @@ def main():
         lbfgs: ("alpha", "steps", "chunks"),
         adamw: ("lr", "steps", "chunks"),
         quench_and_temper: (
-            "opt_dt", "opt_steps", "mc_dt", "mc_steps", "chunks", "source",
-            "coeff_qt",
+            "opt_dt", "opt_steps", "mc_dt", "mc_steps", "chunks", "coeff_qt",
         ),
     }
     for function, expected in signatures.items():
@@ -100,17 +99,8 @@ def main():
     )
     y_qt_partial = quench_and_temper(
         key, x, target, 0.1, opt_dt=0.1, opt_steps=1,
-        mc_dt=0.01, mc_steps=1, chunks=2, source=source, coeff_qt=0.5,
+        mc_dt=0.01, mc_steps=1, chunks=2, coeff_qt=0.5,
     )
-    try:
-        quench_and_temper(
-            key, x, target, 0.1, opt_dt=0.1, opt_steps=1,
-            mc_dt=0.01, mc_steps=1, coeff_qt=0.5,
-        )
-    except ValueError:
-        check("coeff_qt > 0 without a source is rejected", True)
-    else:
-        raise AssertionError("coeff_qt > 0 without a source is rejected")
     log_w = importance_weights_log(x, source, target, flow, "G", chunks=2)
     cov = coverage(x[:4], x, k=2, chunks=2)
 

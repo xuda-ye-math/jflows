@@ -614,7 +614,7 @@ quench_and_temper(
     opt_dt=1.0, opt_steps=100,
     mc_dt=1e-3, mc_steps=100,
     mc_adjust=True, chunks=1,
-    *, source=None, coeff_qt=0.0,
+    *, coeff_qt=0.0,
 )
 ```
 
@@ -622,22 +622,21 @@ The construction executes:
 
 ```text
 input population
-  -> (coeff_qt > 0) resample by exp(coeff_qt * (source - target)),
-     then Langevin under (1 - coeff_qt) source + coeff_qt target
   -> Gaussian melt
   -> per-particle L-BFGS quench to target basins
   -> target Langevin temper
+  -> (coeff_qt > 0) resample by exp(-coeff_qt * target),
+     then mc_steps further Langevin steps under target
   -> wide-coverage population hat_pi
 ```
 
-`coeff_qt` in `[0, 1]` is the exponent of a partial importance resampling
-that precedes the melt and requires `source`; it is skipped at the default
-`0`. With `coeff_qt = 0` every input particle is melted, which is the most
-aggressive mode search; a positive `coeff_qt` moves the basin weights of the
-pool towards the target's, so that a basin the source over-represents no
-longer dominates `hat_pi`. `chunks` is forwarded to the weights, the quench,
-and both Langevin runs. `qt` is the stable alias. KLXX uses this
-wide-coverage population for its additional X regularization.
+`coeff_qt` is the exponent of the energy weights applied to the tempered
+particles; it is skipped at the default `0`. A positive `coeff_qt` removes
+from the pool the particles the quench left at high energy (a clash carried
+away along a singular core) and refills it from the low-energy basins.
+`chunks` is forwarded to the weights, the quench, and both Langevin runs.
+`qt` is the stable alias. KLXX uses this wide-coverage population for its
+additional X regularization.
 
 ## Chunking semantics
 

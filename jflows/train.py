@@ -705,9 +705,8 @@ def train_forward_KLXX_G(
     variation over the mixture batch, drawn with proportion ``coeff_alpha``
     from the rejuvenated quench-and-temper pool and ``1 - coeff_alpha`` from
     the detached pushforward of the source batch. ``coeff_qt > 0`` resamples
-    the pool by the partial importance weights exp(coeff_qt * (U_0 - U))
-    and rejuvenates it before the quench and temper (see
-    ``quench_and_temper``).
+    the tempered pool by the energy weights exp(-coeff_qt * U) and
+    rejuvenates it again (see ``quench_and_temper``).
     """
     x_valid = jnp.asarray(x_valid)
     if initialize_from_identity:
@@ -733,7 +732,6 @@ def train_forward_KLXX_G(
         mc_steps_2,
         mc_adjust,
         chunks=chunks,
-        source=source,
         coeff_qt=coeff_qt,
     )
     count = x_valid.shape[0]
@@ -917,7 +915,6 @@ def train_FABX_G(
         mc_steps_2,
         mc_adjust,
         chunks=chunks,
-        source=source,
         coeff_qt=coeff_qt,
     )
     count = x_valid.shape[0]
