@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jflows"
-version = "0.5.4"
+version = "6.0.0"
 description = "JAX normalizing flows for unconditional energy-based sampling and Boltzmann generators."
 readme = "README.md"
 authors = [{ name = "Xuda", email = "abneryepku@gmail.com" }]
